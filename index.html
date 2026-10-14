@@ -414,28 +414,42 @@
   #calendar {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
-    gap: 5px;
+    gap: 6px;
     text-align: center;
   }
   .cal-cell {
     aspect-ratio: 1;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 2px;
     font-size: 14px;
-    font-weight: 600;
-    color: #bbb;
+    font-weight: 700;
+    color: #ccc;
+    background: var(--surface-2);
     border-radius: var(--radius-sm);
-    border: 1px solid transparent;
+    border: 1px solid var(--border-light);
     cursor: default;
     position: relative;
   }
+  .cal-cell .cal-tag {
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    line-height: 1;
+  }
   .cal-cell.workout { cursor: pointer; }
-  .cal-cell.workout:active { background: var(--surface-2); }
-  .cal-cell.logged { background: #fff; color: #000; font-weight: 800; }
-  .cal-cell.today { border-color: #fff; color: #fff; }
-  .cal-cell.today.logged { border-color: #000; }
-  .cal-cell.rest { color: #444; }
+  .cal-cell.workout:active { background: var(--surface-3); }
+  .cal-cell.logged { background: #fff; color: #000; font-weight: 800; border-color: #fff; }
+  .cal-cell.logged .cal-tag { color: #444; }
+  .cal-cell.today { border: 2px solid #fff; color: #fff; }
+  .cal-cell.today.logged { border-color: #000; color: #000; }
+  .cal-cell.rest { background: var(--surface); border-color: var(--border); color: #555; }
+  .cal-cell.rest .cal-tag { color: #3a3a3a; }
+  .cal-cell.empty { background: transparent; border-color: transparent; }
 
   /* Weight list */
   .weight-row {
@@ -689,7 +703,7 @@
 
 <script>
 // ---------- APP VERSION / AUTO UPDATE ----------
-const APP_VERSION = "1.0.6";
+const APP_VERSION = "1.0.7";
 
 function checkForUpdate() {
   fetch('./version.json?t=' + Date.now(), { cache: 'no-store' })
@@ -724,7 +738,7 @@ const WORKOUTS = {
     { name: "Reverse Chest Fly Machine", target: "12–20", sets: 2, rpe: [9,9], rest: 90, cat: "shoulders", note: "Light weight, lead with the elbows, open the arms wide and squeeze the rear delts." },
     { name: "Preacher Curls", target: "8–12", sets: 2, rpe: [9,9], rest: 90, cat: "biceps", note: "Upper arms flat on the pad, curl up, lower slowly to a full stretch." },
     { name: "Reverse Cable Bicep Curls", target: "10–15", sets: 2, rpe: [9,9], rest: 60, cat: "forearms", note: "Palms facing down through the whole curl, elbows pinned to your sides." },
-    { name: "Single-Arm Forearm Curls", target: "12–20", sets: 2, rpe: [9,9], rest: 60, cat: "forearms", note: "Forearm resting on a bench, curl with just the wrist, full range both ways." }
+    { name: "Meow Curls", target: "10–15", sets: 2, rpe: [9,9], rest: 60, cat: "forearms", note: "Controlled reps, full range of motion, squeeze at the top of each rep." }
   ],
   "Legs": [
     { name: "Leg Press", target: "8–12", sets: 2, rpe: [8,9], rest: 150, cat: "quads", note: "Feet shoulder-width, lower until your knees are around 90 degrees, press through your heels without locking out." },
@@ -744,6 +758,7 @@ const WORKOUTS = {
     { name: "Single-Arm Cable Lateral Raises", target: "12–20", sets: 2, rpe: [9,9], rest: 90, cat: "shoulders", note: "One arm at a time, slight elbow bend, lead with the elbow and stop at shoulder height." },
     { name: "Single-Arm Tricep Pushdowns", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "triceps", note: "Elbow pinned to your side, press down until the arm is straight, control the return." },
     { name: "Preacher Curls", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "biceps", note: "Upper arms flat on the pad, curl up, lower slowly to a full stretch." },
+    { name: "Meow Curls", target: "10–15", sets: 2, rpe: [9,9], rest: 60, cat: "forearms", note: "Controlled reps, full range of motion, squeeze at the top of each rep." },
     { name: "Abdominal Crunch Machine", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "abs", note: "Curl your ribs toward your hips, exhale at the bottom, don't pull with your arms." },
     { name: "Standing Calf Raises", target: "10–15", sets: 2, rpe: [9,9], rest: 60, cat: "calves", note: "Full stretch at the bottom, pause and squeeze at the top of each rep." }
   ]
@@ -1280,25 +1295,19 @@ function renderCalendar() {
   const totalDays = new Date(calYear, calMonth+1, 0).getDate();
   const today = todayStr();
 
-  for (let i = 0; i < first; i++) el.appendChild(document.createElement('div'));
+  for (let i = 0; i < first; i++) { const gap = document.createElement('div'); gap.className = 'cal-cell empty'; el.appendChild(gap); }
+
+  const TAGS = { "Push + Abs": "Push", "Pull": "Pull", "Legs": "Legs", "Full Body": "Full" };
 
   for (let d = 1; d <= totalDays; d++) {
     const dStr = calYear + '-' + String(calMonth+1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
     const sch = SCHEDULE[mondayIndex(new Date(calYear, calMonth, d).getDay())];
+    const isLogged = !!(logs[dStr] && logs[dStr].length > 0);
     const cell = document.createElement('div');
-    cell.style.cssText = "padding: 12px 0; font-size: 15px; font-weight: 600; color: #ccc; cursor: pointer; border-radius: 8px; margin: 2px;";
-
-    if (logs[dStr] && logs[dStr].length > 0) {
-      cell.style.background = "#fff";
-      cell.style.color = "#000";
-    }
-    if (dStr === today) {
-      cell.style.border = "2px solid #fff";
-    }
-
-    cell.textContent = d;
+    cell.className = 'cal-cell' + (sch ? ' workout' : ' rest') + (isLogged ? ' logged' : '') + (dStr === today ? ' today' : '');
+    cell.innerHTML = '<span>' + d + '</span><span class="cal-tag">' + (sch ? (TAGS[sch] || sch) : 'Rest') + '</span>';
     cell.onclick = () => {
-      if (logs[dStr] && logs[dStr].length > 0) showDayLogs(dStr, sch);
+      if (isLogged) showDayLogs(dStr, sch);
       else if (sch) startSession(sch, dStr);
     };
     el.appendChild(cell);
