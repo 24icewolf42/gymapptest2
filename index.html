@@ -47,7 +47,7 @@
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
     background: var(--bg);
-    background-image: radial-gradient(ellipse 120% 60% at 50% -10%, rgba(255,255,255,0.04), transparent);
+    background-image: radial-gradient(ellipse 120% 55% at 50% -8%, rgba(255,255,255,0.11), transparent 70%), linear-gradient(180deg, #181818 0%, #0b0b0b 55%, #000000 100%);
     background-repeat: no-repeat;
     background-attachment: fixed;
     min-height: 100vh;
@@ -691,7 +691,7 @@
 
 <script>
 // ---------- APP VERSION / AUTO UPDATE ----------
-const APP_VERSION = "1.0.9";
+const APP_VERSION = "1.1.0";
 document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
 
 function checkForUpdate() {
@@ -787,6 +787,34 @@ function todayStr(d = new Date()) {
 }
 
 // ---------- BOTTOM NAV ----------
+// ---------- BACK BUTTON / SWIPE-BACK ----------
+// The phone's back gesture closes the open sheet (or goes back to Today) instead of leaving the app.
+const layerStack = [];
+let skipPops = 0;
+function pushLayer(name) {
+  layerStack.push(name);
+  try { history.pushState({ gymLayer: name }, ''); } catch (e) {}
+}
+function removeLayer(name) { // a layer was closed from the UI, so drop its history entry too
+  const i = layerStack.lastIndexOf(name);
+  if (i === -1) return;
+  layerStack.splice(i, 1);
+  try { skipPops++; history.back(); } catch (e) { skipPops = Math.max(0, skipPops - 1); }
+}
+function swapLayer(from, to) { // one sheet replaces another without adding a history entry
+  const i = layerStack.lastIndexOf(from);
+  if (i === -1) return;
+  layerStack[i] = to;
+  try { history.replaceState({ gymLayer: to }, ''); } catch (e) {}
+}
+window.addEventListener('popstate', () => {
+  if (skipPops > 0) { skipPops--; return; }
+  const name = layerStack.pop();
+  if (name === 'session') closeSessionModal(true);
+  else if (name === 'overview') closeOverviewModal(true);
+  else if (name === 'tab') goToPageByIndex(0);
+});
+
 document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
@@ -798,6 +826,8 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     if (btn.dataset.page === 'calendar') renderCalendar();
     if (btn.dataset.page === 'today') renderToday();
     if (btn.dataset.page === 'stats') renderStats();
+    if (btn.dataset.page === 'today') removeLayer('tab');
+    else if (!layerStack.includes('tab')) pushLayer('tab');
   });
 });
 
@@ -1050,11 +1080,13 @@ function startSession(dayName, dateStr) {
   });
 
   document.getElementById('sessionModal').style.display = 'flex';
+  if (!layerStack.includes('session')) pushLayer('session');
 }
 
-function closeSessionModal() {
+function closeSessionModal(fromPop) {
   clearAllTimers();
   document.getElementById('sessionModal').style.display = 'none';
+  if (fromPop !== true) removeLayer('session');
 }
 
 document.getElementById('cancelSession').onclick = closeSessionModal;
@@ -1267,18 +1299,24 @@ function showDayLogs(dateStr, scheduled) {
   document.getElementById('overviewBody').innerHTML = html;
 
   const laBtn = document.getElementById('logAgainBtn');
-  if (scheduled) { laBtn.style.display = 'block'; laBtn.onclick = () => { document.getElementById('overviewModal').style.display='none'; startSession(scheduled, dateStr); }; }
+  if (scheduled) { laBtn.style.display = 'block'; laBtn.onclick = () => { document.getElementById('overviewModal').style.display='none'; swapLayer('overview', 'session'); startSession(scheduled, dateStr); }; }
   else laBtn.style.display = 'none';
 
   const delBtn = document.getElementById('deleteLogBtn');
   delBtn.style.display = 'block'; delBtn.onclick = () => {
-    delete logs[dateStr]; saveLogs(logs); document.getElementById('overviewModal').style.display='none';
+    delete logs[dateStr]; saveLogs(logs); closeOverviewModal();
     renderCalendar(); renderToday();
   };
   document.getElementById('overviewModal').style.display = 'flex';
+  if (!layerStack.includes('overview')) pushLayer('overview');
 }
 
-document.getElementById('closeOverview').onclick = () => { document.getElementById('overviewModal').style.display='none'; };
+function closeOverviewModal(fromPop) {
+  document.getElementById('overviewModal').style.display = 'none';
+  if (fromPop !== true) removeLayer('overview');
+}
+
+document.getElementById('closeOverview').onclick = () => closeOverviewModal();
 document.getElementById('prevMonth').onclick = () => { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } renderCalendar(); };
 document.getElementById('nextMonth').onclick = () => { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } renderCalendar(); };
 
@@ -1395,7 +1433,7 @@ function makeSheetDraggable(overlayId, closeFn) {
 }
 
 makeSheetDraggable('sessionModal', closeSessionModal);
-makeSheetDraggable('overviewModal', () => { document.getElementById('overviewModal').style.display = 'none'; });
+makeSheetDraggable('overviewModal', () => closeOverviewModal());
 
 // ---------- INITIALIZE ----------
 renderToday();
