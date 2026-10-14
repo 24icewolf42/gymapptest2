@@ -1,0 +1,64 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Build APK
+        run: |
+          set -o pipefail
+          bash tools/build-apk.sh 2>&1 | tee "$RUNNER_TEMP/build.log"
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+
+      - name: Publish APK as the "latest" release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --cleanup-tag --yes || true
+          gh release create latest build-apk/rat-tracker.apk \
+            --title "Latest APK" \
+            --notes "Installable Android build of the app (built from commit ${GITHUB_SHA::7})." \
+            --target "$GITHUB_SHA" --latest
+
+      - name: Keep the APK as a run artifact too
+        uses: actions/upload-artifact@v4
+        with:
+          name: rat-tracker-apk
+          path: build-apk/rat-tracker.apk
+
+      - name: Save build log on failure
+        if: failure()
+        run: |
+          tail -n 300 "$RUNNER_TEMP/build.log" > "$RUNNER_TEMP/failure.log" || echo "no log" > "$RUNNER_TEMP/failure.log"
+          git config user.name "build-bot"
+          git config user.email "build-bot@users.noreply.github.com"
+          git checkout --orphan build-logs
+          git rm -rf . -q || true
+          cp "$RUNNER_TEMP/failure.log" failure.log
+          git add failure.log
+          git commit -q -m "Build failure log for run ${{ github.run_number }}"
+          git push -f origin build-logs
