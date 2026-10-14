@@ -354,6 +354,9 @@
   }
   .today-card .split { font-size: 24px; font-weight: 800; margin: 4px 0 14px; letter-spacing: -0.3px; }
   .today-card.rest .split { font-size: 22px; color: #aaa; }
+  .rest-pic { display: block; width: 100%; object-fit: fill; border-radius: var(--radius-sm); margin-top: 8px; }
+  .today-card.rest .rest-pic { height: 170px; }
+  .schedule-card.rest .rest-pic { height: 90px; }
 
   .schedule-card {
     background: var(--surface);
@@ -691,7 +694,7 @@
 
 <script>
 // ---------- APP VERSION / AUTO UPDATE ----------
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.1.1";
 document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
 
 function checkForUpdate() {
@@ -852,7 +855,7 @@ function renderToday() {
       else startSession(todaysWorkout, dStr);
     };
   } else {
-    todayCard.innerHTML = `<div class="today-card rest"><div class="card-meta">Today · ${DOW_NAMES[mIdx]}</div><div class="split">Rest Day</div></div>`;
+    todayCard.innerHTML = `<div class="today-card rest"><div class="card-meta">Today · ${DOW_NAMES[mIdx]}</div><img class="rest-pic" src="rest.png" alt="Rest Day"></div>`;
   }
 
   const listEl = document.getElementById('upcomingList');
@@ -875,7 +878,7 @@ function renderToday() {
         else startSession(workout, dateStr);
       };
     } else {
-      row.innerHTML = `<div class="card-meta">${i === 1 ? 'Tomorrow' : DOW_NAMES[idx]} · ${dateStr.slice(5)}</div><div class="split">Rest Day</div>`;
+      row.innerHTML = `<div class="card-meta">${i === 1 ? 'Tomorrow' : DOW_NAMES[idx]} · ${dateStr.slice(5)}</div><img class="rest-pic" src="rest.png" alt="Rest Day">`;
     }
     listEl.appendChild(row);
   }
