@@ -48,6 +48,10 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
     background: var(--bg);
     background-image: radial-gradient(ellipse 120% 60% at 50% -10%, rgba(255,255,255,0.04), transparent);
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    min-height: 100vh;
+    min-height: 100dvh;
     color: var(--text);
     padding-bottom: 90px;
     -webkit-font-smoothing: antialiased;
@@ -164,6 +168,7 @@
   }
   .input-field {
     flex: 1;
+    min-width: 0;
     background: var(--surface-2);
     border: 1px solid var(--border);
     color: var(--text);
@@ -252,23 +257,6 @@
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   }
   .exercise-body { display: flex; gap: 12px; align-items: center; margin-top: 6px; }
-  .exercise-icon-wrap {
-    width: 72px;
-    flex-shrink: 0;
-    text-align: center;
-  }
-  .exercise-icon-box {
-    width: 100%;
-    aspect-ratio: 1;
-    border-radius: var(--radius-md);
-    background: #000;
-    border: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 8%;
-  }
-  .exercise-cat-label { font-size: 10px; color: var(--text-muted); margin-top: 5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; }
   .timer-box {
     margin-top: 12px;
     background: #000;
@@ -648,7 +636,7 @@
     <div class="panel-title">Track Body Weight</div>
     <div style="display:flex;gap:8px;margin-bottom:10px;">
       <input type="number" inputmode="decimal" id="bodyWeightInput" placeholder="kg" class="input-field">
-      <button id="logWeightBtn" class="btn-primary" style="width:auto;padding:0 22px;">Log</button>
+      <button id="logWeightBtn" class="btn-primary" style="width:auto;flex-shrink:0;padding:0 22px;">Log</button>
     </div>
     <div id="bodyWeightList" style="max-height:160px;overflow-y:auto;"></div>
   </div>
@@ -703,7 +691,7 @@
 
 <script>
 // ---------- APP VERSION / AUTO UPDATE ----------
-const APP_VERSION = "1.0.7";
+const APP_VERSION = "1.0.8";
 
 function checkForUpdate() {
   fetch('./version.json?t=' + Date.now(), { cache: 'no-store' })
@@ -724,43 +712,43 @@ setInterval(checkForUpdate, 5 * 60 * 1000); // re-check every 5 minutes while th
 // ---------- DATA ----------
 const WORKOUTS = {
   "Push + Abs": [
-    { name: "Smith Machine Incline Bench Press", target: "6–10", sets: 2, rpe: [8,9], rest: 120, cat: "chest", note: "Bench at a low incline, lower the bar to your upper chest, press straight up without flaring your elbows." },
-    { name: "Chest Press Machine", target: "8–12", sets: 2, rpe: [8,9], rest: 120, cat: "chest", note: "Seat height so handles line up with mid-chest, press forward, control the way back." },
-    { name: "Shoulder Press Machine", target: "8–12", sets: 2, rpe: [8,9], rest: 120, cat: "shoulders", note: "Back flat against the pad, press up without shrugging, stop just short of locking out." },
-    { name: "Single-Arm Cable Lateral Raises", target: "12–20", sets: 2, rpe: [9,9], rest: 90, cat: "shoulders", note: "One arm at a time, slight elbow bend, lead with the elbow and stop at shoulder height." },
-    { name: "Single-Arm Tricep Pushdowns", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "triceps", note: "Elbow pinned to your side, press down until the arm is straight, control the return." },
-    { name: "Abdominal Crunch Machine", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "abs", note: "Curl your ribs toward your hips, exhale at the bottom, don't pull with your arms." }
+    { name: "Smith Machine Incline Bench Press", target: "6–10", sets: 2, rest: 120, cat: "chest", note: "Bench at a low incline, lower the bar to your upper chest, press straight up without flaring your elbows." },
+    { name: "Chest Press Machine", target: "8–12", sets: 2, rest: 120, cat: "chest", note: "Seat height so handles line up with mid-chest, press forward, control the way back." },
+    { name: "Shoulder Press Machine", target: "8–12", sets: 2, rest: 120, cat: "shoulders", note: "Back flat against the pad, press up without shrugging, stop just short of locking out." },
+    { name: "Single-Arm Cable Lateral Raises", target: "12–20", sets: 2, rest: 90, cat: "shoulders", note: "One arm at a time, slight elbow bend, lead with the elbow and stop at shoulder height." },
+    { name: "Single-Arm Tricep Pushdowns", target: "10–15", sets: 2, rest: 90, cat: "triceps", note: "Elbow pinned to your side, press down until the arm is straight, control the return." },
+    { name: "Abdominal Crunch Machine", target: "10–15", sets: 2, rest: 90, cat: "abs", note: "Curl your ribs toward your hips, exhale at the bottom, don't pull with your arms." }
   ],
   "Pull": [
-    { name: "T-Bar Row", target: "6–12", sets: 2, rpe: [8,9], rest: 120, cat: "back", note: "Chest supported or hinged with a flat back, pull to your lower ribs, squeeze your shoulder blades." },
-    { name: "Assisted Pull-Ups", target: "6–12", sets: 2, rpe: [8,9], rest: 120, cat: "back", note: "Pull your chest toward the bar, lead with the elbows, lower under control to a full stretch." },
-    { name: "Seated Cable Row", target: "8–12", sets: 2, rpe: [8,9], rest: 120, cat: "back", note: "Sit tall, pull the handle to your stomach, pause briefly and don't lean back." },
-    { name: "Reverse Chest Fly Machine", target: "12–20", sets: 2, rpe: [9,9], rest: 90, cat: "shoulders", note: "Light weight, lead with the elbows, open the arms wide and squeeze the rear delts." },
-    { name: "Preacher Curls", target: "8–12", sets: 2, rpe: [9,9], rest: 90, cat: "biceps", note: "Upper arms flat on the pad, curl up, lower slowly to a full stretch." },
-    { name: "Reverse Cable Bicep Curls", target: "10–15", sets: 2, rpe: [9,9], rest: 60, cat: "forearms", note: "Palms facing down through the whole curl, elbows pinned to your sides." },
-    { name: "Meow Curls", target: "10–15", sets: 2, rpe: [9,9], rest: 60, cat: "forearms", note: "Controlled reps, full range of motion, squeeze at the top of each rep." }
+    { name: "T-Bar Row", target: "6–12", sets: 2, rest: 120, cat: "back", note: "Chest supported or hinged with a flat back, pull to your lower ribs, squeeze your shoulder blades." },
+    { name: "Assisted Pull-Ups", target: "6–12", sets: 2, rest: 120, cat: "back", note: "Pull your chest toward the bar, lead with the elbows, lower under control to a full stretch." },
+    { name: "Seated Cable Row", target: "8–12", sets: 2, rest: 120, cat: "back", note: "Sit tall, pull the handle to your stomach, pause briefly and don't lean back." },
+    { name: "Reverse Chest Fly Machine", target: "12–20", sets: 2, rest: 90, cat: "shoulders", note: "Light weight, lead with the elbows, open the arms wide and squeeze the rear delts." },
+    { name: "Preacher Curls", target: "8–12", sets: 2, rest: 90, cat: "biceps", note: "Upper arms flat on the pad, curl up, lower slowly to a full stretch." },
+    { name: "Reverse Cable Bicep Curls", target: "10–15", sets: 2, rest: 60, cat: "forearms", note: "Palms facing down through the whole curl, elbows pinned to your sides." },
+    { name: "Meow Curls", target: "10–15", sets: 2, rest: 60, cat: "forearms", note: "Controlled reps, full range of motion, squeeze at the top of each rep." }
   ],
   "Legs": [
-    { name: "Leg Press", target: "8–12", sets: 2, rpe: [8,9], rest: 150, cat: "quads", note: "Feet shoulder-width, lower until your knees are around 90 degrees, press through your heels without locking out." },
-    { name: "Seated Leg Curl", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "hamstrings", note: "Pad snug on your lower legs, curl down fully, control the return." },
-    { name: "Leg Extensions", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "quads", note: "Extend until your legs are straight, squeeze the quads for a second, lower slowly." },
-    { name: "Hip Abduction Machine", target: "12–20", sets: 2, rpe: [9,9], rest: 60, cat: "hips", note: "Push your legs apart with control, pause at the end and don't swing." },
-    { name: "Hip Adduction Machine", target: "12–20", sets: 2, rpe: [9,9], rest: 60, cat: "hips", note: "Bring your legs together slowly, pause at the squeeze, control the way back." },
-    { name: "Standing Calf Raises", target: "10–15", sets: 2, rpe: [9,9], rest: 60, cat: "calves", note: "Full stretch at the bottom, pause and squeeze at the top of each rep." }
+    { name: "Leg Press", target: "8–12", sets: 2, rest: 150, cat: "quads", note: "Feet shoulder-width, lower until your knees are around 90 degrees, press through your heels without locking out." },
+    { name: "Seated Leg Curl", target: "10–15", sets: 2, rest: 90, cat: "hamstrings", note: "Pad snug on your lower legs, curl down fully, control the return." },
+    { name: "Leg Extensions", target: "10–15", sets: 2, rest: 90, cat: "quads", note: "Extend until your legs are straight, squeeze the quads for a second, lower slowly." },
+    { name: "Hip Abduction Machine", target: "12–20", sets: 2, rest: 60, cat: "hips", note: "Push your legs apart with control, pause at the end and don't swing." },
+    { name: "Hip Adduction Machine", target: "12–20", sets: 2, rest: 60, cat: "hips", note: "Bring your legs together slowly, pause at the squeeze, control the way back." },
+    { name: "Standing Calf Raises", target: "10–15", sets: 2, rest: 60, cat: "calves", note: "Full stretch at the bottom, pause and squeeze at the top of each rep." }
   ],
   "Full Body": [
-    { name: "Smith Machine Incline Bench Press", target: "8–12", sets: 2, rpe: [8,9], rest: 120, cat: "chest", note: "Bench at a low incline, lower the bar to your upper chest, press straight up without flaring your elbows." },
-    { name: "T-Bar Row", target: "8–12", sets: 2, rpe: [8,9], rest: 120, cat: "back", note: "Chest supported or hinged with a flat back, pull to your lower ribs, squeeze your shoulder blades." },
-    { name: "Leg Press", target: "10–15", sets: 2, rpe: [8,9], rest: 150, cat: "quads", note: "Feet shoulder-width, lower until your knees are around 90 degrees, press through your heels without locking out." },
-    { name: "Seated Leg Curl", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "hamstrings", note: "Pad snug on your lower legs, curl down fully, control the return." },
-    { name: "Shoulder Press Machine", target: "8–12", sets: 2, rpe: [8,9], rest: 120, cat: "shoulders", note: "Back flat against the pad, press up without shrugging, stop just short of locking out." },
-    { name: "Reverse Chest Fly Machine", target: "12–20", sets: 2, rpe: [9,9], rest: 90, cat: "shoulders", note: "Light weight, lead with the elbows, open the arms wide and squeeze the rear delts." },
-    { name: "Single-Arm Cable Lateral Raises", target: "12–20", sets: 2, rpe: [9,9], rest: 90, cat: "shoulders", note: "One arm at a time, slight elbow bend, lead with the elbow and stop at shoulder height." },
-    { name: "Single-Arm Tricep Pushdowns", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "triceps", note: "Elbow pinned to your side, press down until the arm is straight, control the return." },
-    { name: "Preacher Curls", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "biceps", note: "Upper arms flat on the pad, curl up, lower slowly to a full stretch." },
-    { name: "Meow Curls", target: "10–15", sets: 2, rpe: [9,9], rest: 60, cat: "forearms", note: "Controlled reps, full range of motion, squeeze at the top of each rep." },
-    { name: "Abdominal Crunch Machine", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "abs", note: "Curl your ribs toward your hips, exhale at the bottom, don't pull with your arms." },
-    { name: "Standing Calf Raises", target: "10–15", sets: 2, rpe: [9,9], rest: 60, cat: "calves", note: "Full stretch at the bottom, pause and squeeze at the top of each rep." }
+    { name: "Smith Machine Incline Bench Press", target: "8–12", sets: 2, rest: 120, cat: "chest", note: "Bench at a low incline, lower the bar to your upper chest, press straight up without flaring your elbows." },
+    { name: "T-Bar Row", target: "8–12", sets: 2, rest: 120, cat: "back", note: "Chest supported or hinged with a flat back, pull to your lower ribs, squeeze your shoulder blades." },
+    { name: "Leg Press", target: "10–15", sets: 2, rest: 150, cat: "quads", note: "Feet shoulder-width, lower until your knees are around 90 degrees, press through your heels without locking out." },
+    { name: "Seated Leg Curl", target: "10–15", sets: 2, rest: 90, cat: "hamstrings", note: "Pad snug on your lower legs, curl down fully, control the return." },
+    { name: "Shoulder Press Machine", target: "8–12", sets: 2, rest: 120, cat: "shoulders", note: "Back flat against the pad, press up without shrugging, stop just short of locking out." },
+    { name: "Reverse Chest Fly Machine", target: "12–20", sets: 2, rest: 90, cat: "shoulders", note: "Light weight, lead with the elbows, open the arms wide and squeeze the rear delts." },
+    { name: "Single-Arm Cable Lateral Raises", target: "12–20", sets: 2, rest: 90, cat: "shoulders", note: "One arm at a time, slight elbow bend, lead with the elbow and stop at shoulder height." },
+    { name: "Single-Arm Tricep Pushdowns", target: "10–15", sets: 2, rest: 90, cat: "triceps", note: "Elbow pinned to your side, press down until the arm is straight, control the return." },
+    { name: "Preacher Curls", target: "10–15", sets: 2, rest: 90, cat: "biceps", note: "Upper arms flat on the pad, curl up, lower slowly to a full stretch." },
+    { name: "Meow Curls", target: "10–15", sets: 2, rest: 60, cat: "forearms", note: "Controlled reps, full range of motion, squeeze at the top of each rep." },
+    { name: "Abdominal Crunch Machine", target: "10–15", sets: 2, rest: 90, cat: "abs", note: "Curl your ribs toward your hips, exhale at the bottom, don't pull with your arms." },
+    { name: "Standing Calf Raises", target: "10–15", sets: 2, rest: 60, cat: "calves", note: "Full stretch at the bottom, pause and squeeze at the top of each rep." }
   ]
 };
 
@@ -778,40 +766,6 @@ const CATEGORY_META = {
   lowerback:  { color: "#ffffff", label: "Lower Back" },
   hips:       { color: "#ffffff", label: "Hips" }
 };
-
-function exerciseIconSVG(cat, size) {
-  size = size || 30;
-  const meta = CATEGORY_META[cat] || { color: "#555", label: "" };
-  const c = meta.color;
-  const G = "#222222";
-  let highlight = "";
-  switch (cat) {
-    case "chest": highlight = `<rect x="13" y="15" width="14" height="7" rx="3" fill="${c}"/>`; break;
-    case "back": highlight = `<rect x="13" y="15" width="14" height="7" rx="3" fill="none" stroke="${c}" stroke-width="2.2"/>`; break;
-    case "shoulders": highlight = `<circle cx="9" cy="15" r="4" fill="${c}"/><circle cx="31" cy="15" r="4" fill="${c}"/>`; break;
-    case "triceps": highlight = `<rect x="6" y="14" width="6" height="9" rx="3" fill="none" stroke="${c}" stroke-width="2.2"/><rect x="28" y="14" width="6" height="9" rx="3" fill="none" stroke="${c}" stroke-width="2.2"/>`; break;
-    case "biceps": highlight = `<rect x="6" y="14" width="6" height="9" rx="3" fill="${c}"/><rect x="28" y="14" width="6" height="9" rx="3" fill="${c}"/>`; break;
-    case "forearms": highlight = `<rect x="6" y="23" width="6" height="9" rx="3" fill="${c}"/><rect x="28" y="23" width="6" height="9" rx="3" fill="${c}"/>`; break;
-    case "quads": highlight = `<rect x="13" y="32" width="7" height="9" rx="3" fill="${c}"/><rect x="20" y="32" width="7" height="9" rx="3" fill="${c}"/>`; break;
-    case "hamstrings": highlight = `<rect x="13" y="32" width="7" height="9" rx="3" fill="none" stroke="${c}" stroke-width="2.2"/><rect x="20" y="32" width="7" height="9" rx="3" fill="none" stroke="${c}" stroke-width="2.2"/>`; break;
-    case "calves": highlight = `<rect x="14" y="41" width="5" height="8" rx="2.5" fill="${c}"/><rect x="21" y="41" width="5" height="8" rx="2.5" fill="${c}"/>`; break;
-    case "abs": highlight = `<rect x="16" y="22" width="8" height="8" rx="2" fill="${c}"/>`; break;
-    case "lowerback": highlight = `<rect x="15" y="27" width="10" height="4" rx="1" fill="${c}"/>`; break;
-    case "hips": highlight = `<circle cx="11" cy="31" r="3" fill="${c}"/><circle cx="29" cy="31" r="3" fill="${c}"/>`; break;
-  }
-  return `<svg viewBox="0 0 40 50" width="${size}" height="${size}">
-    <circle cx="20" cy="7" r="5" fill="${G}"/>
-    <rect x="13" y="13" width="14" height="18" rx="5" fill="${G}"/>
-    <rect x="6" y="14" width="6" height="17" rx="3" fill="${G}"/>
-    <rect x="28" y="14" width="6" height="17" rx="3" fill="${G}"/>
-    <rect x="13" y="30" width="7" height="19" rx="3" fill="${G}"/>
-    <rect x="20" y="30" width="7" height="19" rx="3" fill="${G}"/>
-    ${highlight}
-  </svg>`;
-}
-
-const EXERCISE_CAT = {};
-Object.values(WORKOUTS).forEach(list => list.forEach(ex => { EXERCISE_CAT[ex.name] = ex.cat; }));
 
 const SCHEDULE = { 0: "Push + Abs", 1: null, 2: "Pull", 3: "Legs", 4: null, 5: "Full Body", 6: null };
 const DOW_NAMES = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
@@ -1003,39 +957,27 @@ function startSession(dayName, dateStr) {
     const saved = (lastUsed[key] && lastUsed[key].sets) || [];
     let rows = '';
     const numSets = ex.sets;
-    const rpeTargets = ex.rpe || [];
     for (let s = 0; s < numSets; s++) {
       const prevW = saved[s] ? saved[s].w : '';
       const prevR = saved[s] ? saved[s].r : '';
-      const prevRpe = saved[s] && saved[s].rpe ? saved[s].rpe : '';
-      const rpePlaceholder = rpeTargets[s] !== undefined ? 'RPE ' + rpeTargets[s] : 'RPE';
       rows += `<tr>
         <td style="font-size:14px; font-weight:bold;">${s+1}</td>
         <td><input type="number" inputmode="decimal" class="w-input" value="${prevW}" placeholder="kg"></td>
         <td><input type="number" inputmode="numeric" class="r-input" value="${prevR}" placeholder="reps"></td>
-        <td><input type="number" inputmode="decimal" step="0.5" class="rpe-input" value="${prevRpe}" placeholder="${rpePlaceholder}"></td>
       </tr>`;
     }
 
-    const rpeRangeText = rpeTargets.length ? ('RPE ' + rpeTargets.join('-')) : '';
-    const catMeta = CATEGORY_META[ex.cat] || { label: '' };
 
     card.innerHTML = `
       <div class="exercise-name">${ex.name}</div>
-      <div class="exercise-target">Target: ${ex.target}${rpeRangeText ? ' · ' + rpeRangeText : ''}</div>
+      <div class="exercise-target">Target: ${ex.target}</div>
 
       <div class="interactive-box" id="interactiveBox-${i}">
         ${ex.note ? `<div style="font-size:12px;line-height:1.4;color:#aaa;background:#131313;border-left:3px solid #fff;padding:6px 8px;margin:4px 0 10px;">${ex.note}</div>` : ''}
         <div style="display:flex;gap:12px;align-items:center;margin-top:6px;">
-          <div style="width:75px;flex-shrink:0;text-align:center;">
-            <div style="width:100%;aspect-ratio:1;border-radius:12px;background:#000;display:flex;align-items:center;justify-content:center;padding:8%;">
-              ${exerciseIconSVG(ex.cat, '100%')}
-            </div>
-            <div style="font-size:10px;color:#888;margin-top:4px;font-weight:bold;">${catMeta.label}</div>
-          </div>
           <div style="flex:1;min-width:0;">
             <table class="sets-table">
-              <tr><th>Set</th><th>Kg</th><th>Reps</th><th>RPE</th></tr>
+              <tr><th>Set</th><th>Kg</th><th>Reps</th></tr>
               ${rows}
             </table>
           </div>
@@ -1085,8 +1027,7 @@ function startSession(dayName, dateStr) {
       const tr = document.createElement('tr');
       tr.innerHTML = `<td>${setNum}</td>
         <td><input type="number" inputmode="decimal" class="w-input" placeholder="kg"></td>
-        <td><input type="number" inputmode="numeric" class="r-input" placeholder="reps"></td>
-        <td><input type="number" inputmode="decimal" step="0.5" class="rpe-input" placeholder="RPE"></td>`;
+        <td><input type="number" inputmode="numeric" class="r-input" placeholder="reps"></td>`;
       table.appendChild(tr);
 
       if(exerciseTimers[i]) {
@@ -1126,13 +1067,11 @@ document.getElementById('saveTemplateBtn').onclick = () => {
     const name = card.dataset.exName;
     const wInputs = card.querySelectorAll('.w-input');
     const rInputs = card.querySelectorAll('.r-input');
-    const rpeInputs = card.querySelectorAll('.rpe-input');
     const sets = [];
     wInputs.forEach((w, idx) => {
       const wv = w.value.trim();
       const rv = rInputs[idx].value.trim();
-      const rpv = rpeInputs[idx] ? rpeInputs[idx].value.trim() : '';
-      if (wv !== '' || rv !== '' || rpv !== '') sets.push({ w: wv, r: rv, rpe: rpv });
+      if (wv !== '' || rv !== '') sets.push({ w: wv, r: rv });
     });
     if (sets.length > 0) {
       lastUsed[currentSessionDay + '||' + name] = { sets };
@@ -1156,13 +1095,11 @@ document.getElementById('saveSession').onclick = () => {
     const target = WORKOUTS[currentSessionDay].find(e => e.name === name).target;
     const wInputs = card.querySelectorAll('.w-input');
     const rInputs = card.querySelectorAll('.r-input');
-    const rpeInputs = card.querySelectorAll('.rpe-input');
     const sets = [];
     wInputs.forEach((w, idx) => {
       const wv = w.value.trim();
       const rv = rInputs[idx].value.trim();
-      const rpv = rpeInputs[idx] ? rpeInputs[idx].value.trim() : '';
-      if (wv !== '' || rv !== '' || rpv !== '') sets.push({ w: wv, r: rv, rpe: rpv });
+      if (wv !== '' || rv !== '') sets.push({ w: wv, r: rv });
     });
     if (sets.length > 0) {
       entry.push({ name, target, sets });
@@ -1247,7 +1184,7 @@ function renderStats() {
           if ((parseFloat(s.w)||0) > (parseFloat(best.w)||0)) best = s;
         });
         if (!byExercise[ex.name]) byExercise[ex.name] = [];
-        byExercise[ex.name].push({ date, w: best.w, r: best.r, rpe: best.rpe });
+        byExercise[ex.name].push({ date, w: best.w, r: best.r });
       });
     });
   });
@@ -1269,14 +1206,13 @@ function renderStats() {
     history.slice().reverse().slice(0, 6).forEach(h => {
       historyRows += `<div style="display:flex;justify-content:space-between;font-size:14px;color:#ccc;padding:4px 0;border-bottom:1px solid #151515;">
         <span style="color:#666;">${h.date}</span>
-        <span><b>${h.w||'-'}kg</b> × ${h.r||'-'}${h.rpe ? ' · RPE '+h.rpe : ''}</span>
+        <span><b>${h.w||'-'}kg</b> × ${h.r||'-'}</span>
       </div>`;
     });
 
     const box = document.createElement('div');
     box.style.cssText = 'background:#0d0d0d;border:1px solid #1c1c1c;border-radius:14px;padding:12px;margin-bottom:10px;';
     box.innerHTML = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
-      <div style="width:36px;height:36px;border-radius:8px;background:#000;display:flex;align-items:center;justify-content:center;">${exerciseIconSVG(EXERCISE_CAT[name])}</div>
       <div><div style="font-weight:700;font-size:15px;">${name}</div><div style="font-size:12px;color:#aaa;">${lbl}</div></div>
     </div>${historyRows}`;
     el.appendChild(box);
@@ -1322,7 +1258,7 @@ function showDayLogs(dateStr, scheduled) {
     session.exercises.forEach(ex => {
       html += `<div style="background:#111;border-radius:12px;padding:10px;margin-bottom:8px;"><div style="font-weight:bold;font-size:14px;margin-bottom:4px;">${ex.name}</div>`;
       ex.sets.forEach((s, idx) => {
-        html += `<div style="font-size:13px;color:#ccc;margin-pi:2px;">Set ${idx+1}: <b>${s.w||'-'}kg</b> × <b>${s.r||'-'}</b> reps${s.rpe?' · RPE '+s.rpe:''}</div>`;
+        html += `<div style="font-size:13px;color:#ccc;margin-pi:2px;">Set ${idx+1}: <b>${s.w||'-'}kg</b> × <b>${s.r||'-'}</b> reps</div>`;
       });
       html += `</div>`;
     });
