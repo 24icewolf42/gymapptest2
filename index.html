@@ -689,7 +689,7 @@
 
 <script>
 // ---------- APP VERSION / AUTO UPDATE ----------
-const APP_VERSION = "1.0.5";
+const APP_VERSION = "1.0.6";
 
 function checkForUpdate() {
   fetch('./version.json?t=' + Date.now(), { cache: 'no-store' })
@@ -709,27 +709,43 @@ setInterval(checkForUpdate, 5 * 60 * 1000); // re-check every 5 minutes while th
 
 // ---------- DATA ----------
 const WORKOUTS = {
-  "Push (Home)": [
-    { name: "Deep Pushups", target: "12–20", sets: 3, rpe: [9,10], rest: 120, cat: "chest", note: "Lower until your chest is well below your hands — use blocks or handles for extra range." },
-    { name: "Feet-Elevated Pushups", target: "10–15", sets: 3, rpe: [9,10], rest: 120, cat: "chest", note: "Feet up on a chair or step to shift more load onto the upper chest." },
-    { name: "Barbell Overhead Press", target: "6–10", sets: 3, rpe: [8,9], rest: 120, cat: "shoulders", note: "Brace your core, press straight overhead without leaning back." },
-    { name: "Dumbbell Lateral Raises (Unilateral)", target: "10–15", sets: 3, rpe: [9,9], rest: 90, cat: "shoulders", note: "One arm at a time, slight elbow bend, lead with the elbow." },
-    { name: "Single-Arm Overhead Tricep Extension", target: "10–12", sets: 3, rpe: [8,9], rest: 90, cat: "triceps", note: "Keep the elbow close to your head, one arm at a time for full stretch." }
+  "Push + Abs": [
+    { name: "Smith Machine Incline Bench Press", target: "6–10", sets: 2, rpe: [8,9], rest: 120, cat: "chest", note: "Bench at a low incline, lower the bar to your upper chest, press straight up without flaring your elbows." },
+    { name: "Chest Press Machine", target: "8–12", sets: 2, rpe: [8,9], rest: 120, cat: "chest", note: "Seat height so handles line up with mid-chest, press forward, control the way back." },
+    { name: "Shoulder Press Machine", target: "8–12", sets: 2, rpe: [8,9], rest: 120, cat: "shoulders", note: "Back flat against the pad, press up without shrugging, stop just short of locking out." },
+    { name: "Single-Arm Cable Lateral Raises", target: "12–20", sets: 2, rpe: [9,9], rest: 90, cat: "shoulders", note: "One arm at a time, slight elbow bend, lead with the elbow and stop at shoulder height." },
+    { name: "Single-Arm Tricep Pushdowns", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "triceps", note: "Elbow pinned to your side, press down until the arm is straight, control the return." },
+    { name: "Abdominal Crunch Machine", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "abs", note: "Curl your ribs toward your hips, exhale at the bottom, don't pull with your arms." }
   ],
-  "Pull (Home)": [
-    { name: "Barbell Bent-Over Row", target: "8–12", sets: 3, rpe: [8,9], rest: 120, cat: "back", note: "Flat back, pull to your lower ribs, control the negative." },
-    { name: "Single-Arm DB Row", target: "8–12", sets: 3, rpe: [8,9], rest: 120, cat: "back", note: "Brace on a chair or bench, pull the elbow back and up along your side." },
-    { name: "Barbell Romanian Deadlift", target: "6–10", sets: 3, rpe: [8,9], rest: 120, cat: "hamstrings", note: "Soft knees, hinge at the hips, bar stays close to your legs." },
-    { name: "DB Preacher Curl", target: "10–12", sets: 3, rpe: [9,9], rest: 90, cat: "biceps", note: "Brace the back of your arm against a flat surface for strict form." },
-    { name: "Single-Arm Reverse DB Curls", target: "12–15", sets: 2, rpe: [9,9], rest: 60, cat: "forearms", note: "Palm down through the whole curl, one arm at a time." },
-    { name: "Dumbbell Rear Delt Fly (Unilateral)", target: "12–15", sets: 2, rpe: [9,9], rest: 90, cat: "shoulders", note: "Hinge forward, raise one arm at a time with a slight elbow bend." }
+  "Pull": [
+    { name: "T-Bar Row", target: "6–12", sets: 2, rpe: [8,9], rest: 120, cat: "back", note: "Chest supported or hinged with a flat back, pull to your lower ribs, squeeze your shoulder blades." },
+    { name: "Assisted Pull-Ups", target: "6–12", sets: 2, rpe: [8,9], rest: 120, cat: "back", note: "Pull your chest toward the bar, lead with the elbows, lower under control to a full stretch." },
+    { name: "Seated Cable Row", target: "8–12", sets: 2, rpe: [8,9], rest: 120, cat: "back", note: "Sit tall, pull the handle to your stomach, pause briefly and don't lean back." },
+    { name: "Reverse Chest Fly Machine", target: "12–20", sets: 2, rpe: [9,9], rest: 90, cat: "shoulders", note: "Light weight, lead with the elbows, open the arms wide and squeeze the rear delts." },
+    { name: "Preacher Curls", target: "8–12", sets: 2, rpe: [9,9], rest: 90, cat: "biceps", note: "Upper arms flat on the pad, curl up, lower slowly to a full stretch." },
+    { name: "Reverse Cable Bicep Curls", target: "10–15", sets: 2, rpe: [9,9], rest: 60, cat: "forearms", note: "Palms facing down through the whole curl, elbows pinned to your sides." },
+    { name: "Single-Arm Forearm Curls", target: "12–20", sets: 2, rpe: [9,9], rest: 60, cat: "forearms", note: "Forearm resting on a bench, curl with just the wrist, full range both ways." }
   ],
-  "Legs (Home)": [
-    { name: "Barbell Squat", target: "6–10", sets: 2, rpe: [8,9], rest: 180, cat: "quads", note: "Bar on your back, squat to depth, drive up through your heels." },
-    { name: "Barbell Romanian Deadlift", target: "8–12", sets: 2, rpe: [8,9], rest: 120, cat: "hamstrings", note: "Soft knees, hinge at the hips, feel the stretch in your hamstrings." },
-    { name: "Bulgarian Split Squat", target: "8–12", sets: 2, rpe: [9,9], rest: 120, cat: "quads", note: "Rear foot elevated on a chair or step, drive through the front heel." },
-    { name: "Lateral Lunges (holding DB)", target: "10–12", sets: 2, rpe: [9,9], rest: 90, cat: "quads", note: "Step wide, sit back into the working leg, keep the other straight." },
-    { name: "Standing Calf Raises", target: "15–20", sets: 3, rpe: [9,9], rest: 60, cat: "calves", note: "Full stretch at the bottom, pause and squeeze at the top of each rep." }
+  "Legs": [
+    { name: "Leg Press", target: "8–12", sets: 2, rpe: [8,9], rest: 150, cat: "quads", note: "Feet shoulder-width, lower until your knees are around 90 degrees, press through your heels without locking out." },
+    { name: "Seated Leg Curl", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "hamstrings", note: "Pad snug on your lower legs, curl down fully, control the return." },
+    { name: "Leg Extensions", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "quads", note: "Extend until your legs are straight, squeeze the quads for a second, lower slowly." },
+    { name: "Hip Abduction Machine", target: "12–20", sets: 2, rpe: [9,9], rest: 60, cat: "hips", note: "Push your legs apart with control, pause at the end and don't swing." },
+    { name: "Hip Adduction Machine", target: "12–20", sets: 2, rpe: [9,9], rest: 60, cat: "hips", note: "Bring your legs together slowly, pause at the squeeze, control the way back." },
+    { name: "Standing Calf Raises", target: "10–15", sets: 2, rpe: [9,9], rest: 60, cat: "calves", note: "Full stretch at the bottom, pause and squeeze at the top of each rep." }
+  ],
+  "Full Body": [
+    { name: "Smith Machine Incline Bench Press", target: "8–12", sets: 2, rpe: [8,9], rest: 120, cat: "chest", note: "Bench at a low incline, lower the bar to your upper chest, press straight up without flaring your elbows." },
+    { name: "T-Bar Row", target: "8–12", sets: 2, rpe: [8,9], rest: 120, cat: "back", note: "Chest supported or hinged with a flat back, pull to your lower ribs, squeeze your shoulder blades." },
+    { name: "Leg Press", target: "10–15", sets: 2, rpe: [8,9], rest: 150, cat: "quads", note: "Feet shoulder-width, lower until your knees are around 90 degrees, press through your heels without locking out." },
+    { name: "Seated Leg Curl", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "hamstrings", note: "Pad snug on your lower legs, curl down fully, control the return." },
+    { name: "Shoulder Press Machine", target: "8–12", sets: 2, rpe: [8,9], rest: 120, cat: "shoulders", note: "Back flat against the pad, press up without shrugging, stop just short of locking out." },
+    { name: "Reverse Chest Fly Machine", target: "12–20", sets: 2, rpe: [9,9], rest: 90, cat: "shoulders", note: "Light weight, lead with the elbows, open the arms wide and squeeze the rear delts." },
+    { name: "Single-Arm Cable Lateral Raises", target: "12–20", sets: 2, rpe: [9,9], rest: 90, cat: "shoulders", note: "One arm at a time, slight elbow bend, lead with the elbow and stop at shoulder height." },
+    { name: "Single-Arm Tricep Pushdowns", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "triceps", note: "Elbow pinned to your side, press down until the arm is straight, control the return." },
+    { name: "Preacher Curls", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "biceps", note: "Upper arms flat on the pad, curl up, lower slowly to a full stretch." },
+    { name: "Abdominal Crunch Machine", target: "10–15", sets: 2, rpe: [9,9], rest: 90, cat: "abs", note: "Curl your ribs toward your hips, exhale at the bottom, don't pull with your arms." },
+    { name: "Standing Calf Raises", target: "10–15", sets: 2, rpe: [9,9], rest: 60, cat: "calves", note: "Full stretch at the bottom, pause and squeeze at the top of each rep." }
   ]
 };
 
@@ -782,7 +798,7 @@ function exerciseIconSVG(cat, size) {
 const EXERCISE_CAT = {};
 Object.values(WORKOUTS).forEach(list => list.forEach(ex => { EXERCISE_CAT[ex.name] = ex.cat; }));
 
-const SCHEDULE = { 0: "Push (Home)", 1: "Pull (Home)", 2: "Legs (Home)", 3: "Push (Home)", 4: "Pull (Home)", 5: "Legs (Home)", 6: null };
+const SCHEDULE = { 0: "Push + Abs", 1: null, 2: "Pull", 3: "Legs", 4: null, 5: "Full Body", 6: null };
 const DOW_NAMES = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 
 function mondayIndex(jsDay) { return (jsDay + 6) % 7; }
