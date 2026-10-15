@@ -226,6 +226,96 @@
   .modal-date { color: var(--text-muted); font-size: 12px; font-weight: 600; }
   .modal-title { font-size: 20px; font-weight: 800; margin-top: 2px; }
 
+  /* Full-screen workout page */
+  .session-page {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    flex-direction: column;
+    background: var(--bg);
+    background-image: radial-gradient(ellipse 120% 55% at 50% -8%, rgba(255,255,255,0.11), transparent 70%), linear-gradient(180deg, #181818 0%, #0b0b0b 55%, #000000 100%);
+    animation: fadeIn 0.2s ease;
+  }
+  .session-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: calc(10px + env(safe-area-inset-top)) 14px 10px;
+    background: rgba(8,8,8,0.9);
+    border-bottom: 1px solid var(--border);
+  }
+  .session-back {
+    flex-shrink: 0;
+    width: 42px; height: 42px;
+    border-radius: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-light);
+    color: #fff;
+    font-size: 24px;
+    line-height: 1;
+    padding: 0 0 3px;
+  }
+  .session-heading { flex: 1; min-width: 0; }
+  .session-heading .modal-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .session-clock { text-align: right; flex-shrink: 0; }
+  #sessionClock { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.3px; line-height: 1.1; }
+  .clock-label { font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; }
+  .session-progress { height: 3px; background: var(--border); }
+  .session-progress > div { height: 100%; width: 0; background: #fff; transition: width 0.25s ease; }
+  .session-scroll { flex: 1; overflow-y: auto; padding: 14px 14px 24px; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  .session-page .save-bar { position: static; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+
+  .exercise-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .exercise-head .exercise-name { flex: 1; min-width: 0; }
+  .ex-count {
+    flex-shrink: 0;
+    font-size: 12px; font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    background: var(--surface-2);
+    border: 1px solid var(--border-light);
+    padding: 4px 10px;
+    border-radius: 999px;
+  }
+  .exercise-card.all-done { border-color: #fff; }
+  .exercise-card.all-done .ex-count { background: #fff; color: #000; border-color: #fff; }
+
+  .sets-table th:last-child { width: 56px; }
+  .sets-table input[type="number"] { padding: 12px 4px; font-size: 16px; }
+  .chk { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; cursor: pointer; }
+  .sets-table .chk input { position: absolute; opacity: 0; width: 0; height: 0; padding: 0; border: 0; pointer-events: none; }
+  .chk-box {
+    width: 32px; height: 32px;
+    border-radius: 10px;
+    border: 2px solid #4a4a4a;
+    background: var(--surface-2);
+    display: flex; align-items: center; justify-content: center;
+    transition: background var(--transition), border-color var(--transition), transform 0.1s ease;
+  }
+  .chk:active .chk-box { transform: scale(0.92); }
+  .chk input:checked + .chk-box { background: #fff; border-color: #fff; }
+  .chk input:checked + .chk-box::after {
+    content: "";
+    width: 8px; height: 15px;
+    border: solid #000;
+    border-width: 0 3px 3px 0;
+    transform: rotate(45deg) translate(-1px, -1px);
+  }
+  .sets-table tr.set-done input.w-input, .sets-table tr.set-done input.r-input { opacity: 0.5; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 96px; z-index: 300;
+    transform: translateX(-50%) translateY(10px);
+    max-width: 88%; text-align: center;
+    background: #fff; color: #000;
+    padding: 10px 16px; border-radius: 999px;
+    font-size: 13px; font-weight: 700;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
   .exercise-card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -661,23 +751,26 @@
   </button>
 </div>
 
-<div id="sessionModal" class="modal-overlay">
-  <div class="modal-sheet" style="background:#0a0a0a;width:100%;max-height:92vh;display:flex;flex-direction:column;border-radius:18px 18px 0 0;overflow:hidden;border-top:1px solid var(--border);">
-    <div class="modal-handle"></div>
-    <div class="modal-header">
-      <div>
-        <div id="sessionDate" class="modal-date"></div>
-        <div id="sessionTitle" class="modal-title"></div>
-      </div>
-      <button id="cancelSession" class="btn-icon center-btn">×</button>
+<div id="sessionModal" class="session-page">
+  <div class="session-top">
+    <button id="cancelSession" class="session-back" aria-label="Back">‹</button>
+    <div class="session-heading">
+      <div class="modal-date"><span id="sessionDate"></span> · <span id="sessionSets">0/0 sets</span></div>
+      <div id="sessionTitle" class="modal-title"></div>
     </div>
-    <div id="sessionExercises" style="overflow-y:auto;padding:4px 16px 14px;flex:1;"></div>
-    <div class="save-bar" id="saveBar" style="position:static;padding-bottom:12px;">
-      <button class="template" id="saveTemplateBtn">Save Template</button>
-      <button class="save" id="saveSession">Finish Workout</button>
+    <div class="session-clock">
+      <div id="sessionClock">0:00</div>
+      <div class="clock-label">In gym</div>
     </div>
   </div>
+  <div class="session-progress"><div id="sessionProgressBar"></div></div>
+  <div id="sessionExercises" class="session-scroll"></div>
+  <div class="save-bar" id="saveBar">
+    <button class="template" id="saveTemplateBtn">Save Template</button>
+    <button class="save" id="saveSession">Finish Workout</button>
+  </div>
 </div>
+<div id="toast"></div>
 
 <div id="overviewModal" class="modal-overlay">
   <div class="modal-sheet panel" style="width:100%;max-height:84vh;overflow-y:auto;border-radius:18px 18px 0 0;margin:0;padding:16px;">
@@ -694,7 +787,7 @@
 
 <script>
 // ---------- APP VERSION / AUTO UPDATE ----------
-const APP_VERSION = "1.1.1";
+const APP_VERSION = "1.2.0";
 document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
 
 function checkForUpdate() {
@@ -817,6 +910,17 @@ window.addEventListener('popstate', () => {
   else if (name === 'overview') closeOverviewModal(true);
   else if (name === 'tab') goToPageByIndex(0);
 });
+(function setupNativeBack() {
+  const App = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if (!App || !App.addListener) return;
+  App.addListener('backButton', () => {
+    const top = layerStack[layerStack.length - 1];
+    if (top === 'session') closeSessionModal();
+    else if (top === 'overview') closeOverviewModal();
+    else if (top === 'tab') goToPageByIndex(0);
+    else if (App.exitApp) App.exitApp();
+  });
+})();
 
 document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -884,97 +988,115 @@ function renderToday() {
   }
 }
 
-// ---------- SESSION TIMERS ----------
+// ---------- WORKOUT SCREEN ----------
 let currentSessionDay = null;
 let currentSessionDate = null;
-let exerciseTimers = {};
+let sessionStartedAt = 0;
+let sessionClockId = null;
+const DRAFT_KEY = 'gymDraft';
+const DRAFT_STALE_MS = 4 * 60 * 60 * 1000; // after this long away, the in-gym clock starts over
 
-function clearAllTimers() {
-  Object.values(exerciseTimers).forEach(t => { if (t.intervalId) clearInterval(t.intervalId); });
-  exerciseTimers = {};
-}
-
-function formatMMSS(totalSeconds) {
-  totalSeconds = Math.max(0, Math.round(totalSeconds));
-  const m = Math.floor(totalSeconds / 60);
+function formatClock(totalSeconds) {
+  totalSeconds = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
   const s = totalSeconds % 60;
-  return m + ':' + String(s).padStart(2, '0');
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? h + ':' + String(m).padStart(2, '0') + ':' + ss : m + ':' + ss;
+}
+function tickSessionClock() {
+  document.getElementById('sessionClock').textContent = formatClock((Date.now() - sessionStartedAt) / 1000);
+}
+function stopSessionClock() {
+  if (sessionClockId) { clearInterval(sessionClockId); sessionClockId = null; }
 }
 
-function initExerciseTimer(i, ex) {
-  exerciseTimers[i] = { state: 'idle', currentSet: 1, totalSets: ex.sets, restSeconds: ex.rest || 90, elapsed: 0, remaining: 0, graceRemaining: 0, intervalId: null };
+let toastTimer = null;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
 }
 
-function renderTimerPanel(i) {
-  const t = exerciseTimers[i];
-  const displayEl = document.getElementById('timerDisplay-' + i);
-  const subEl = document.getElementById('timerSub-' + i);
-  const btnEl = document.getElementById('timerBtn-' + i);
-  if (!t || !displayEl || !subEl || !btnEl) return;
+// An unfinished workout is kept as a draft, so a back swipe never loses what was typed.
+function readDraft() { try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) { return null; } }
+function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
 
-  if (t.state === 'idle') {
-    const finished = t.currentSet > t.totalSets;
-    displayEl.textContent = finished ? 'Done' : '0:00';
-    subEl.textContent = finished ? 'All sets complete' : ('Set ' + t.currentSet + ' of ' + t.totalSets);
-    btnEl.textContent = finished ? 'Mark Exercise Done' : 'Start Set ' + t.currentSet;
-    btnEl.disabled = false; btnEl.style.opacity = '1';
-  } else if (t.state === 'grace') {
-    displayEl.textContent = String(t.graceRemaining);
-    subEl.textContent = 'Get ready…';
-    btnEl.textContent = 'Starting…';
-    btnEl.disabled = true; btnEl.style.opacity = '0.6';
-  } else if (t.state === 'running') {
-    displayEl.textContent = formatMMSS(t.elapsed);
-    subEl.textContent = 'Set ' + t.currentSet + ' running';
-    btnEl.textContent = 'End Set ' + t.currentSet;
-    btnEl.disabled = false; btnEl.style.opacity = '1';
-  } else if (t.state === 'resting') {
-    displayEl.textContent = formatMMSS(t.remaining);
-    subEl.textContent = 'Resting — next: Set ' + t.currentSet;
-    btnEl.textContent = 'Skip Rest';
-    btnEl.disabled = false; btnEl.style.opacity = '1';
-  }
+function collectSets(card) {
+  const w = card.querySelectorAll('.w-input');
+  const r = card.querySelectorAll('.r-input');
+  const d = card.querySelectorAll('.d-input');
+  const sets = [];
+  w.forEach((wi, idx) => sets.push({ w: wi.value.trim(), r: r[idx].value.trim(), done: !!(d[idx] && d[idx].checked) }));
+  return sets;
 }
 
-function timerButtonClick(i) {
-  const t = exerciseTimers[i]; if (!t) return;
-  if (t.state === 'idle') {
-    if (t.currentSet > t.totalSets) t.currentSet = 1;
-    t.state = 'grace'; t.graceRemaining = 2;
-    renderTimerPanel(i);
-    if (t.intervalId) clearInterval(t.intervalId);
-    t.intervalId = setInterval(() => {
-      t.graceRemaining--;
-      if (t.graceRemaining <= 0) {
-        clearInterval(t.intervalId);
-        t.state = 'running'; t.elapsed = 0;
-        renderTimerPanel(i);
-        t.intervalId = setInterval(() => { t.elapsed++; renderTimerPanel(i); }, 1000);
-      } else { renderTimerPanel(i); }
-    }, 1000);
-  } else if (t.state === 'running') {
-    if (t.intervalId) clearInterval(t.intervalId);
-    t.state = 'resting'; t.remaining = t.restSeconds;
-    renderTimerPanel(i);
-    t.intervalId = setInterval(() => {
-      t.remaining--;
-      if (t.remaining <= 0) {
-        clearInterval(t.intervalId); t.intervalId = null;
-        t.currentSet++; t.state = 'idle'; renderTimerPanel(i);
-      } else { renderTimerPanel(i); }
-    }, 1000);
-  } else if (t.state === 'resting') {
-    if (t.intervalId) clearInterval(t.intervalId); t.intervalId = null;
-    t.currentSet++; t.state = 'idle'; renderTimerPanel(i);
-  }
+function saveDraft() {
+  if (!currentSessionDay) return;
+  const ex = {};
+  document.querySelectorAll('#sessionExercises .exercise-card').forEach(card => { ex[card.dataset.exName] = collectSets(card); });
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ day: currentSessionDay, date: currentSessionDate, startedAt: sessionStartedAt, active: Date.now(), ex }));
+  } catch (e) {}
 }
 
-// ---------- SHINY DONE & EDIT STATE HANDLING ----------
+function escAttr(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+
+function setRowHTML(num, w, r, done) {
+  return `<tr class="${done ? 'set-done' : ''}">
+    <td style="font-size:14px;font-weight:bold;">${num}</td>
+    <td><input type="number" inputmode="decimal" class="w-input" value="${escAttr(w)}" placeholder="kg"></td>
+    <td><input type="number" inputmode="numeric" class="r-input" value="${escAttr(r)}" placeholder="reps"></td>
+    <td><label class="chk"><input type="checkbox" class="d-input" ${done ? 'checked' : ''}><span class="chk-box"></span></label></td>
+  </tr>`;
+}
+
+function updateSessionProgress() {
+  let total = 0, done = 0;
+  document.querySelectorAll('#sessionExercises .exercise-card').forEach(card => {
+    const boxes = card.querySelectorAll('.d-input');
+    let dn = 0;
+    boxes.forEach(b => { if (b.checked) dn++; });
+    total += boxes.length; done += dn;
+    const cnt = card.querySelector('.ex-count');
+    if (cnt) cnt.textContent = dn + '/' + boxes.length;
+    card.classList.toggle('all-done', boxes.length > 0 && dn === boxes.length);
+  });
+  document.getElementById('sessionSets').textContent = done + '/' + total + ' sets';
+  document.getElementById('sessionProgressBar').style.width = (total ? (done / total * 100) : 0) + '%';
+}
+
+(function setupSessionEvents() {
+  const box = document.getElementById('sessionExercises');
+  box.addEventListener('change', e => {
+    if (!e.target.classList.contains('d-input')) { saveDraft(); return; }
+    const card = e.target.closest('.exercise-card');
+    const wasAll = card.classList.contains('all-done');
+    e.target.closest('tr').classList.toggle('set-done', e.target.checked);
+    updateSessionProgress();
+    if (e.target.checked && navigator.vibrate) { try { navigator.vibrate(15); } catch (err) {} }
+    if (!wasAll && card.classList.contains('all-done')) {
+      card.classList.remove('card-completed-flash');
+      void card.offsetWidth;
+      card.classList.add('card-completed-flash');
+    }
+    saveDraft();
+  });
+  box.addEventListener('input', () => saveDraft());
+})();
+
 function startSession(dayName, dateStr) {
-  clearAllTimers();
+  stopSessionClock();
   currentSessionDay = dayName;
   currentSessionDate = dateStr || todayStr();
   const exercises = WORKOUTS[dayName];
+
+  const draft = readDraft();
+  const resume = !!(draft && draft.day === dayName && draft.date === currentSessionDate && draft.ex);
+  sessionStartedAt = (resume && draft.startedAt && (Date.now() - (draft.active || 0)) < DRAFT_STALE_MS) ? draft.startedAt : Date.now();
+
   document.getElementById('sessionDate').textContent = currentSessionDate;
   document.getElementById('sessionTitle').textContent = dayName;
   const container = document.getElementById('sessionExercises');
@@ -989,172 +1111,117 @@ function startSession(dayName, dateStr) {
 
     const key = dayName + '||' + ex.name;
     const saved = (lastUsed[key] && lastUsed[key].sets) || [];
+    const drafted = resume && draft.ex[ex.name] ? draft.ex[ex.name] : null;
+    const numSets = drafted ? Math.max(ex.sets, drafted.length) : ex.sets;
     let rows = '';
-    const numSets = ex.sets;
     for (let s = 0; s < numSets; s++) {
-      const prevW = saved[s] ? saved[s].w : '';
-      const prevR = saved[s] ? saved[s].r : '';
-      rows += `<tr>
-        <td style="font-size:14px; font-weight:bold;">${s+1}</td>
-        <td><input type="number" inputmode="decimal" class="w-input" value="${prevW}" placeholder="kg"></td>
-        <td><input type="number" inputmode="numeric" class="r-input" value="${prevR}" placeholder="reps"></td>
-      </tr>`;
+      const src = drafted ? drafted[s] : saved[s];
+      rows += setRowHTML(s + 1, src ? src.w : '', src ? src.r : '', !!(drafted && drafted[s] && drafted[s].done));
     }
 
-
     card.innerHTML = `
-      <div class="exercise-name">${ex.name}</div>
-      <div class="exercise-target">Target: ${ex.target}</div>
-
-      <div class="interactive-box" id="interactiveBox-${i}">
-        ${ex.note ? `<div style="font-size:12px;line-height:1.4;color:#aaa;background:#131313;border-left:3px solid #fff;padding:6px 8px;margin:4px 0 10px;">${ex.note}</div>` : ''}
-        <div style="display:flex;gap:12px;align-items:center;margin-top:6px;">
-          <div style="flex:1;min-width:0;">
-            <table class="sets-table">
-              <tr><th>Set</th><th>Kg</th><th>Reps</th></tr>
-              ${rows}
-            </table>
-          </div>
-        </div>
-        <div class="set-btns">
-          <button class="add-set">+ Add Set</button>
-          <button class="remove remove-set">− Remove Set</button>
-        </div>
-        <div style="margin-top:10px;background:#000;border:1px solid #222;border-radius:12px;padding:10px;">
-          <div id="timerDisplay-${i}" style="font-size:32px;font-weight:800;text-align:center;font-variant-numeric:tabular-nums;color:#fff;">0:00</div>
-          <div id="timerSub-${i}" style="font-size:13px;color:#888;text-align:center;margin-bottom:6px;">Set 1 of ${ex.sets}</div>
-          <button id="timerBtn-${i}" style="width:100%;padding:12px;background:#fff;color:#000;border:none;border-radius:8px;font-weight:700;font-size:14px;">Start Set 1</button>
-        </div>
+      <div class="exercise-head">
+        <div class="exercise-name">${ex.name}</div>
+        <div class="ex-count">0/${numSets}</div>
       </div>
-
-      <div class="completed-gui-box" id="completedBox-${i}" style="display:none;text-align:center;padding:12px;background:rgba(255,255,255,0.03);border:1px dashed #555;border-radius:12px;margin-top:6px;">
-        <div style="font-size:18px;font-weight:800;color:#fff;display:flex;align-items:center;justify-content:center;gap:6px;">✓ Done!</div>
-        <div style="font-size:13px;color:#aaa;margin-bottom:8px;">Muscular Failure stats logged & saved.</div>
-        <button class="action-edit-btn" id="actionEditBtn-${i}" style="padding:6px 18px;background:#000;border:1px solid #fff;color:#eee;font-size:13px;font-weight:700;border-radius:6px;">Edit Stats</button>
+      <div class="exercise-target">Target: ${ex.target}</div>
+      ${ex.note ? `<div class="exercise-note">${ex.note}</div>` : ''}
+      <table class="sets-table">
+        <tr><th>Set</th><th>Kg</th><th>Reps</th><th>Done</th></tr>
+        ${rows}
+      </table>
+      <div class="set-btns">
+        <button class="add-set">+ Add Set</button>
+        <button class="remove remove-set">− Remove Set</button>
       </div>
     `;
     container.appendChild(card);
 
-    initExerciseTimer(i, ex);
-    document.getElementById('timerBtn-' + i).addEventListener('click', () => {
-      const t = exerciseTimers[i];
-      if (t && t.state === 'idle' && t.currentSet > t.totalSets) {
-        card.classList.remove('card-completed-flash');
-        void card.offsetWidth;
-        card.classList.add('card-completed-flash');
-        document.getElementById('interactiveBox-' + i).style.display = 'none';
-        document.getElementById('completedBox-' + i).style.display = 'block';
-      } else {
-        timerButtonClick(i);
-      }
-    });
-
-    document.getElementById('actionEditBtn-' + i).onclick = () => {
-      card.classList.remove('card-completed-flash');
-      document.getElementById('completedBox-' + i).style.display = 'none';
-      document.getElementById('interactiveBox-' + i).style.display = 'block';
-    };
-
     card.querySelector('.add-set').onclick = () => {
       const table = card.querySelector('.sets-table');
-      const setNum = table.querySelectorAll('tr').length;
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${setNum}</td>
-        <td><input type="number" inputmode="decimal" class="w-input" placeholder="kg"></td>
-        <td><input type="number" inputmode="numeric" class="r-input" placeholder="reps"></td>`;
-      table.appendChild(tr);
-
-      if(exerciseTimers[i]) {
-        exerciseTimers[i].totalSets = table.querySelectorAll('tr').length - 1;
-        renderTimerPanel(i);
-      }
+      const num = table.querySelectorAll('tr').length; // header row + existing sets = next set number
+      table.insertAdjacentHTML('beforeend', setRowHTML(num, '', '', false));
+      updateSessionProgress();
+      saveDraft();
     };
     card.querySelector('.remove-set').onclick = () => {
       const table = card.querySelector('.sets-table');
-      const rowsEls = table.querySelectorAll('tr');
-      if (rowsEls.length > 2) {
-        rowsEls[rowsEls.length-1].remove();
-        if(exerciseTimers[i]) {
-          exerciseTimers[i].totalSets = table.querySelectorAll('tr').length - 1;
-          renderTimerPanel(i);
-        }
+      const rowEls = table.querySelectorAll('tr');
+      if (rowEls.length > 2) {
+        rowEls[rowEls.length - 1].remove();
+        updateSessionProgress();
+        saveDraft();
       }
     };
   });
 
+  updateSessionProgress();
+  tickSessionClock();
+  sessionClockId = setInterval(tickSessionClock, 1000);
   document.getElementById('sessionModal').style.display = 'flex';
+  container.scrollTop = 0;
   if (!layerStack.includes('session')) pushLayer('session');
 }
 
 function closeSessionModal(fromPop) {
-  clearAllTimers();
+  stopSessionClock();
   document.getElementById('sessionModal').style.display = 'none';
   if (fromPop !== true) removeLayer('session');
+  const draft = readDraft();
+  if (draft && draft.day === currentSessionDay && draft.date === currentSessionDate) {
+    showToast('Workout kept — open it again to continue');
+  }
 }
 
-document.getElementById('cancelSession').onclick = closeSessionModal;
+document.getElementById('cancelSession').onclick = () => closeSessionModal();
 
 document.getElementById('saveTemplateBtn').onclick = () => {
-  const container = document.getElementById('sessionExercises');
-  const cards = container.querySelectorAll('.exercise-card');
+  const cards = document.querySelectorAll('#sessionExercises .exercise-card');
   let count = 0;
 
   cards.forEach(card => {
-    const name = card.dataset.exName;
-    const wInputs = card.querySelectorAll('.w-input');
-    const rInputs = card.querySelectorAll('.r-input');
-    const sets = [];
-    wInputs.forEach((w, idx) => {
-      const wv = w.value.trim();
-      const rv = rInputs[idx].value.trim();
-      if (wv !== '' || rv !== '') sets.push({ w: wv, r: rv });
-    });
+    const sets = collectSets(card).filter(s => s.w !== '' || s.r !== '').map(s => ({ w: s.w, r: s.r }));
     if (sets.length > 0) {
-      lastUsed[currentSessionDay + '||' + name] = { sets };
+      lastUsed[currentSessionDay + '||' + card.dataset.exName] = { sets };
       count++;
     }
   });
 
   if (count === 0) { alert('Fill in stats before saving template!'); return; }
   saveLastUsed(lastUsed);
-  alert('Template saved!');
+  showToast('Template saved');
 };
 
 document.getElementById('saveSession').onclick = () => {
-  const container = document.getElementById('sessionExercises');
-  const cards = container.querySelectorAll('.exercise-card');
+  const cards = document.querySelectorAll('#sessionExercises .exercise-card');
   const date = currentSessionDate || todayStr();
   const entry = [];
 
   cards.forEach(card => {
     const name = card.dataset.exName;
     const target = WORKOUTS[currentSessionDay].find(e => e.name === name).target;
-    const wInputs = card.querySelectorAll('.w-input');
-    const rInputs = card.querySelectorAll('.r-input');
-    const sets = [];
-    wInputs.forEach((w, idx) => {
-      const wv = w.value.trim();
-      const rv = rInputs[idx].value.trim();
-      if (wv !== '' || rv !== '') sets.push({ w: wv, r: rv });
-    });
+    const sets = collectSets(card).filter(s => s.w !== '' || s.r !== '' || s.done);
     if (sets.length > 0) {
       entry.push({ name, target, sets });
-      lastUsed[currentSessionDay + '||' + name] = { sets };
+      const fill = sets.filter(s => s.w !== '' || s.r !== '').map(s => ({ w: s.w, r: s.r }));
+      if (fill.length > 0) lastUsed[currentSessionDay + '||' + name] = { sets: fill };
     }
   });
 
   if (entry.length === 0) { alert('Track at least one set before finishing!'); return; }
+  const duration = Math.round((Date.now() - sessionStartedAt) / 1000);
   if (!logs[date]) logs[date] = [];
   const existingIdx = logs[date].findIndex(s => s.day === currentSessionDay);
-  const record = { day: currentSessionDay, exercises: entry, time: new Date().toISOString() };
+  const record = { day: currentSessionDay, exercises: entry, time: new Date().toISOString(), duration };
 
   if (existingIdx >= 0) logs[date][existingIdx] = record;
   else logs[date].push(record);
 
   saveLogs(logs);
   saveLastUsed(lastUsed);
-  alert('Workout complete!');
+  clearDraft();
   closeSessionModal();
+  showToast('Workout saved · ' + formatClock(duration));
   if (document.getElementById('page-today').classList.contains('active')) renderToday();
   if (document.getElementById('page-calendar').classList.contains('active')) renderCalendar();
 };
@@ -1290,11 +1357,11 @@ function showDayLogs(dateStr, scheduled) {
   document.getElementById('overviewTitle').textContent = dateStr;
   let html = '';
   logs[dateStr].forEach(session => {
-    html += `<div style="color:#fff;font-weight:bold;font-size:15px;margin:8px 0;">${session.day}</div>`;
+    html += `<div style="color:#fff;font-weight:bold;font-size:15px;margin:8px 0;">${session.day}${session.duration ? ' · ' + Math.max(1, Math.round(session.duration / 60)) + ' min' : ''}</div>`;
     session.exercises.forEach(ex => {
       html += `<div style="background:#111;border-radius:12px;padding:10px;margin-bottom:8px;"><div style="font-weight:bold;font-size:14px;margin-bottom:4px;">${ex.name}</div>`;
       ex.sets.forEach((s, idx) => {
-        html += `<div style="font-size:13px;color:#ccc;margin-pi:2px;">Set ${idx+1}: <b>${s.w||'-'}kg</b> × <b>${s.r||'-'}</b> reps</div>`;
+        html += `<div style="font-size:13px;color:#ccc;margin-pi:2px;">Set ${idx+1}: <b>${s.w||'-'}kg</b> × <b>${s.r||'-'}</b> reps${s.done ? ' ✓' : ''}</div>`;
       });
       html += `</div>`;
     });
@@ -1344,7 +1411,7 @@ function goToPageByIndex(idx) {
   function activePageEl() { return document.querySelector('.page.active'); }
 
   function onStart(e) {
-    if (e.target.closest('input[type="range"], .cal-header, .modal-overlay')) return;
+    if (e.target.closest('input[type="range"], .cal-header, .modal-overlay, .session-page')) return;
     const t = e.touches ? e.touches[0] : e;
     startX = t.clientX; startY = t.clientY;
     tracking = true; horizontal = false;
@@ -1435,7 +1502,6 @@ function makeSheetDraggable(overlayId, closeFn) {
   });
 }
 
-makeSheetDraggable('sessionModal', closeSessionModal);
 makeSheetDraggable('overviewModal', () => closeOverviewModal());
 
 // ---------- INITIALIZE ----------

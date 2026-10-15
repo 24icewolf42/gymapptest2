@@ -15,7 +15,7 @@ cd "$OUT"
 cat > package.json <<'JSON'
 { "name": "rat-tracker-apk", "version": "1.0.0", "private": true }
 JSON
-npm install --no-audit --no-fund @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
+npm install --no-audit --no-fund @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 @capacitor/app@7
 
 cat > capacitor.config.json <<JSON
 {
