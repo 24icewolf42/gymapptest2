@@ -23,7 +23,7 @@ cat > capacitor.config.json <<JSON
   "appName": "$APP_NAME",
   "webDir": "www",
   "backgroundColor": "#000000",
-  "android": { "backgroundColor": "#000000" },
+  "android": { "backgroundColor": "#000000", "adjustMarginsForEdgeToEdge": "auto" },
   "server": { "androidScheme": "https" }
 }
 JSON
@@ -86,8 +86,30 @@ print("icons written")
 PY
 
 # --- Stable signing key so new builds install over the old app (keeps your data) ---
+# Gradle's default debug key lives in ~/.android and gets regenerated if it isn't picked up,
+# so point the debug signing config at the key stored in this repo explicitly.
+KEYSTORE="$ROOT/android-signing/debug.keystore"
 mkdir -p "$HOME/.android"
-cp "$ROOT/android-signing/debug.keystore" "$HOME/.android/debug.keystore"
+cp "$KEYSTORE" "$HOME/.android/debug.keystore"
+python3 - "$KEYSTORE" <<'PY'
+import re, sys
+path = "android/app/build.gradle"
+src = open(path).read()
+block = '''android {
+    signingConfigs {
+        debug {
+            storeFile file("%s")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
+    }
+''' % sys.argv[1]
+new, n = re.subn(r"^android \{\n", lambda m: block, src, count=1, flags=re.M)
+assert n == 1, "could not find the android { block in build.gradle"
+open(path, "w").write(new)
+print("debug signing config now points at", sys.argv[1])
+PY
 
 # --- Version numbers: versionCode goes up with every build ---
 APP_VER="$(grep -o 'APP_VERSION = "[^"]*"' "$ROOT/index.html" | head -1 | sed 's/.*"\(.*\)"/\1/')"
@@ -102,3 +124,15 @@ chmod +x gradlew
 ./gradlew assembleDebug --no-daemon --console=plain
 cp app/build/outputs/apk/debug/app-debug.apk "$OUT/rat-tracker.apk"
 ls -la "$OUT/rat-tracker.apk"
+
+# --- Safety check: never publish an APK signed with anything but the repo key ---
+# (a different key would make the next update refuse to install over the old app)
+want="$(keytool -list -v -keystore "$KEYSTORE" -storepass android 2>/dev/null | grep -m1 'SHA256:' | tr -d ' ')"
+have="$(keytool -printcert -jarfile "$OUT/rat-tracker.apk" 2>/dev/null | grep -m1 'SHA256:' | tr -d ' ')"
+echo "repo key : $want"
+echo "apk key  : $have"
+if [ -z "$want" ] || [ "$want" != "$have" ]; then
+  echo "ERROR: APK is not signed with android-signing/debug.keystore" >&2
+  exit 1
+fi
+echo "signing key check passed"
