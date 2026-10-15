@@ -787,7 +787,7 @@
 
 <script>
 // ---------- APP VERSION / AUTO UPDATE ----------
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.3.1";
 document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
 
 function checkForUpdate() {
@@ -806,6 +806,11 @@ const APK_URL = 'https://github.com/' + APK_REPO + '/releases/download/latest/ra
 let apkUpdateVersion = null;
 let lastApkCheck = 0;
 
+function nativePlugin(name) {
+  const C = window.Capacitor;
+  if (!C) return null;
+  try { return (C.Plugins && C.Plugins[name]) || (C.registerPlugin ? C.registerPlugin(name) : null); } catch (e) { return null; }
+}
 function isNativeApp() {
   return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 }
@@ -836,7 +841,7 @@ function checkForApkUpdate(force) {
     .catch(() => { /* offline — try again later */ });
 }
 function installApkUpdate() {
-  const P = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.ApkUpdater;
+  const P = nativePlugin('ApkUpdater');
   if (!P) { showToast('Updater not available in this build'); return; }
   showToast('Downloading update…');
   P.install({ url: APK_URL })
@@ -958,7 +963,9 @@ window.addEventListener('popstate', () => {
   else if (name === 'tab') goToPageByIndex(0);
 });
 (function setupNativeBack() {
-  const App = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  const C = window.Capacitor;
+  let App = null;
+  try { App = C && ((C.Plugins && C.Plugins.App) || (C.registerPlugin ? C.registerPlugin('App') : null)); } catch (e) {}
   if (!App || !App.addListener) return;
   App.addListener('backButton', () => {
     const top = layerStack[layerStack.length - 1];
