@@ -85,6 +85,112 @@ for d in legacy:
 print("icons written")
 PY
 
+# --- In-app updater: downloads the new APK from this repo's release and opens Android's installer ---
+PKG_DIR="android/app/src/main/java/$(echo "$APP_ID" | tr . /)"
+test -f "$PKG_DIR/MainActivity.java" || { echo "ERROR: MainActivity.java not found in $PKG_DIR" >&2; exit 1; }
+
+cat > "$PKG_DIR/ApkUpdaterPlugin.java" <<'JAVA'
+package com.roguelineage.rattracker;
+
+import android.content.Intent;
+import android.net.Uri;
+import androidx.core.content.FileProvider;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.CapacitorPlugin;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+
+@CapacitorPlugin(name = "ApkUpdater")
+public class ApkUpdaterPlugin extends Plugin {
+    // Only ever download from this app's own GitHub releases.
+    private static final String ALLOWED_PREFIX = "https://github.com/roguelineageaccmanager/gymapptest2/releases/download/";
+
+    @PluginMethod
+    public void install(final PluginCall call) {
+        final String url = call.getString("url");
+        if (url == null || !url.startsWith(ALLOWED_PREFIX)) {
+            call.reject("Update URL not allowed");
+            return;
+        }
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    File dir = new File(getContext().getCacheDir(), "updates");
+                    if (!dir.exists()) dir.mkdirs();
+                    File out = new File(dir, "rat-tracker.apk");
+                    if (out.exists()) out.delete();
+
+                    HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+                    conn.setConnectTimeout(20000);
+                    conn.setReadTimeout(60000);
+                    conn.setInstanceFollowRedirects(true);
+                    conn.setRequestProperty("User-Agent", "RatTracker-Updater");
+                    int code = conn.getResponseCode();
+                    if (code != 200) throw new Exception("Download failed (HTTP " + code + ")");
+
+                    InputStream in = conn.getInputStream();
+                    FileOutputStream fos = new FileOutputStream(out);
+                    byte[] buf = new byte[16384];
+                    int n;
+                    while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
+                    fos.close();
+                    in.close();
+                    conn.disconnect();
+
+                    if (out.length() < 1000000) throw new Exception("Downloaded file is too small to be the app");
+
+                    Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", out);
+                    Intent intent = new Intent(Intent.ACTION_VIEW);
+                    intent.setDataAndType(uri, "application/vnd.android.package-archive");
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    getContext().startActivity(intent);
+                    call.resolve();
+                } catch (Exception e) {
+                    call.reject(e.getMessage() == null ? "Update failed" : e.getMessage());
+                }
+            }
+        }).start();
+    }
+}
+JAVA
+
+cat > "$PKG_DIR/MainActivity.java" <<'JAVA'
+package com.roguelineage.rattracker;
+
+import android.os.Bundle;
+import com.getcapacitor.BridgeActivity;
+
+public class MainActivity extends BridgeActivity {
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        registerPlugin(ApkUpdaterPlugin.class);
+        super.onCreate(savedInstanceState);
+    }
+}
+JAVA
+
+# the installer intent needs this permission, and a file provider path that covers the cache folder
+MANIFEST="android/app/src/main/AndroidManifest.xml"
+if ! grep -q "REQUEST_INSTALL_PACKAGES" "$MANIFEST"; then
+  sed -i 's#<uses-permission android:name="android.permission.INTERNET" />#&\n    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />#' "$MANIFEST"
+fi
+grep -q "REQUEST_INSTALL_PACKAGES" "$MANIFEST" || { echo "ERROR: could not add REQUEST_INSTALL_PACKAGES to the manifest" >&2; exit 1; }
+grep -q "fileprovider" "$MANIFEST" || { echo "ERROR: manifest has no fileprovider" >&2; exit 1; }
+mkdir -p android/app/src/main/res/xml
+cat > android/app/src/main/res/xml/file_paths.xml <<'XML'
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-path name="my_images" path="." />
+    <cache-path name="my_cache_images" path="." />
+</paths>
+XML
+
 # --- Stable signing key so new builds install over the old app (keeps your data) ---
 # Gradle's default debug key lives in ~/.android and gets regenerated if it isn't picked up,
 # so point the debug signing config at the key stored in this repo explicitly.
