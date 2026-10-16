@@ -41,7 +41,7 @@ jobs:
           VER="$(grep -o 'APP_VERSION = "[^"]*"' index.html | head -1 | sed 's/.*"\(.*\)"/\1/')"
           gh release delete latest --cleanup-tag --yes || true
           gh release create latest build-apk/rat-tracker.apk \
-            --title "Rat Tracker v$VER" \
+            --title "Tracker v$VER" \
             --notes "Installable Android build of the app (built from commit ${GITHUB_SHA::7})." \
             --target "$GITHUB_SHA" --latest
 

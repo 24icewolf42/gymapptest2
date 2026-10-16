@@ -3,13 +3,14 @@
 # Runs on GitHub Actions (see .github/workflows/build-apk.yml). Set SKIP_GRADLE=1 to only prepare the project.
 set -euo pipefail
 
-APP_NAME="Rat Tracker"
+APP_NAME="Tracker"
 APP_ID="com.roguelineage.rattracker"
 ROOT="$(pwd)"
 OUT="$ROOT/build-apk"
 
 rm -rf "$OUT" && mkdir -p "$OUT/www"
 cp index.html manifest.json Version rest.png snake-loading.gif icon-192.png icon-512.png icon-192-maskable.png icon-512-maskable.png "$OUT/www/"
+cp -r fonts "$OUT/www/fonts"
 
 cd "$OUT"
 cat > package.json <<'JSON'
