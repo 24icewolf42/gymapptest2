@@ -523,7 +523,7 @@
 
 <script>
 // ---------- APP VERSION / AUTO UPDATE ----------
-const APP_VERSION = "1.5.0";
+const APP_VERSION = "1.6.0";
 document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
 
 function checkForUpdate() {
@@ -1502,4 +1502,169 @@ window.addEventListener('load', () => {
 })();
 </script>
 </body>
+  <!-- ===== v1.6 update: start/finish, background workout, Push rename, scrolling calendar, total time ===== -->
+<style>
+  #prevMonth, #nextMonth, #page-calendar > .cal-dow { display: none; }
+  .cal-month { margin-bottom: 26px; }
+  .cal-month-head { display: flex; justify-content: space-between; align-items: baseline; margin: 6px 2px 10px; font-family: var(--display); font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; font-size: 14px; color: var(--accent); }
+  .cal-month-head span { font-family: var(--font); font-weight: 600; text-transform: none; letter-spacing: 0; font-size: 12px; color: var(--text-muted); }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; text-align: center; }
+  #activeBar { display: none; position: fixed; left: 14px; right: 14px; bottom: calc(78px + env(safe-area-inset-bottom)); z-index: 16; align-items: center; justify-content: space-between; background: var(--accent); color: #000; padding: 12px 16px; border-radius: var(--radius-md); font-weight: 800; font-size: 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); cursor: pointer; }
+  #activeBar.on { display: flex; }
+  #activeBar b { font-family: var(--display); font-variant-numeric: tabular-nums; font-size: 18px; }
+</style>
+<script>
+(function () {
+  var AKEY = 'gymActive';
+
+  // ---- 1. "Push + Abs" becomes "Push" (old logs and saved weights are moved over) ----
+  var OLD = 'Push + Abs', NEW = 'Push';
+  if (WORKOUTS[OLD]) { WORKOUTS[NEW] = WORKOUTS[OLD]; delete WORKOUTS[OLD]; }
+  Object.keys(SCHEDULE).forEach(function (k) { if (SCHEDULE[k] === OLD) SCHEDULE[k] = NEW; });
+  var ch = false;
+  Object.keys(logs).forEach(function (d) { logs[d].forEach(function (s) { if (s.day === OLD) { s.day = NEW; ch = true; } }); });
+  if (ch) saveLogs(logs);
+  var mv = false;
+  Object.keys(lastUsed).forEach(function (k) {
+    if (k.indexOf(OLD + '||') === 0) { lastUsed[NEW + k.slice(OLD.length)] = lastUsed[k]; delete lastUsed[k]; mv = true; }
+  });
+  if (mv) saveLastUsed(lastUsed);
+  var dr = readDraft();
+  if (dr && dr.day === OLD) { dr.day = NEW; try { localStorage.setItem(DRAFT_KEY, JSON.stringify(dr)); } catch (e) {} }
+
+  function fmtDur(sec) {
+    var h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+    return h > 0 ? h + 'h ' + m + 'm' : m + 'm';
+  }
+
+  // ---- 2. Start / Finish with confirmation; workout keeps running in the background ----
+  function getActive() {
+    try {
+      var a = JSON.parse(localStorage.getItem(AKEY) || 'null');
+      if (a && Date.now() - a.startedAt > 12 * 3600 * 1000) { localStorage.removeItem(AKEY); return null; }
+      return a;
+    } catch (e) { return null; }
+  }
+  function setActive(a) {
+    try { if (a) localStorage.setItem(AKEY, JSON.stringify(a)); else localStorage.removeItem(AKEY); } catch (e) {}
+  }
+  var btn = document.getElementById('saveSession');
+  var origFinish = btn.onclick;
+  var started = false;
+  function paint() {
+    btn.textContent = started ? 'Finish workout' : 'Start workout';
+    document.querySelector('#sessionModal .clock-label').textContent = started ? 'In gym' : 'Not started';
+  }
+
+  var _start2 = startSession;
+  startSession = function (d, ds) {
+    _start2(d, ds);
+    var a = getActive();
+    if (a && a.day === currentSessionDay && a.date === currentSessionDate) {
+      started = true;
+      sessionStartedAt = a.startedAt;
+      tickSessionClock();
+    } else {
+      started = false;
+      stopSessionClock();
+      document.getElementById('sessionClock').textContent = '0:00';
+    }
+    paint();
+    refreshBar();
+  };
+
+  btn.onclick = function () {
+    if (!started) {
+      started = true;
+      sessionStartedAt = Date.now();
+      setActive({ day: currentSessionDay, date: currentSessionDate, startedAt: sessionStartedAt });
+      stopSessionClock();
+      tickSessionClock();
+      sessionClockId = setInterval(tickSessionClock, 1000);
+      paint();
+      showToast('Workout started');
+      return;
+    }
+    if (!confirm('Finish this workout and save it?')) return;
+    var d = currentSessionDate, before = JSON.stringify(logs[d] || null);
+    origFinish.call(btn);
+    if (JSON.stringify(logs[d] || null) !== before) { setActive(null); started = false; refreshBar(); }
+  };
+
+  // bar shown while a workout is running and you left the workout screen
+  var ab = document.createElement('div');
+  ab.id = 'activeBar';
+  ab.innerHTML = '<span>Workout running</span><b id="abTime">0:00</b>';
+  document.body.appendChild(ab);
+  ab.onclick = function () { var a = getActive(); if (a) startSession(a.day, a.date); };
+  function refreshBar() {
+    var a = getActive(), open = document.getElementById('sessionModal').style.display === 'flex';
+    if (a && !open) {
+      ab.classList.add('on');
+      document.getElementById('abTime').textContent = formatClock((Date.now() - a.startedAt) / 1000);
+    } else ab.classList.remove('on');
+  }
+  setInterval(refreshBar, 1000);
+  refreshBar();
+
+  // ---- 3. Calendar: every month in one scrolling list, newest at the bottom ----
+  var MN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  function mkCell(y, m, d) {
+    var ds = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+    var sch = SCHEDULE[mondayIndex(new Date(y, m, d).getDay())];
+    var isL = !!(logs[ds] && logs[ds].length);
+    var c = document.createElement('div');
+    c.className = 'cal-cell' + (sch ? ' workout' : ' rest') + (isL ? ' logged' : '') + (ds === todayStr() ? ' today' : '');
+    c.innerHTML = '<span>' + d + '</span><span class="cal-tag">' + (sch ? (sch === 'Full Body' ? 'Full' : sch) : 'Rest') + '</span>';
+    c.onclick = function () { if (isL) showDayLogs(ds, sch); else if (sch) startSession(sch, ds); };
+    return c;
+  }
+  renderCalendar = function () {
+    var el = document.getElementById('calendar');
+    el.style.display = 'block';
+    el.innerHTML = '';
+    document.getElementById('calTitle').textContent = 'Calendar';
+    var keys = Object.keys(logs).filter(function (k) { return logs[k] && logs[k].length; }).sort();
+    var now = new Date(), s = keys.length ? parseDateStr(keys[0]) : now;
+    var y = s.getFullYear(), m = s.getMonth(), cur = null;
+    while (true) {
+      var days = new Date(y, m + 1, 0).getDate(), first = mondayIndex(new Date(y, m, 1).getDay());
+      var n = 0, sec = 0;
+      for (var d = 1; d <= days; d++) {
+        var ds = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+        if (logs[ds]) logs[ds].forEach(function (x) { n++; sec += x.duration || 0; });
+      }
+      var wrap = document.createElement('div');
+      wrap.className = 'cal-month';
+      wrap.innerHTML = '<div class="cal-month-head">' + MN[m] + ' ' + y + '<span>' + (n ? n + ' workouts · ' + fmtDur(sec) : '–') + '</span></div>' +
+        '<div class="cal-dow"><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div><div>S</div></div>';
+      var grid = document.createElement('div');
+      grid.className = 'cal-grid';
+      for (var i = 0; i < first; i++) { var g = document.createElement('div'); g.className = 'cal-cell empty'; grid.appendChild(g); }
+      for (var k = 1; k <= days; k++) grid.appendChild(mkCell(y, m, k));
+      wrap.appendChild(grid);
+      el.appendChild(wrap);
+      if (y === now.getFullYear() && m === now.getMonth()) { cur = wrap; break; }
+      m++; if (m > 11) { m = 0; y++; }
+    }
+    if (cur) setTimeout(function () { cur.scrollIntoView(); }, 0);
+  };
+
+  // ---- 4. Stats: total time in the gym instead of the average ----
+  var _stats = renderStats;
+  renderStats = function () {
+    _stats();
+    var t = document.querySelectorAll('#statsSummary .stat-tile')[2];
+    if (!t) return;
+    var tot = 0;
+    Object.keys(logs).forEach(function (d) { logs[d].forEach(function (s) { tot += s.duration || 0; }); });
+    var num = t.querySelector('.stat-num');
+    num.textContent = fmtDur(tot);
+    num.style.fontSize = '22px';
+    t.querySelector('.stat-lbl').textContent = 'Total time';
+  };
+
+  renderToday();
+})();
+</script>
 </html>
