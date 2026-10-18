@@ -523,7 +523,7 @@
 
 <script>
 // ---------- APP VERSION / AUTO UPDATE ----------
-const APP_VERSION = "1.4.0";
+const APP_VERSION = "1.5.0";
 document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
 
 function checkForUpdate() {
@@ -1348,6 +1348,158 @@ window.addEventListener('load', () => {
     setTimeout(() => ls.remove(), 400);
   }, 400);
 });
+</script>
+  <!-- ===== v1.5 update: clean workout screen, autosave, smart rest timer ===== -->
+<style>
+  .exercise-target, .exercise-note, #saveTemplateBtn { display: none !important; }
+  #restBar { display: none; align-items: center; gap: 12px; padding: 10px 14px; background: var(--surface-2); border-top: 1px solid var(--border-light); }
+  #restBar.on { display: flex; }
+  #restBar.ready { border-top-color: var(--accent); }
+  .rb-main { flex: 1; min-width: 0; }
+  .rb-ex { font-weight: 800; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rb-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .rb-time { font-family: var(--display); font-weight: 800; font-size: 28px; font-variant-numeric: tabular-nums; color: var(--text); }
+  #restBar.ready .rb-time { color: var(--accent); }
+  #rbSkip { background: transparent; border: 1px solid var(--border-light); color: var(--text-muted); border-radius: 10px; padding: 8px 12px; font-size: 12px; font-weight: 600; }
+  .ex-saved { align-self: center; font-size: 11px; font-weight: 600; color: var(--text-muted); opacity: 0; transition: opacity 0.2s ease; }
+  .ex-saved.show { opacity: 1; }
+</style>
+<script>
+(function () {
+  var REST = {
+    "Smith Machine Incline Bench Press": 180, "Chest Press Machine": 150, "Shoulder Press Machine": 150,
+    "Single-Arm Cable Lateral Raises": 90, "Single-Arm Tricep Pushdowns": 90, "Abdominal Crunch Machine": 90,
+    "T-Bar Row": 180, "Assisted Pull-Ups": 180, "Seated Cable Row": 150, "Reverse Chest Fly Machine": 90,
+    "Preacher Curls": 90, "Reverse Cable Bicep Curls": 60, "Meow Curls": 60,
+    "Leg Press": 180, "Seated Leg Curl": 120, "Leg Extensions": 120,
+    "Hip Abduction Machine": 75, "Hip Adduction Machine": 75, "Standing Calf Raises": 60
+  };
+  Object.keys(WORKOUTS).forEach(function (d) {
+    WORKOUTS[d].forEach(function (e) { if (REST[e.name]) e.rest = REST[e.name]; });
+  });
+
+  var SWITCH_GAP = 30;
+  var GROUP = { forearms: 'biceps' };
+  function grp(c) { return GROUP[c] || c; }
+
+  var doneAt = {}, anyAt = 0, sel = null, wasWaiting = false, timer = null;
+
+  var tb = document.getElementById('saveTemplateBtn');
+  if (tb) tb.remove();
+
+  var bar = document.createElement('div');
+  bar.id = 'restBar';
+  bar.innerHTML = '<div class="rb-main"><div class="rb-ex" id="rbEx"></div><div class="rb-sub" id="rbSub"></div></div><div class="rb-time" id="rbTime"></div><button id="rbSkip">Skip</button>';
+  document.getElementById('sessionModal').insertBefore(bar, document.getElementById('saveBar'));
+
+  function meta(name) {
+    var l = WORKOUTS[currentSessionDay] || [];
+    for (var i = 0; i < l.length; i++) if (l[i].name === name) return l[i];
+    return null;
+  }
+  function fmt(s) { return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+  function calc(ex) {
+    var now = Date.now(), g = doneAt[grp(ex.cat)];
+    var same = g ? Math.max(0, ex.rest - (now - g) / 1000) : 0;
+    var sw = anyAt ? Math.max(0, SWITCH_GAP - (now - anyAt) / 1000) : 0;
+    return { same: same, sw: sw, rem: Math.ceil(Math.max(same, sw)) };
+  }
+  function renderBar() {
+    var ex = sel && meta(sel);
+    var open = document.getElementById('sessionModal').style.display !== 'none';
+    if (!ex || !open) { bar.classList.remove('on'); return; }
+    var c = calc(ex), ready = c.rem <= 0;
+    bar.classList.add('on');
+    bar.classList.toggle('ready', ready);
+    document.getElementById('rbEx').textContent = ex.name;
+    document.getElementById('rbTime').textContent = ready ? 'GO' : fmt(c.rem);
+    document.getElementById('rbSub').textContent = ready ? 'Rested, you are good to go'
+      : (c.same >= c.sw ? 'Same muscle, full ' + fmt(ex.rest) + ' rest' : 'Different muscle, short break');
+    if (wasWaiting && ready && navigator.vibrate) { try { navigator.vibrate([200, 100, 200]); } catch (e) {} }
+    wasWaiting = !ready;
+  }
+
+  function pick(card) {
+    if (!card) return;
+    var n = card.dataset.exName, ex = meta(n);
+    if (!ex) return;
+    if (n !== sel) { sel = n; wasWaiting = calc(ex).rem > 0; }
+    renderBar();
+  }
+
+  function flash(card) {
+    var t = card.querySelector('.ex-saved');
+    if (!t) {
+      t = document.createElement('span');
+      t.className = 'ex-saved';
+      t.textContent = 'Saved ✓';
+      card.querySelector('.exercise-head').insertBefore(t, card.querySelector('.ex-count'));
+    }
+    t.classList.add('show');
+    clearTimeout(t._t);
+    t._t = setTimeout(function () { t.classList.remove('show'); }, 1200);
+  }
+  function autosave(card) {
+    if (!currentSessionDay) return;
+    var all = collectSets(card).map(function (s) { return { w: s.w, r: s.r }; });
+    while (all.length && all[all.length - 1].w === '' && all[all.length - 1].r === '') all.pop();
+    var key = currentSessionDay + '||' + card.dataset.exName;
+    if (all.length) lastUsed[key] = { sets: all }; else delete lastUsed[key];
+    saveLastUsed(lastUsed);
+    flash(card);
+  }
+
+  var box = document.getElementById('sessionExercises');
+  box.addEventListener('focusin', function (e) { pick(e.target.closest('.exercise-card')); });
+  box.addEventListener('click', function (e) {
+    var card = e.target.closest('.exercise-card');
+    pick(card);
+    if (card && (e.target.closest('.add-set') || e.target.closest('.remove-set'))) autosave(card);
+  });
+  box.addEventListener('input', function (e) {
+    var card = e.target.closest('.exercise-card');
+    if (card) autosave(card);
+  });
+  box.addEventListener('change', function (e) {
+    var card = e.target.closest('.exercise-card');
+    if (!card) return;
+    if (e.target.classList.contains('d-input') && e.target.checked) {
+      var ex = meta(card.dataset.exName);
+      if (ex) {
+        doneAt[grp(ex.cat)] = Date.now();
+        anyAt = Date.now();
+        sel = ex.name;
+        wasWaiting = true;
+        renderBar();
+      }
+    }
+    autosave(card);
+  });
+
+  document.getElementById('rbSkip').onclick = function () {
+    var ex = sel && meta(sel);
+    if (!ex) return;
+    doneAt[grp(ex.cat)] = 0;
+    anyAt = 0;
+    renderBar();
+  };
+
+  var _start = startSession;
+  startSession = function (d, ds) {
+    doneAt = {}; anyAt = 0; sel = null; wasWaiting = false;
+    _start(d, ds);
+    renderBar();
+    clearInterval(timer);
+    timer = setInterval(renderBar, 1000);
+  };
+  var _close = closeSessionModal;
+  closeSessionModal = function (p) {
+    clearInterval(timer);
+    sel = null;
+    bar.classList.remove('on');
+    _close(p);
+  };
+})();
 </script>
 </body>
 </html>
