@@ -523,7 +523,7 @@
 
 <script>
 // ---------- APP VERSION / AUTO UPDATE ----------
-const APP_VERSION = "1.6.0";
+const APP_VERSION = "1.7.0";
 document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
 
 function checkForUpdate() {
@@ -1665,6 +1665,63 @@ window.addEventListener('load', () => {
   };
 
   renderToday();
+})();
+</script>
+  <!-- ===== v1.7 update: new look for the workout screen ===== -->
+<style>
+  /* header */
+  .session-top { padding-bottom: 12px; background: rgba(0,0,0,0.6); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+  .session-heading .modal-title { font-size: 21px; letter-spacing: 0.1em; }
+  #sessionClock { font-size: 26px; }
+  .session-progress { height: 4px; background: var(--surface-3); }
+  .session-progress > div { box-shadow: 0 0 14px rgba(241,238,230,0.5); }
+  .session-scroll { padding: 18px 16px 28px; }
+
+  /* exercise cards */
+  .exercise-card { padding: 18px 16px 14px; margin-bottom: 16px; border-radius: 20px; }
+  .exercise-head { align-items: center; gap: 12px; margin-bottom: 4px; }
+  .ex-cat { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
+  .exercise-name { font-size: 19px; line-height: 1.2; }
+  .ex-count { background: transparent; }
+
+  /* set rows */
+  .sets-table { margin-top: 10px; border-collapse: separate; border-spacing: 0 6px; }
+  .sets-table th { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim); padding: 0 0 2px; }
+  .sets-table td { padding: 0 3px; }
+  .sets-table td:first-child { color: var(--text-dim); font-weight: 800; font-size: 15px; }
+  .sets-table tr.set-done td:first-child { color: var(--accent); }
+  #sessionExercises .sets-table input[type="number"] { background: var(--bg-subtle); border: 1px solid var(--border); border-radius: 12px; padding: 13px 4px; font-size: 18px; font-weight: 800; font-family: var(--display); }
+  #sessionExercises .sets-table input[type="number"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(241,238,230,0.12); }
+  .sets-table input::placeholder { color: var(--text-dim); font-weight: 400; font-size: 13px; font-family: var(--font); }
+  .chk-box { width: 34px; height: 34px; border-radius: 50%; }
+  .set-btns { margin-top: 8px; }
+  .set-btns button { border: 0; background: var(--surface-2); border-radius: 12px; padding: 12px; font-size: 13px; color: var(--text-muted); }
+  .set-btns button.remove { background: transparent; border: 1px solid var(--border); }
+
+  /* rest bar + bottom button */
+  #restBar { margin: 0 14px 8px; border: 1px solid var(--border-light); border-radius: 16px; padding: 10px 14px 10px 16px; }
+  #restBar.ready { border-color: var(--accent); }
+  .rb-time { font-size: 30px; }
+  .save-bar { background: rgba(0,0,0,0.7); padding-top: 10px; }
+  .save-bar button { padding: 17px; border-radius: 14px; font-size: 16px; letter-spacing: 0.02em; }
+</style>
+<script>
+(function () {
+  // small muscle + rest label above each exercise name
+  var _s = startSession;
+  startSession = function (d, ds) {
+    _s(d, ds);
+    document.querySelectorAll('#sessionExercises .exercise-card').forEach(function (card) {
+      if (card.querySelector('.ex-cat')) return;
+      var ex = (WORKOUTS[currentSessionDay] || []).filter(function (e) { return e.name === card.dataset.exName; })[0];
+      if (!ex) return;
+      var lbl = (CATEGORY_META[ex.cat] || {}).label || ex.cat;
+      var t = document.createElement('div');
+      t.className = 'ex-cat';
+      t.textContent = lbl + ' · ' + Math.floor(ex.rest / 60) + ':' + String(ex.rest % 60).padStart(2, '0') + ' rest';
+      card.insertBefore(t, card.firstChild);
+    });
+  };
 })();
 </script>
 </html>
