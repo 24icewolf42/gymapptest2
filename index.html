@@ -1724,4 +1724,145 @@ window.addEventListener('load', () => {
   };
 })();
 </script>
+  <!-- ===== v1.8 big update: quality-of-life + safety ===== -->
+<style>
+  .wk-time { margin: -10px 0 22px; font-size: 12px; font-weight: 600; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  #backupPanel .row { display: flex; gap: 10px; }
+  #backupPanel .row button { flex: 1; }
+</style>
+<script>
+(function () {
+  function fmt(sec) {
+    var h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+    return h > 0 ? h + 'h ' + m + 'm' : m + 'm';
+  }
+  var box = document.getElementById('sessionExercises');
+  var modal = document.getElementById('sessionModal');
+
+  // 1. Tap a kg/reps box and the whole number is selected, so you just type over it
+  box.addEventListener('focusin', function (e) {
+    if (e.target.matches && e.target.matches('input[type="number"]'))
+      setTimeout(function () { try { e.target.select(); } catch (x) {} }, 0);
+  });
+
+  // 2. Screen stays on while a workout is open
+  var wl = null;
+  function lock() {
+    try {
+      if (navigator.wakeLock && !wl) navigator.wakeLock.request('screen').then(function (s) {
+        wl = s; s.addEventListener('release', function () { wl = null; });
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  function unlock() { try { if (wl) { wl.release(); wl = null; } } catch (e) {} }
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && modal.style.display === 'flex') lock();
+  });
+
+  // 3. "New PR" toast when a ticked set beats your best weight for that exercise
+  var prs = {};
+  function best(name) {
+    var b = 0;
+    Object.keys(logs).forEach(function (d) {
+      logs[d].forEach(function (s) {
+        (s.exercises || []).forEach(function (ex) {
+          if (ex.name !== name) return;
+          (ex.sets || []).forEach(function (x) { var w = parseFloat(x.w) || 0; if (w > b) b = w; });
+        });
+      });
+    });
+    return b;
+  }
+  box.addEventListener('change', function (e) {
+    if (!e.target.classList.contains('d-input') || !e.target.checked) return;
+    var card = e.target.closest('.exercise-card'), name = card.dataset.exName;
+    var w = parseFloat(e.target.closest('tr').querySelector('.w-input').value) || 0;
+    if (!w) return;
+    if (prs[name] === undefined) prs[name] = best(name);
+    if (prs[name] > 0 && w > prs[name]) showToast('New PR · ' + name + ' · ' + w + ' kg');
+    if (w > prs[name]) prs[name] = w;
+  });
+
+  // 4. Beep when the rest timer reaches GO (plus the vibration you already have)
+  var ac = null;
+  function audio() {
+    try {
+      ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+      if (ac.state === 'suspended') ac.resume();
+    } catch (x) {}
+  }
+  function beep() {
+    try {
+      audio();
+      var o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.value = 880; g.gain.value = 0.15;
+      o.connect(g); g.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + 0.25);
+    } catch (x) {}
+  }
+  box.addEventListener('click', audio);
+  var rb = document.getElementById('rbTime');
+  if (rb) new MutationObserver(function () {
+    if (rb.textContent === 'GO') { if (!rb._go) { rb._go = 1; beep(); } } else rb._go = 0;
+  }).observe(rb, { childList: true, characterData: true, subtree: true });
+
+  var _s = startSession;
+  startSession = function (d, ds) { prs = {}; _s(d, ds); lock(); };
+  var _c = closeSessionModal;
+  closeSessionModal = function (p) { unlock(); _c(p); };
+
+  // 5. Today: time spent in the gym this week
+  var _rt = renderToday;
+  renderToday = function () {
+    _rt();
+    var now = new Date(), n = 0, sec = 0;
+    var mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - mondayIndex(now.getDay()));
+    for (var i = 0; i < 7; i++) {
+      var ds = todayStr(new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + i));
+      (logs[ds] || []).forEach(function (s) { n++; sec += s.duration || 0; });
+    }
+    var el = document.getElementById('wkTime');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'wkTime'; el.className = 'wk-time';
+      var ws = document.getElementById('weekStrip');
+      ws.parentNode.insertBefore(el, ws.nextSibling);
+    }
+    el.textContent = 'This week · ' + n + (n === 1 ? ' workout' : ' workouts') + ' · ' + fmt(sec) + ' in the gym';
+  };
+
+  // 6. Backup / restore (copy everything out, paste it back in)
+  var KEYS = ['gymLogs', 'gymLastUsed', 'bodyWeightLogs'];
+  var _rs = renderStats;
+  renderStats = function () {
+    _rs();
+    if (document.getElementById('backupPanel')) return;
+    var p = document.createElement('div');
+    p.id = 'backupPanel'; p.className = 'panel';
+    p.innerHTML = '<div class="panel-head"><div class="panel-title">Backup</div></div><div class="row"><button class="btn-secondary" id="bkCopy">Copy backup</button><button class="btn-secondary" id="bkRestore">Restore</button></div>';
+    document.getElementById('page-stats').appendChild(p);
+    document.getElementById('bkCopy').onclick = function () {
+      var o = {};
+      KEYS.forEach(function (k) { o[k] = localStorage.getItem(k); });
+      var data = JSON.stringify(o);
+      var done = function () { showToast('Backup copied. Paste it somewhere safe'); };
+      try { navigator.clipboard.writeText(data).then(done).catch(function () { prompt('Copy your backup:', data); }); }
+      catch (e) { prompt('Copy your backup:', data); }
+    };
+    document.getElementById('bkRestore').onclick = function () {
+      var txt = prompt('Paste your backup here:');
+      if (!txt) return;
+      try {
+        var o = JSON.parse(txt);
+        if (!o || typeof o !== 'object' || !('gymLogs' in o)) throw 0;
+        if (!confirm('Replace everything in the app with this backup?')) return;
+        KEYS.forEach(function (k) { if (o[k] != null) localStorage.setItem(k, o[k]); });
+        location.reload();
+      } catch (e) { showToast('That is not a valid backup'); }
+    };
+  };
+
+  renderToday();
+})();
+</script>
 </html>
