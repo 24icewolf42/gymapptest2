@@ -523,7 +523,7 @@
 
 <script>
 // ---------- APP VERSION / AUTO UPDATE ----------
-const APP_VERSION = "1.9.0";
+const APP_VERSION = "2.0.0";
 document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
 
 function checkForUpdate() {
@@ -2011,6 +2011,178 @@ window.addEventListener('load', () => {
       card.appendChild(g);
     });
   };
+})();
+</script>
+  <!-- ===== v2.0 update: bodyweight graph, months to scroll through, streak + bypass days ===== -->
+<style>
+  .graph { margin: 2px 0 10px; }
+  .graph svg { width: 100%; height: auto; display: block; }
+  .graph .gl { stroke: var(--border); stroke-width: 1; }
+  .graph .gt { fill: var(--text-dim); font-size: 9px; font-family: var(--font); }
+  .graph .gv { fill: var(--accent); font-size: 10px; font-weight: 800; font-family: var(--font); }
+  .graph .gline { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .graph .gdot { fill: var(--accent); }
+  #bwToggle { background: none; border: 0; color: var(--text-muted); font-size: 12px; font-weight: 600; padding: 6px 0 2px; }
+  .cal-cell.bypass { background: transparent; border: 1.5px dashed var(--accent); color: var(--accent); }
+  .cal-cell.bypass .cal-tag { color: var(--accent); }
+  #streakCard { display: flex; align-items: center; gap: 14px; margin: 0 0 22px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
+  .sk-num { font-family: var(--display); font-weight: 800; font-size: 34px; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; text-align: center; }
+  .sk-num small { display: block; font-family: var(--font); font-weight: 600; font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+  .sk-mid { flex: 1; min-width: 0; }
+  .sk-mid b { display: block; font-size: 14px; }
+  .sk-mid small { font-size: 12px; color: var(--text-muted); }
+  #skBypass { flex-shrink: 0; background: transparent; border: 1px solid var(--border-light); color: var(--text); border-radius: 10px; padding: 10px 12px; font-size: 12px; font-weight: 600; }
+</style>
+<script>
+(function () {
+  // ---------- bypass storage + streak ----------
+  function getByp() { try { return JSON.parse(localStorage.getItem('gymBypass') || '{}'); } catch (e) { return {}; } }
+  function setByp(o) { try { localStorage.setItem('gymBypass', JSON.stringify(o)); } catch (e) {} }
+  function totalWorkouts() {
+    var n = 0;
+    Object.keys(logs).forEach(function (d) { n += (logs[d] || []).length; });
+    return n;
+  }
+  function bypassStats() {
+    var w = totalWorkouts(), earned = Math.floor(w / 4), used = Object.keys(getByp()).length;
+    return { left: Math.max(0, earned - used), toNext: 4 - (w % 4) };
+  }
+  function streak() {
+    var byp = getByp(), s = 0, now = new Date();
+    for (var i = 0; i < 400; i++) {
+      var dt = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      if (!SCHEDULE[mondayIndex(dt.getDay())]) continue;      // rest days never break it
+      var ds = todayStr(dt);
+      if ((logs[ds] && logs[ds].length) || byp[ds]) s++;
+      else if (i === 0) continue;                              // today is still open
+      else break;
+    }
+    return s;
+  }
+
+  // ---------- Today: streak card ----------
+  var _rt = renderToday;
+  renderToday = function () {
+    _rt();
+    var card = document.getElementById('streakCard');
+    if (!card) {
+      card = document.createElement('div');
+      card.id = 'streakCard';
+      var anchor = document.getElementById('wkTime') || document.getElementById('weekStrip');
+      anchor.parentNode.insertBefore(card, anchor.nextSibling);
+    }
+    var s = streak(), b = bypassStats(), today = todayStr(), byp = getByp();
+    var scheduled = !!SCHEDULE[mondayIndex(new Date().getDay())];
+    var done = !!(logs[today] && logs[today].length);
+    var btn = '';
+    if (scheduled && !done) btn = byp[today] ? '<button id="skBypass">Undo bypass</button>' : (b.left > 0 ? '<button id="skBypass">Use bypass</button>' : '');
+    card.innerHTML = '<div class="sk-num">' + s + '<small>streak</small></div>' +
+      '<div class="sk-mid"><b>' + b.left + (b.left === 1 ? ' bypass day' : ' bypass days') + '</b><small>' +
+      (byp[today] ? 'Today is bypassed' : b.toNext + (b.toNext === 1 ? ' workout' : ' workouts') + ' until the next one') + '</small></div>' + btn;
+    var el = document.getElementById('skBypass');
+    if (el) el.onclick = function () {
+      var o = getByp();
+      if (o[today]) delete o[today];
+      else { if (!confirm('Use a bypass day for today? Your streak stays safe.')) return; o[today] = true; }
+      setByp(o);
+      showToast(o[today] ? 'Bypass used. Streak is safe' : 'Bypass removed');
+      renderToday();
+    };
+  };
+
+  // ---------- Calendar: this month plus the next 11, one long scroll ----------
+  var MN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  function dur(sec) { var h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return h > 0 ? h + 'h ' + m + 'm' : m + 'm'; }
+  function mkCell(y, m, d, byp) {
+    var ds = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+    var sch = SCHEDULE[mondayIndex(new Date(y, m, d).getDay())];
+    var isL = !!(logs[ds] && logs[ds].length), isB = !!byp[ds] && !isL;
+    var c = document.createElement('div');
+    c.className = 'cal-cell' + (sch ? ' workout' : ' rest') + (isL ? ' logged' : '') + (isB ? ' bypass' : '') + (ds === todayStr() ? ' today' : '');
+    c.innerHTML = '<span>' + d + '</span><span class="cal-tag">' + (isB ? 'Bypass' : sch ? (sch === 'Full Body' ? 'Full' : sch) : 'Rest') + '</span>';
+    c.onclick = function () { if (isL) showDayLogs(ds, sch); else if (sch) startSession(sch, ds); };
+    return c;
+  }
+  renderCalendar = function () {
+    var el = document.getElementById('calendar'), byp = getByp();
+    el.style.display = 'block';
+    el.innerHTML = '';
+    document.getElementById('calTitle').textContent = 'Calendar';
+    var keys = Object.keys(logs).filter(function (k) { return logs[k] && logs[k].length; }).sort();
+    var now = new Date(), s = keys.length ? parseDateStr(keys[0]) : now;
+    if (s > now) s = now;
+    var y = s.getFullYear(), m = s.getMonth(), endIdx = now.getFullYear() * 12 + now.getMonth() + 11, cur = null;
+    while (y * 12 + m <= endIdx) {
+      var days = new Date(y, m + 1, 0).getDate(), first = mondayIndex(new Date(y, m, 1).getDay()), n = 0, sec = 0;
+      for (var d = 1; d <= days; d++) {
+        var ds = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+        if (logs[ds]) logs[ds].forEach(function (x) { n++; sec += x.duration || 0; });
+      }
+      var wrap = document.createElement('div');
+      wrap.className = 'cal-month';
+      wrap.innerHTML = '<div class="cal-month-head">' + MN[m] + ' ' + y + '<span>' + (n ? n + ' workouts · ' + dur(sec) : '–') + '</span></div>' +
+        '<div class="cal-dow"><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div><div>S</div></div>';
+      var grid = document.createElement('div');
+      grid.className = 'cal-grid';
+      for (var i = 0; i < first; i++) { var g = document.createElement('div'); g.className = 'cal-cell empty'; grid.appendChild(g); }
+      for (var k = 1; k <= days; k++) grid.appendChild(mkCell(y, m, k, byp));
+      wrap.appendChild(grid);
+      el.appendChild(wrap);
+      if (y === now.getFullYear() && m === now.getMonth()) cur = wrap;
+      m++; if (m > 11) { m = 0; y++; }
+    }
+    if (cur) setTimeout(function () { cur.scrollIntoView(); }, 0);
+  };
+
+  // ---------- Stats: bodyweight graph ----------
+  function bwSVG(p) {
+    var W = 320, H = 130, L = 34, R = 12, T = 12, B = 24;
+    var ws = p.map(function (q) { return q.w; });
+    var min = Math.min.apply(null, ws), max = Math.max.apply(null, ws);
+    if (min === max) { min -= 1; max += 1; }
+    var pad = (max - min) * 0.2; min -= pad; max += pad;
+    var t0 = p[0].t, span = (p[p.length - 1].t - t0) || 1;
+    function X(t) { return p.length === 1 ? (L + (W - L - R) / 2) : L + (t - t0) / span * (W - L - R); }
+    function Y(w) { return T + (1 - (w - min) / (max - min)) * (H - T - B); }
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" aria-hidden="true">';
+    for (var i = 0; i < 3; i++) {
+      var v = min + (max - min) * i / 2, y = Y(v);
+      s += '<line class="gl" x1="' + L + '" x2="' + (W - R) + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '"/><text class="gt" x="' + (L - 5) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end">' + (Math.round(v * 10) / 10) + '</text>';
+    }
+    s += '<polyline class="gline" points="' + p.map(function (q) { return X(q.t).toFixed(1) + ',' + Y(q.w).toFixed(1); }).join(' ') + '"/>';
+    p.forEach(function (q) { s += '<circle class="gdot" cx="' + X(q.t).toFixed(1) + '" cy="' + Y(q.w).toFixed(1) + '" r="2.6"/>'; });
+    var last = p[p.length - 1];
+    s += '<text class="gv" x="' + X(last.t).toFixed(1) + '" y="' + (Y(last.w) - 7).toFixed(1) + '" text-anchor="end">' + last.w + ' kg</text>';
+    s += '<text class="gt" x="' + L + '" y="' + (H - 6) + '">' + fmtShort(p[0].d) + '</text>';
+    if (p.length > 1) s += '<text class="gt" x="' + (W - R) + '" y="' + (H - 6) + '" text-anchor="end">' + fmtShort(last.d) + '</text>';
+    return s + '</svg>';
+  }
+  var _bw = renderBodyWeightList;
+  renderBodyWeightList = function () {
+    _bw();
+    var list = document.getElementById('bodyWeightList');
+    var g = document.getElementById('bwGraph');
+    if (!g) {
+      g = document.createElement('div');
+      g.id = 'bwGraph'; g.className = 'graph';
+      var t = document.createElement('button');
+      t.id = 'bwToggle'; t.textContent = 'Show entries';
+      list.style.display = 'none';
+      t.onclick = function () {
+        var open = list.style.display === 'none';
+        list.style.display = open ? 'block' : 'none';
+        t.textContent = open ? 'Hide entries' : 'Show entries';
+      };
+      list.parentNode.insertBefore(g, list);
+      list.parentNode.insertBefore(t, list);
+    }
+    var p = loadBodyWeights().slice().sort(function (a, b) { return a.date.localeCompare(b.date); })
+      .map(function (e) { return { t: parseDateStr(e.date).getTime(), w: parseFloat(e.weight) || 0, d: e.date }; })
+      .filter(function (e) { return e.w > 0; });
+    g.innerHTML = p.length ? bwSVG(p) : '';
+  };
+
+  renderToday();
 })();
 </script>
 </html>
