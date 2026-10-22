@@ -523,7 +523,7 @@
 
 <script>
 // ---------- APP VERSION / AUTO UPDATE ----------
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.1.0";
 document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
 
 function checkForUpdate() {
@@ -2181,6 +2181,177 @@ window.addEventListener('load', () => {
       .filter(function (e) { return e.w > 0; });
     g.innerHTML = p.length ? bwSVG(p) : '';
   };
+
+  renderToday();
+})();
+</script>
+  <!-- ===== v2.1 update: tap a day to bypass it, cleaner Today screen, scroll further into the future ===== -->
+<style>
+  /* remove the clutter from Today (this week line, streak/bypass card, logged check) */
+  #wkTime, #streakCard, .hero-done { display: none !important; }
+  .hero-actions { display: flex; gap: 10px; }
+  .hero-actions button { flex: 1; }
+  .up-month { padding: 20px 2px 8px; font-family: var(--display); font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; font-size: 12px; color: var(--accent); border-bottom: 1px solid var(--border); }
+  .cal-cell.bypass { background: transparent; border: 1.5px dashed var(--accent); color: var(--accent); }
+  .cal-cell.bypass .cal-tag { color: var(--accent); }
+  #calStreak { text-align: center; font-size: 12px; font-weight: 600; color: var(--text-muted); margin: -8px 0 14px; }
+</style>
+<script>
+(function () {
+  var MN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  function getByp() { try { return JSON.parse(localStorage.getItem('gymBypass') || '{}'); } catch (e) { return {}; } }
+  function setByp(o) { try { localStorage.setItem('gymBypass', JSON.stringify(o)); } catch (e) {} }
+  function dur(sec) { var h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return h > 0 ? h + 'h ' + m + 'm' : m + 'm'; }
+
+  // streak = training days in a row that were logged or bypassed (rest days never break it)
+  function streak() {
+    var byp = getByp(), s = 0, now = new Date();
+    for (var i = 0; i < 400; i++) {
+      var dt = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      if (!SCHEDULE[mondayIndex(dt.getDay())]) continue;
+      var ds = todayStr(dt);
+      if ((logs[ds] && logs[ds].length) || byp[ds]) s++;
+      else if (i === 0) continue;
+      else break;
+    }
+    return s;
+  }
+
+  // ---- little sheet: tap a day -> start the workout or mark it as a bypass day ----
+  var da = document.createElement('div');
+  da.id = 'dayAct';
+  da.className = 'modal-overlay';
+  da.innerHTML = '<div class="modal-sheet sheet"><div class="modal-handle"></div>' +
+    '<div class="modal-header"><div><div id="daTitle" class="modal-title"></div><div id="daSub" class="modal-date"></div></div>' +
+    '<button id="daClose" class="btn-icon center-btn" aria-label="Close">×</button></div>' +
+    '<div class="sheet-actions"><button id="daStart" class="btn-primary"></button><button id="daByp" class="btn-secondary"></button></div></div>';
+  document.body.appendChild(da);
+  function closeDa() { da.style.display = 'none'; }
+  da.addEventListener('click', function (e) { if (e.target === da) closeDa(); });
+  document.getElementById('daClose').onclick = closeDa;
+
+  function openDa(ds, w) {
+    var isB = !!getByp()[ds];
+    document.getElementById('daTitle').textContent = fmtLong(ds);
+    document.getElementById('daSub').textContent = w + (isB ? ' · bypass day' : '');
+    var s = document.getElementById('daStart');
+    s.textContent = 'Start ' + w;
+    s.onclick = function () { closeDa(); startSession(w, ds); };
+    var b = document.getElementById('daByp');
+    b.textContent = isB ? 'Remove bypass day' : 'Mark as bypass day';
+    b.onclick = function () {
+      var o = getByp();
+      if (o[ds]) delete o[ds]; else o[ds] = true;
+      setByp(o);
+      closeDa();
+      showToast(o[ds] ? 'Marked as bypass day' : 'Bypass removed');
+      if (document.getElementById('page-calendar').classList.contains('active')) renderCalendar(true);
+      renderToday();
+    };
+    da.style.display = 'flex';
+  }
+
+  // ---- Calendar: 24 months ahead, tap a day for the sheet ----
+  function mkCell(y, m, d, byp) {
+    var ds = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+    var sch = SCHEDULE[mondayIndex(new Date(y, m, d).getDay())];
+    var isL = !!(logs[ds] && logs[ds].length), isB = !!byp[ds] && !isL;
+    var c = document.createElement('div');
+    c.className = 'cal-cell' + (sch ? ' workout' : ' rest') + (isL ? ' logged' : '') + (isB ? ' bypass' : '') + (ds === todayStr() ? ' today' : '');
+    c.innerHTML = '<span>' + d + '</span><span class="cal-tag">' + (isB ? 'Bypass' : sch ? (sch === 'Full Body' ? 'Full' : sch) : 'Rest') + '</span>';
+    c.onclick = function () { if (isL) showDayLogs(ds, sch); else if (sch) openDa(ds, sch); };
+    return c;
+  }
+  renderCalendar = function (keep) {
+    var el = document.getElementById('calendar'), byp = getByp();
+    el.style.display = 'block';
+    el.innerHTML = '';
+    document.getElementById('calTitle').textContent = 'Calendar';
+    var cs = document.getElementById('calStreak');
+    if (!cs) {
+      cs = document.createElement('div');
+      cs.id = 'calStreak';
+      var head = document.querySelector('#page-calendar .page-head');
+      head.parentNode.insertBefore(cs, head.nextSibling);
+    }
+    var st = streak();
+    cs.textContent = 'Streak · ' + st + (st === 1 ? ' training day' : ' training days');
+    var keys = Object.keys(logs).filter(function (k) { return logs[k] && logs[k].length; }).sort();
+    var now = new Date(), s = keys.length ? parseDateStr(keys[0]) : now;
+    if (s > now) s = now;
+    var y = s.getFullYear(), m = s.getMonth(), endIdx = now.getFullYear() * 12 + now.getMonth() + 24, cur = null;
+    while (y * 12 + m <= endIdx) {
+      var days = new Date(y, m + 1, 0).getDate(), first = mondayIndex(new Date(y, m, 1).getDay()), n = 0, sec = 0;
+      for (var d = 1; d <= days; d++) {
+        var ds = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+        if (logs[ds]) logs[ds].forEach(function (x) { n++; sec += x.duration || 0; });
+      }
+      var wrap = document.createElement('div');
+      wrap.className = 'cal-month';
+      wrap.innerHTML = '<div class="cal-month-head">' + MN[m] + ' ' + y + '<span>' + (n ? n + ' workouts · ' + dur(sec) : '–') + '</span></div>' +
+        '<div class="cal-dow"><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div><div>S</div></div>';
+      var grid = document.createElement('div');
+      grid.className = 'cal-grid';
+      for (var i = 0; i < first; i++) { var g = document.createElement('div'); g.className = 'cal-cell empty'; grid.appendChild(g); }
+      for (var k = 1; k <= days; k++) grid.appendChild(mkCell(y, m, k, byp));
+      wrap.appendChild(grid);
+      el.appendChild(wrap);
+      if (y === now.getFullYear() && m === now.getMonth()) cur = wrap;
+      m++; if (m > 11) { m = 0; y++; }
+    }
+    if (cur && keep !== true) setTimeout(function () { cur.scrollIntoView(); }, 0);
+  };
+
+  // ---- Today: nicer "workout done" card + a long Coming up list ----
+  function doneHero() {
+    var btn = document.getElementById('startTodayBtn');
+    if (!btn) return;
+    var dStr = todayStr(), w = SCHEDULE[mondayIndex(new Date().getDay())];
+    var sess = (logs[dStr] || []).filter(function (s) { return s.day === w; })[0];
+    if (!sess) return;
+    var exs = sess.exercises || [], sets = 0;
+    exs.forEach(function (e) { sets += (e.sets || []).length; });
+    var hero = btn.closest('.hero');
+    hero.querySelector('.hero-meta').textContent = ['Workout complete', sess.duration ? Math.max(1, Math.round(sess.duration / 60)) + ' min' : '', exs.length + ' exercises', sets + ' sets']
+      .filter(Boolean).join(' · ');
+    var row = document.createElement('div');
+    row.className = 'hero-actions';
+    row.innerHTML = '<button id="heroView" class="btn-primary">View workout</button><button id="heroAgain" class="btn-secondary">Log again</button>';
+    btn.parentNode.replaceChild(row, btn);
+    document.getElementById('heroView').onclick = function () { showDayLogs(dStr, w); };
+    document.getElementById('heroAgain').onclick = function () { startSession(w, dStr); };
+  }
+  function upcoming() {
+    var list = document.getElementById('upcomingList'), byp = getByp(), today = new Date(), lastM = today.getMonth();
+    list.innerHTML = '';
+    for (var i = 1; i <= 120; i++) {
+      var d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+      if (d.getMonth() !== lastM) {
+        lastM = d.getMonth();
+        var h = document.createElement('div');
+        h.className = 'up-month';
+        h.textContent = MN[lastM] + ' ' + d.getFullYear();
+        list.appendChild(h);
+      }
+      addRow(list, d, byp);
+    }
+  }
+  function addRow(list, d, byp) {
+    var idx = mondayIndex(d.getDay()), w = SCHEDULE[idx], ds = todayStr(d), row = document.createElement('div');
+    var dayHtml = '<div class="up-day"><b>' + DOW_NAMES[idx].slice(0, 3) + '</b><span>' + fmtShort(ds) + '</span></div>';
+    if (w) {
+      var logged = !!(logs[ds] && logs[ds].some(function (s) { return s.day === w; })), isB = !!byp[ds] && !logged;
+      row.className = 'up-row tappable' + (logged ? ' logged' : '');
+      row.innerHTML = dayHtml + '<div class="up-name">' + w + '<small>' + (logged ? 'Logged ✓' : isB ? 'Bypass day' : workoutSummary(w)) + '</small></div><div class="up-chev">›</div>';
+      row.onclick = function () { if (logged) showDayLogs(ds, w); else openDa(ds, w); };
+    } else {
+      row.className = 'up-row rest';
+      row.innerHTML = dayHtml + '<div class="up-name">Rest</div>';
+    }
+    list.appendChild(row);
+  }
+  var _rt = renderToday;
+  renderToday = function () { _rt(); doneHero(); upcoming(); };
 
   renderToday();
 })();
