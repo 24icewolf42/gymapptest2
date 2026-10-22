@@ -523,7 +523,7 @@
 
 <script>
 // ---------- APP VERSION / AUTO UPDATE ----------
-const APP_VERSION = "1.8.0";
+const APP_VERSION = "1.9.0";
 document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
 
 function checkForUpdate() {
@@ -1863,6 +1863,154 @@ window.addEventListener('load', () => {
   };
 
   renderToday();
+})();
+</script>
+  <!-- ===== v1.9 update: shared exercise memory, left/right sets, progress graphs ===== -->
+<style>
+  .sets-table th:first-child { width: 34px; }
+  .graph { margin: 2px 0 10px; }
+  .graph svg { width: 100%; height: auto; display: block; }
+  .graph .gl { stroke: var(--border); stroke-width: 1; }
+  .graph .gt { fill: var(--text-dim); font-size: 9px; font-family: var(--font); }
+  .graph .gv { fill: var(--accent); font-size: 10px; font-weight: 800; font-family: var(--font); }
+  .graph .gline { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .graph .gdot { fill: var(--accent); }
+</style>
+<script>
+(function () {
+  // ---- 1. kg/reps are remembered per EXERCISE (shared by every day) ----
+  function bare(k) { var i = typeof k === 'string' ? k.indexOf('||') : -1; return i >= 0 ? k.slice(i + 2) : k; }
+  var hasOld = Object.keys(lastUsed).some(function (k) { return k.indexOf('||') >= 0; });
+  var base = {};
+  Object.keys(lastUsed).forEach(function (k) { base[bare(k)] = lastUsed[k]; });
+  function trimmed(arr) {
+    var a = arr.map(function (x) { return { w: x.w, r: x.r }; });
+    while (a.length && a[a.length - 1].w === '' && a[a.length - 1].r === '') a.pop();
+    return a;
+  }
+  if (hasOld) {
+    // newest information wins: old saves, then finished workouts, then the workout you have open
+    Object.keys(logs).sort().forEach(function (d) {
+      logs[d].forEach(function (s) {
+        (s.exercises || []).forEach(function (ex) {
+          var a = trimmed(ex.sets || []);
+          if (a.length) base[ex.name] = { sets: a };
+        });
+      });
+    });
+    var dr = readDraft();
+    if (dr && dr.ex) Object.keys(dr.ex).forEach(function (n) {
+      var a = trimmed(dr.ex[n] || []);
+      if (a.length) base[n] = { sets: a };
+    });
+  }
+  lastUsed = new Proxy(base, {
+    get: function (t, k) { return t[bare(k)]; },
+    set: function (t, k, v) { t[bare(k)] = v; return true; },
+    deleteProperty: function (t, k) { delete t[bare(k)]; return true; },
+    has: function (t, k) { return bare(k) in t; }
+  });
+  if (hasOld) saveLastUsed(lastUsed);
+
+  // ---- 2. Left / right sets for one-arm exercises and reverse flies ----
+  var UNI = ['Single-Arm Cable Lateral Raises', 'Single-Arm Tricep Pushdowns', 'Reverse Chest Fly Machine'];
+  Object.keys(WORKOUTS).forEach(function (d) {
+    WORKOUTS[d].forEach(function (e) { if (UNI.indexOf(e.name) >= 0) e.sets = 4; }); // 2 sets x (L + R)
+  });
+  var from = localStorage.getItem('gymSidesFrom');
+  if (!from) { from = todayStr(); try { localStorage.setItem('gymSidesFrom', from); } catch (e) {} }
+
+  function relabel(card) {
+    var rows = card.querySelectorAll('.sets-table tr');
+    for (var i = 1; i < rows.length; i++) {
+      var k = i - 1;
+      rows[i].querySelector('td').textContent = (k % 2 ? 'R' : 'L') + (Math.floor(k / 2) + 1);
+    }
+  }
+  var box = document.getElementById('sessionExercises');
+  box.addEventListener('click', function (e) {
+    var card = e.target.closest('.exercise-card');
+    if (!card || UNI.indexOf(card.dataset.exName) < 0) return;
+    var isAdd = !!e.target.closest('.add-set'), isRem = !!e.target.closest('.remove-set');
+    if (!isAdd && !isRem) return;
+    var count = card.querySelectorAll('.sets-table tr').length - 1;
+    if (count % 2) {                       // keep L and R in pairs
+      if (isAdd || count === 1) card.querySelector('.add-set').onclick();
+      else card.querySelector('.remove-set').onclick();
+    }
+    relabel(card);
+  });
+  var _s = startSession;
+  startSession = function (d, ds) {
+    _s(d, ds);
+    document.querySelectorAll('#sessionExercises .exercise-card').forEach(function (card) {
+      if (UNI.indexOf(card.dataset.exName) >= 0) relabel(card);
+    });
+  };
+  var _sd = showDayLogs;
+  showDayLogs = function (ds, sch) {
+    _sd(ds, sch);
+    if (ds < from) return;                 // older logs were not logged per side
+    document.querySelectorAll('#overviewBody .log-ex').forEach(function (ex) {
+      if (UNI.indexOf(ex.querySelector('.log-ex-name').textContent) < 0) return;
+      ex.querySelectorAll('.log-set').forEach(function (r, i) {
+        r.firstElementChild.textContent = (i % 2 ? 'R' : 'L') + (Math.floor(i / 2) + 1);
+      });
+    });
+  };
+
+  // ---- 3. Stats: one graph with every session instead of the history list ----
+  function points(name) {
+    var out = [];
+    Object.keys(logs).sort().forEach(function (d) {
+      logs[d].forEach(function (s) {
+        (s.exercises || []).forEach(function (ex) {
+          if (ex.name !== name) return;
+          var b = 0;
+          (ex.sets || []).forEach(function (x) { var w = parseFloat(x.w) || 0; if (w > b) b = w; });
+          if (b > 0) out.push({ t: parseDateStr(d).getTime(), w: b, d: d });
+        });
+      });
+    });
+    return out;
+  }
+  function graphSVG(p) {
+    var W = 320, H = 130, L = 34, R = 12, T = 12, B = 24;
+    var ws = p.map(function (q) { return q.w; });
+    var min = Math.min.apply(null, ws), max = Math.max.apply(null, ws);
+    if (min === max) { min -= 2; max += 2; }
+    var pad = (max - min) * 0.15; min = Math.max(0, min - pad); max += pad;
+    var t0 = p[0].t, span = (p[p.length - 1].t - t0) || 1;
+    function X(t) { return p.length === 1 ? (L + (W - L - R) / 2) : L + (t - t0) / span * (W - L - R); }
+    function Y(w) { return T + (1 - (w - min) / (max - min)) * (H - T - B); }
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" aria-hidden="true">';
+    for (var i = 0; i < 3; i++) {
+      var v = min + (max - min) * i / 2, y = Y(v);
+      s += '<line class="gl" x1="' + L + '" x2="' + (W - R) + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '"/>' +
+           '<text class="gt" x="' + (L - 5) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end">' + Math.round(v * 10) / 10 + '</text>';
+    }
+    s += '<polyline class="gline" points="' + p.map(function (q) { return X(q.t).toFixed(1) + ',' + Y(q.w).toFixed(1); }).join(' ') + '"/>';
+    p.forEach(function (q) { s += '<circle class="gdot" cx="' + X(q.t).toFixed(1) + '" cy="' + Y(q.w).toFixed(1) + '" r="2.6"/>'; });
+    var last = p[p.length - 1];
+    s += '<text class="gv" x="' + Math.min(X(last.t), W - R).toFixed(1) + '" y="' + (Y(last.w) - 7).toFixed(1) + '" text-anchor="end">' + last.w + ' kg</text>';
+    s += '<text class="gt" x="' + L + '" y="' + (H - 6) + '">' + fmtShort(p[0].d) + '</text>';
+    if (p.length > 1) s += '<text class="gt" x="' + (W - R) + '" y="' + (H - 6) + '" text-anchor="end">' + fmtShort(last.d) + '</text>';
+    return s + '</svg>';
+  }
+  var _rs = renderStats;
+  renderStats = function () {
+    _rs();
+    document.querySelectorAll('#statsBody .stat-card').forEach(function (card) {
+      var name = card.querySelector('.stat-card-name').textContent;
+      var p = points(name);
+      card.querySelectorAll('.stat-history-row, .spark').forEach(function (n) { n.remove(); });
+      if (!p.length) return;
+      var g = document.createElement('div');
+      g.className = 'graph';
+      g.innerHTML = graphSVG(p);
+      card.appendChild(g);
+    });
+  };
 })();
 </script>
 </html>
