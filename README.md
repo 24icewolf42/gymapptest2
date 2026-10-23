@@ -36,13 +36,19 @@ The app has **no build step**. Edit a file, reload, done. npm is only needed for
   - routines you choose to share;
   - your latest weigh-in, **only** if you turn on *Show my weight to friends*. They never see your weigh-in history.
 - **Gym dates** are visible only to your friends, or only to the friends you pick. If someone is a friend of your friend but not yours, they appear only as a number ("+2"), never by name.
-- **Ending things:** you can decline or cancel requests, remove friends and block people. A removed or blocked person immediately loses access; a blocked person can't find you or send requests again. Username searches are limited to 30 an hour, and friend requests to 20 a day.
+- **Ending things:** you can decline or cancel requests, remove friends and block people. A removed or blocked person immediately loses access, and their replies to your gym dates (and yours to theirs) are removed; a blocked person can't find you or send requests again. Username searches are limited to 30 an hour, and friend requests to 20 a day.
 - **Age:** creating an account requires confirming you are 14 or older, or that a parent or guardian agreed. The app shows a short privacy notice (Settings → Privacy).
-- **Deleting your account** (Settings → Delete account) removes your account and everything stored for it in the cloud.
+- **Deleting your account** (Settings → Delete account) removes your account, everything stored for it in the cloud, and its entries in the sign-in audit log.
 - **Shared phone:** when you sign out you can remove your data from the phone (only after it reached your account, unless you accept losing what didn't). If a different account signs in, the app asks before mixing anyone's workouts, and nothing syncs until that is answered.
 - **Live updates** carry only gym-date changes your friendship allows you to see; who replied to a date is never broadcast.
 
 All of this is enforced by row-level security in the database, not just by the app. `tests/integration/rls.test.js` checks it against a real database.
+
+**Hosting limit:** the web app is served from `roguelineageaccmanager.github.io`, an
+origin shared by every GitHub Pages site of that account. Any other page published
+there can read the web app's stored data, including the sign-in token. Publish
+nothing else under that account, or move the app to its own domain. The Android
+app is not affected.
 
 ## Database setup
 
@@ -50,29 +56,45 @@ All of this is enforced by row-level security in the database, not just by the a
 Then put the project URL and the publishable key in `cloud-config.js`, and set the
 Auth Site URL and redirect URL to the deployed web address.
 
-**Existing project (the live app):** the workout-sync migrations
-`20261023000003_complete_workout_sync.sql` (formerly `20261023_complete_workout_sync.sql`, renamed
-so it sorts after the table it alters) and `20261023190000_daily_workout_summaries.sql` are
-already live. Then run these, in order, in the SQL Editor. Each one is safe to run twice.
+**Existing project (the live app):** migrations are applied by GitHub Actions, not
+by hand. `.github/workflows/supabase-deploy.yml` runs on every push to `main` that
+changes `supabase/migrations/` or `supabase/templates/`, and can be started by hand
+with *dry run* to see what it would do. It:
 
-1. `supabase/migrations/20261024000000_friendships.sql` closes a security hole and adds unfriending and blocking:
+1. links the project and reads which migrations it has already recorded;
+2. records the migrations that were applied by hand before this workflow existed
+   (`supabase/applied-before-ci.txt`) and forgets the old name of the renamed one
+   (`supabase/renamed-migrations.txt`), so nothing is applied twice;
+3. applies the remaining migrations in order (`supabase db push`, via
+   `tools/deploy-db.sh`);
+4. sets the password-reset email (`supabase/templates/recovery.html`, which
+   contains the code the Android app asks for) through the Management API.
+
+One-time setup by the project owner, in a GitHub environment called `production`
+(add required reviewers there to approve each deploy):
+
+| Name | Kind | Value |
+|---|---|---|
+| `SUPABASE_ACCESS_TOKEN` | secret | A personal access token (Supabase → Account → Access tokens) |
+| `SUPABASE_DB_PASSWORD` | secret | The database password |
+| `SUPABASE_PROJECT_REF` | variable | `aiiyombsmvlbhifxgkhp` |
+
+The four new migrations, applied in this order:
+
+1. `20261024000000_friendships.sql` closes a security hole and adds unfriending and blocking:
    - It **fixes a hole that let anyone make themselves an accepted friend of any user** and read their data.
    - It adds decline, cancel, unfriend and block, and a limit of 20 requests a day.
    - It removes duplicate requests (where A asked B and B also asked A), keeping the accepted one.
-2. `supabase/migrations/20261024000001_privacy.sql` adds the privacy rules described above.
+2. `20261024000001_privacy.sql` adds the privacy rules described above.
    - Weight sharing starts **off** for everyone.
    - Friends see plan counts and stats only from people who share stats.
-   - Older app versions can no longer look up usernames to add friends, and can no longer read friends' weights directly, so deploy the new app together with this migration.
-3. `supabase/migrations/20261024000002_gym_dates.sql` adds gym dates.
-4. `supabase/migrations/20261024000003_policy_performance.sql` speeds up the original row-level security policies (no behaviour change).
+   - New accounts need the age confirmation, which the new app sends.
+   - Older app versions can no longer look up usernames to add friends, create accounts, or read friends' weights directly, so release the new app together with this migration.
+3. `20261024000002_gym_dates.sql` adds gym dates.
+4. `20261024000003_policy_performance.sql` speeds up the original row-level security policies (no behaviour change).
 
-**Password reset inside the Android app:** the reset email's link opens the web
-app. To let people reset inside the app too, add the code to the email template
-(Supabase → Authentication → Email Templates → Reset Password), for example
-`<p>Your code: {{ .Token }}</p>`. The app then asks for that code.
-
-After step 1, check for friendships created through the hole. In particular, look
-for `accepted` rows that nobody remembers accepting:
+After the first deploy, check for friendships created through the hole. In
+particular, look for `accepted` rows that nobody remembers accepting:
 
 ```sql
 select f.created_at, a.username as requester, b.username as target
@@ -113,28 +135,41 @@ After a version bump, change `js/version.js`, `Version` and the `VERSION` in `sw
 
 Earlier versions were signed with `android-signing/debug.keystore`, which was
 committed to this public repository, so anyone could sign an app that Android
-accepted as an update. That key is removed and must be treated as compromised.
+accepted as an update. That key is removed and treated as compromised.
 
-Releases are now signed with a private key that lives only in GitHub secrets, and
-the APK is no longer debuggable. One-time setup by the repository owner:
+Releases are now signed with a private key that exists only in GitHub secrets,
+and the APK is no longer debuggable. The new key is introduced by **APK signature
+key rotation**: the old key signs a statement that the new key replaces it, so
+installed apps update without a reinstall, and on Android 9 and newer the old key
+can no longer sign updates afterwards. Android 7 and 8 do not understand
+rotation: there the APK still carries the old key's signature, so updates keep
+working, but so would a forged update signed with the public key. That residual
+risk ends only when those phones are retired.
 
-```bash
-keytool -genkeypair -v -keystore release.keystore -alias tracker -keyalg RSA -keysize 4096 -validity 10000
-keytool -list -v -keystore release.keystore | grep SHA256   # the certificate fingerprint
-base64 -w0 release.keystore                                  # value for ANDROID_KEYSTORE_BASE64
-```
+One-time setup by the repository owner, all in GitHub:
 
-Add the repository secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
-`ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`, and the repository variable
-`ANDROID_CERT_SHA256` (the fingerprint). Keep an offline copy of the keystore:
-without it, no future update can be installed over the app.
+1. Create an environment called `production` and add these secrets to the
+   repository:
+   - `ADMIN_GH_TOKEN`: a fine-grained token for this repository with
+     *Secrets* and *Variables* read/write, used once to store the new key;
+   - `KEYSTORE_BACKUP_PASSPHRASE`: at least 20 characters, protects the backup.
+2. Run **Actions → Set up Android release signing (run once)**. It creates the key and the rotation
+   proof (`tools/create-release-key.sh`), stores them as the secrets
+   `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
+   `ANDROID_KEY_PASSWORD` and `ANDROID_SIGNING_LINEAGE_BASE64` and the variable
+   `ANDROID_CERT_SHA256`, and uploads an encrypted backup as a 7-day artifact. It
+   refuses to run again unless *replace existing* is ticked.
+3. Download the backup and keep it offline (decrypt with
+   `openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in release-key-backup.tgz.enc -out backup.tgz`). Without
+   the key no future update can be installed over the app. Then delete
+   `ADMIN_GH_TOKEN`.
 
-Because the key changes, every user reinstalls once. The old app's updater can't
-install the new APK; the new app explains the steps if it meets such a mismatch.
-Users should back up first (Settings → Backup) or sign in so their data is in
-their account. The build also checks every Gradle dependency against
-`tools/android/verification-metadata.xml`, and the publish job re-verifies the
-APK's checksum and signer before releasing it.
+Each release then runs in three jobs: an unprivileged job builds an unsigned APK
+(every Gradle dependency checked against `tools/android/verification-metadata.xml`,
+the Gradle download against its checksum); the signing job (`production`
+environment) signs it with `tools/sign-apk.sh`; the publish job re-checks the
+checksum and signer and uploads the `latest` release. Releases start only after
+the Tests workflow passed on `main`.
 
 ## Credits
 

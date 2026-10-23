@@ -14,7 +14,7 @@ The findings come from two independent passes: an Opus review of the frozen snap
 | H2 | High | No decline/cancel/unfriend; usernames enumerable | Fixed: delete policy + UI, exact-match find_profile(), profiles readable only by related users, 20 requests/day limit |
 | H3 | High | Next account absorbs previous user's data | Fixed: account-switch prompt (replace keeps a local backup), optional data removal on sign-out; e2e test |
 | H4 | High | supabase-js from CDN, floating version, no SRI | Fixed: vendored pinned 2.118.0 (vendor/supabase.js); CSP blocks remote scripts |
-| H5 | High | Signing key committed with public passwords | Fixed: committed key removed; releases signed with a private key from GitHub secrets, signer verified at build and again before publishing. Owner must create the key once (README → Android signing); users reinstall once |
+| H5 | High | Signing key committed with public passwords | Fixed: committed key removed; a GitHub Actions workflow creates a private key and a signed rotation from the old key (APK v3 key rotation), so users update without reinstalling and the old key is refused on Android 9+; signer verified when signing and again before publishing (README → Android signing) |
 | H6 | High | CI write token exposed to unpinned install scripts | Fixed: read-only build job, separate publish job on main only, actions pinned by SHA, Capacitor from a lockfile with --ignore-scripts, pillow pinned |
 | M1 | Medium | Deletions resurrected by sync | Fixed: synced session tombstones and cleared dates (the format upstream adopted on 2026-10-23), weigh-in delete queue, plan tombstones resolved by the newer side; unit + e2e tests incl. interop with upstream's format |
 | M2 | Medium | Whole-document last-writer-wins uploads | Fixed: every upload is read-merge-write with compare-and-set on updated_at (retried up to 3 times); plans merge per routine and weekday against the last-synced base |
@@ -24,7 +24,7 @@ The findings come from two independent passes: an Opus review of the frozen snap
 | M6 | Medium | hydrate runs repeatedly with UI side-effects | Fixed: one sync per sign-in (not on token refresh); editors don't re-render while typing |
 | M7 | Medium | Friends can read full weight history and plans | Fixed: friend_summaries() returns latest weight (opt-in) and counts only; raw tables owner-only |
 | M8 | Medium | Taken username creates an account that can't sync | Fixed: profile created by trigger with fallback name; username can be changed in Settings |
-| M9 | Medium | Password reset never sets a new password | Fixed: PASSWORD_RECOVERY asks for a new password, and the app accepts the code from the reset email (needs {{ .Token }} in the email template, README) |
+| M9 | Medium | Password reset never sets a new password | Fixed: PASSWORD_RECOVERY asks for a new password, and the app accepts the code from the reset email (the deploy workflow installs an email template with the code) |
 | M10 | Medium | Published APK is a debuggable debug build | Fixed: release builds are non-debuggable (webContentsDebuggingEnabled false, assembleRelease); debug builds are only for tests |
 | M11 | Medium | Delete removes the whole day; 'log again' overwrites | Fixed: per-session delete; re-opening a logged workout is labelled 'View or edit' / 'Save changes' |
 | M12 | Medium | Backup misses plans; restore unvalidated | Fixed: all keys, versioned format, JSON validated, data sanitized on load; old format still accepted |
@@ -44,11 +44,50 @@ The findings come from two independent passes: an Opus review of the frozen snap
 | L11 | Low | Schema hygiene | Fixed: original policies re-created with (select auth.uid()) (20261024000003), new tables follow the same pattern |
 | L12 | Low | Tests fail and only grep strings | Fixed: unit, RLS integration, browser e2e and Android emulator suites |
 
-All findings are fixed in code. One step remains for the app's owner: create the private release key and add it as GitHub secrets (README → Android signing).
+All findings are fixed in code. What remains for the app's owner is configuration in GitHub: the secrets for the database deploy and a single run of the signing setup workflow (README → Database setup, Android signing).
 
 ## Critique rounds
 
 After the rework, three independent Opus reviews (security/privacy, data correctness, UX/accessibility/tests) rated the branch and listed findings. Every critical, major and minor finding and every nit was fixed and re-reviewed.
+
+### Round 2 (security 7/10, correctness 6/10, UX/tests 6/10)
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| C-1 | Critical | Editing a logged session rebuilt it from the current routine | The editor shows exactly the exercises that were logged; no last-used prefill; e2e test |
+| M-1 | Major | Unsaved new sessions couldn't be reopened | Opening a day without a key resumes its newest unsaved draft; e2e test |
+| M-2 | Major | Today kept yesterday's date after midnight | Redraw on visibility change and at midnight; buttons read the date when tapped |
+| M-3 | Major | Full storage lost a finished workout | The save is checked; on failure the workout stays open with an error |
+| UX-M1/M2/M3 | Major | Background refreshes and pending states dropped focus | render() never moves a focused node; focus goes to the same or next row's control, then the heading; pending controls use aria-disabled; e2e tests |
+| UX-M4 | Major | Reset by code opened two password sheets | Only Supabase's own recovery event opens it |
+| UX-M5 | Major | Switching Sign in / Create account lost the form | One stable form view with tabs; typed values survive |
+| UX-M6 | Major | A taken username silently became a random one | The app detects it and asks for another name |
+| UX-M7 | Major | APK published without waiting for tests | Release runs only after the Tests workflow passed on main |
+| m-1, UX-m9/m10 | Minor | Plan editor edits landed on the wrong exercise; moves lost focus | Controls find their exercise by name; focus follows the moved row; e2e test |
+| m-2, m-3 | Minor | Merging an account dropped routines; a missing cloud plan wiped the local one | Tombstones cleared on merge; a missing row means "no base" |
+| m-4 | Minor | Re-entered weigh-in dropped by server tombstone | Weigh-ins saved through save_my_weights() with server time |
+| m-5, m-6 | Minor | Rebuilt sessions lost details; "last used" after midnight | Details from the log; last-used decided when the session opens |
+| m-7 | Minor | Deleted sessions unrecoverable | Undo restores a deleted session under a new id |
+| m-8 | Minor | Two tabs overwrote each other | Storage events reload state from the other tab |
+| m-9 | Minor | AbortSignal.timeout missing on older WebViews | AbortController with a manual fallback |
+| m-10, m-11 | Minor | Rest-image timestamp reset; old app couldn't restore new backups | Timestamp kept; backups also carry the old top-level keys |
+| R2-01, R2-02 | Minor | Request and lookup limits raceable or bypassed by resending | Append-only request log; both limits under an advisory lock; tests |
+| R2-03 | Minor | Blocking left gym-date replies behind | Unfriend and block remove replies and invites between the pair; test |
+| R2-04, R2-05 | Minor | Signing key exposed to build code; forced reinstall | Unsigned build job, separate signing job; v3 key rotation from the old key |
+| R2-06 | Minor | Consent record rewritable, not enforced | Stored in a private table; sign-up without it is refused |
+| R2-07 | Minor | Account deletion left the email in the audit log | The user's audit entries are deleted too |
+| R2-08 | Minor | Block list showed the previous account's blocks | Loaded per user with a guard; error and retry |
+| R2-09, UX-m8 | Minor | Privacy notice understated what friends see | Full list in the notice, consent text and README |
+| R2-10 | Minor | allowBackup copied the session token to Google backups | allowBackup false and data-extraction rules exclude everything |
+| R2-11 | Minor | GitHub Pages origin shared with the account's other sites | Hosting decision for the owner; documented in README (Hosting limit) |
+| R2-12 | Minor | Dev server path bypass, no Host check | Allowlist of shipped files, normalized paths, Host check |
+| UX-m1..m7 | Minor | Typed text overwritten, view focus, sign-out and delete progress, block-list errors, toasts, stacked sheets | Fields keep user text unless the app changed them; view changes focus the heading; busy states; error toasts stay longer and are announced; Escape closes only the top sheet; unique ids |
+| UX-m11..m13 | Minor | "− Set" deleted filled rows, low-vision tab contrast, calendar tab stops | Undo for filled rows; accent indicator on the selected tab; one tab stop per month with arrow-key grid navigation |
+| UX-m14..m17 | Minor | Test coverage and error tracking, publish race, "Now" dates expiring | Error tracking includes HTTP 5xx on every test; new suites (more.spec.js); release upload with --clobber; "Now" is recomputed when posting |
+| R2-N1..N3 | Nit | Exposed helper, anon grants, inline styles | Helper revoked, anon revoked, CSP without 'unsafe-inline' and with Trusted Types |
+| UX nits (16) | Nit | aria-label misuse, RSVP semantics, roving tabindex, dead code, sheet lookup, action order, copy, input hints, targets, contrast, sleeps and contexts, config, long names, reduced motion, shared-routine removal, Android PR check | All addressed (RSVP as a radio group, dead exports removed and nav derived from the router, sheets passed to their handlers, request rows stack below 400 px, Android project prepared on pull requests) |
+
+Found while testing round 2: attribute snippets passed as plain strings were escaped by html``, which broke the sign-up form in the Android WebView. They now use html``, render() copies parsed attribute nodes, and a unit test rejects the pattern.
 
 ### Round 1 (security 6/10, correctness 5/10, UX/tests 5/10)
 
