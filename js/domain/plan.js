@@ -1,4 +1,5 @@
 // Workout routines and the weekly schedule. Pure functions, no DOM or storage.
+import { looksUnilateral } from './catalog.js';
 
 export const MAX_SETS = 20;
 
@@ -19,6 +20,7 @@ export const REST_DEFAULTS = {
 };
 export const DEFAULT_REST = 90;
 export const DEFAULT_TARGET = '8–12';
+export const DEFAULT_SETS = 2; // per side for one-sided moves
 
 export function fingerprint(list) {
   const s = JSON.stringify((list || []).map((e) => [e.name, e.target || '', e.cat || '', e.note || '']));
@@ -53,8 +55,13 @@ export function sanitizeExercise(e) {
     rest: clampInt(e.rest, 0, 600, REST_DEFAULTS[name] ?? DEFAULT_REST),
     note: text(e.note, 200),
   };
+  // Upstream versions mark one-sided moves with sides: 'both'; keep both fields.
   if (e.unilateral === true || e.unilateral === false) out.unilateral = e.unilateral;
-  if (out.unilateral && out.sets % 2) out.sets += 1;
+  else if (e.sides === 'both') out.unilateral = true;
+  if (out.unilateral) {
+    out.sides = 'both';
+    if (out.sets % 2) out.sets += 1;
+  }
   return out;
 }
 
@@ -94,15 +101,16 @@ export function sanitizeSchedule(schedule, workouts) {
 }
 
 /**
- * One-time upgrade of exercises saved by older versions: mark the original
- * single-arm movements as unilateral. Unlike before, this no longer rewrites the
+ * One-time upgrade of exercises saved by older versions: mark single-arm and
+ * single-leg movements as unilateral. Unlike before, this no longer rewrites the
  * set count on every launch, so edits stick.
  */
 export function upgradeExercises(workouts) {
   let changed = false;
   Object.values(workouts).forEach((list) => list.forEach((e) => {
-    if (e.unilateral === undefined && UNILATERAL_DEFAULTS.includes(e.name)) {
+    if (e.unilateral === undefined && (UNILATERAL_DEFAULTS.includes(e.name) || looksUnilateral(e.name))) {
       e.unilateral = true;
+      e.sides = 'both';
       if (e.sets % 2) e.sets += 1;
       changed = true;
     }

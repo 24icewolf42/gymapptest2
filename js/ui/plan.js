@@ -3,8 +3,8 @@ import { $, html, render, on, toast } from '../core/dom.js';
 import { DOW, fmtClock } from '../core/dates.js';
 import { pushLayer } from '../core/router.js';
 import { state, savePlan, createWorkout, deleteWorkout, planTombstones, setPlanTombstones } from '../state.js';
-import { sanitizeWorkoutName, workoutSummary, displaySets, scheduledDays, renameInSchedule, MAX_SETS, DEFAULT_TARGET, REST_DEFAULTS, DEFAULT_REST } from '../domain/plan.js';
-import { searchCatalog, categoryLabel, CATEGORIES } from '../domain/catalog.js';
+import { sanitizeWorkoutName, workoutSummary, displaySets, scheduledDays, renameInSchedule, MAX_SETS, DEFAULT_TARGET, DEFAULT_SETS, REST_DEFAULTS, DEFAULT_REST } from '../domain/plan.js';
+import { searchCatalog, categoryLabel, CATEGORIES, CATALOG, GROUP_FILTERS, looksUnilateral } from '../domain/catalog.js';
 import { account } from '../cloud/sync.js';
 import { shareWorkout } from '../cloud/social.js';
 import { openSheet, confirmDialog, promptDialog } from './sheet.js';
@@ -13,6 +13,7 @@ import { icons } from './icons.js';
 let editing = null; // routine name open in the editor
 let closeEditorLayer = null;
 let query = '';
+let group = 'All';
 const REST_OPTIONS = [0, 30, 45, 60, 75, 90, 120, 150, 180, 240, 300];
 
 function weekView() {
@@ -59,10 +60,12 @@ function exerciseRow(e, i, count) {
 
 function searchResults(list) {
   const added = new Set(list.map((e) => e.name.toLowerCase()));
-  const results = searchCatalog(query).slice(0, 40);
+  const all = searchCatalog(query, group);
+  const results = all.slice(0, 60);
   const q = query.trim();
   const exact = results.some((x) => x.name.toLowerCase() === q.toLowerCase());
-  return html`${results.map((x) => html`<button type="button" class="pick${added.has(x.name.toLowerCase()) ? ' added' : ''}" data-add="${x.name}"${added.has(x.name.toLowerCase()) ? ' disabled' : ''}>
+  return html`<p class="muted small picks-count">${all.length} exercises${group === 'All' ? '' : ' · ' + group}${all.length > results.length ? ' · showing ' + results.length + ', search to narrow down' : ''}</p>
+    ${results.map((x) => html`<button type="button" class="pick${added.has(x.name.toLowerCase()) ? ' added' : ''}" data-add="${x.name}"${added.has(x.name.toLowerCase()) ? ' disabled' : ''}>
       <span class="row-main"><b>${x.name}</b><small>${categoryLabel(x.cat)}${x.unilateral ? ' · left/right' : ''}</small></span>
       <span class="pick-tag">${added.has(x.name.toLowerCase()) ? 'Added' : html`${icons.plus} Add`}</span></button>`)}
     ${q && !exact && !added.has(q.toLowerCase()) ? html`<button type="button" class="pick custom" data-add-custom="${q}"><span class="row-main"><b>Add “${q}”</b><small>Your own exercise</small></span><span class="pick-tag">${icons.plus} Add</span></button>` : ''}`;
@@ -83,6 +86,7 @@ function editorView() {
     <section class="card add-ex">
       <label class="field"><span>Add exercises</span>
         <input class="input" id="exSearch" type="search" value="${query}" placeholder="Search by name or muscle" autocomplete="off" enterkeyhint="search"></label>
+      <div class="chips no-swipe group-filters" role="radiogroup" aria-label="Muscle group">${GROUP_FILTERS.map((g) => html`<button type="button" class="chip${g === group ? ' on' : ''}" role="radio" aria-checked="${g === group ? 'true' : 'false'}" data-group="${g}">${g}</button>`)}</div>
       <div class="picks no-swipe" id="exResults">${searchResults(list)}</div>
     </section>`;
 }
@@ -196,9 +200,15 @@ export function initPlan() {
       // Keep the number of sets per side when switching.
       ex.sets = input.checked ? ex.sets * 2 : Math.max(1, Math.round(ex.sets / 2));
       ex.unilateral = input.checked;
+      if (input.checked) ex.sides = 'both'; else delete ex.sides;
     } else if (field === 'rest') ex.rest = +input.value;
     else ex[field] = input.value.trim().slice(0, field === 'note' ? 200 : 20);
     savePlan();
+  });
+  on(page, 'click', '[data-group]', (e, b) => {
+    group = b.dataset.group;
+    page.querySelectorAll('[data-group]').forEach((c) => { c.classList.toggle('on', c === b); c.setAttribute('aria-checked', String(c === b)); });
+    render($('exResults'), searchResults(list()));
   });
   on(page, 'input', '#exSearch', (e, input) => {
     query = input.value;
@@ -207,14 +217,14 @@ export function initPlan() {
   const add = (name, cat, unilateral) => {
     const l = list();
     if (l.some((x) => x.name.toLowerCase() === name.toLowerCase())) return;
-    const ex = { name, cat, sets: unilateral ? 6 : 3, target: DEFAULT_TARGET, rest: REST_DEFAULTS[name] ?? DEFAULT_REST, note: '' };
-    if (unilateral) ex.unilateral = true;
+    const ex = { name, cat, sets: unilateral ? DEFAULT_SETS * 2 : DEFAULT_SETS, target: DEFAULT_TARGET, rest: REST_DEFAULTS[name] ?? DEFAULT_REST, note: '' };
+    if (unilateral) { ex.unilateral = true; ex.sides = 'both'; }
     l.push(ex);
     savePlan();
     toast(name + ' added.');
   };
   on(page, 'click', '[data-add]', (e, b) => {
-    const x = searchCatalog('').find((c) => c.name === b.dataset.add);
+    const x = CATALOG.find((c) => c.name === b.dataset.add);
     if (x) add(x.name, x.cat, x.unilateral);
   });
   on(page, 'click', '[data-add-custom]', async (e, b) => {
@@ -226,7 +236,7 @@ export function initPlan() {
     });
     if (!cat) return;
     query = '';
-    add(name, cat, false);
+    add(name, cat, looksUnilateral(name));
   });
 }
 

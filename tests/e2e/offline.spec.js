@@ -27,7 +27,7 @@ test('plan a workout, log it, and see it in calendar and stats', async ({ page }
   await bench.locator('.r').first().fill('8');
   await bench.locator('.check').first().click();
   await expect(page.locator('#restBar')).toBeVisible();
-  await expect(bench.locator('.ex-count')).toHaveText('1/3');
+  await expect(bench.locator('.ex-count')).toHaveText('1/2');
   await session.getByRole('button', { name: 'Finish workout' }).click();
   await sheetAction(page, 'Save workout');
   await expect(session).toBeHidden();
@@ -59,11 +59,13 @@ test('an unfinished workout survives closing and reopening', async ({ page }) =>
   await page.locator('#sessionMain').click();
   await page.locator('#session .w').first().fill('100');
   await page.locator('#session .check').first().click();
+  await expect(page.locator('#session .d').first()).toBeChecked();
+  await expect(page.locator('#session .ex-count').first()).toHaveText('1/2');
   await page.locator('#sessionBack').click();
   await expect(page.locator('#activeBar')).toBeVisible();
   await page.locator('#activeBar button').click();
   await expect(page.locator('#session .w').first()).toHaveValue('100');
-  await expect(page.locator('#session .ex-count').first()).toHaveText('1/3');
+  await expect(page.locator('#session .ex-count').first()).toHaveText('1/2');
   // The phone's back gesture closes the workout instead of leaving the app.
   await page.goBack();
   await expect(page.locator('#session')).toBeHidden();

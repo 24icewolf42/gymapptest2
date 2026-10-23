@@ -13,7 +13,8 @@ describe('sanitizeExercise', () => {
   });
 
   it('keeps unilateral set rows even', () => {
-    expect(sanitizeExercise({ name: 'Curl', sets: 3, unilateral: true }).sets).toBe(4);
+    expect(sanitizeExercise({ name: 'Curl', sets: 3, unilateral: true })).toMatchObject({ sets: 4, unilateral: true, sides: 'both' });
+    expect(sanitizeExercise({ name: 'Curl', sets: 4, sides: 'both' }).unilateral).toBe(true);
   });
 
   it('keeps markup as plain text (escaping happens at render time)', () => {
@@ -44,7 +45,7 @@ describe('upgradeExercises', () => {
   it('marks the original single-arm moves once and does not touch user edits again', () => {
     const w = { Arms: [{ name: 'Single-Arm Tricep Pushdowns', sets: 6 }] };
     expect(upgradeExercises(w)).toBe(true);
-    expect(w.Arms[0]).toMatchObject({ unilateral: true, sets: 6 });
+    expect(w.Arms[0]).toMatchObject({ unilateral: true, sides: 'both', sets: 6 });
     w.Arms[0].sets = 8;
     expect(upgradeExercises(w)).toBe(false);
     expect(w.Arms[0].sets).toBe(8);
