@@ -1,21 +1,26 @@
 // Settings: account, privacy, training options, rest-day image, backup, about.
 import { $, html, render, on, toast } from '../core/dom.js';
-import { listen } from '../core/store.js';
+import { listen, readText, KEYS } from '../core/store.js';
 import { pushLayer, go, currentPage } from '../core/router.js';
 import { state, saveSettings, restImage, setRestImage, loadState } from '../state.js';
-import { makeBackup, parseBackup } from '../domain/backup.js';
+import { makeBackup, parseBackup, BACKUP_KEYS } from '../domain/backup.js';
 import { cloudConfigured } from '../cloud/client.js';
 import {
-  account, signIn, signUp, resetPassword, updatePassword, signOut, changeUsername, setShareWeight, deleteAccount, syncAll,
+  account, signIn, signUp, resetPassword, verifyRecoveryCode, updatePassword, signOut, changeUsername, setShareWeight,
+  deleteAccount, syncAll,
 } from '../cloud/sync.js';
+import { loadBlocks, unblock } from '../cloud/social.js';
 import { openSheet, confirmDialog, promptDialog } from './sheet.js';
 import { icons } from './icons.js';
 import { APP_VERSION } from '../version.js';
+
+export const MIN_AGE = 14;
 
 let authMode = 'signin';
 let previousPage = 'today';
 let closeLayer = null;
 let busy = false;
+let blocks = null; // [{ blocked_id, username }] once loaded
 
 export function openSettings() {
   if (currentPage() === 'settings') return;
@@ -29,8 +34,33 @@ function closeSettings() {
   go(previousPage);
 }
 
+const PRIVACY = html`
+  <p class="sheet-text">Tracker works without an account: everything then stays on this phone.</p>
+  <h3>With an account</h3>
+  <ul class="plain">
+    <li>We store your email address (to sign in) and your username.</li>
+    <li>Your plan, workouts, weigh-ins and settings sync to your account so you can use several devices. Only you can read them.</li>
+  </ul>
+  <h3>What friends see</h3>
+  <ul class="plain">
+    <li>Only people whose friend request you accepted. Nobody can browse the list of users.</li>
+    <li>Your username, and gym dates you share with them.</li>
+    <li>Stats, only if you share them: workouts, total kg × reps, training time and streak.</li>
+    <li>Your latest weight, only if you turn that on. Never your weight history.</li>
+  </ul>
+  <h3>Your choices</h3>
+  <ul class="plain">
+    <li>Remove or block friends at any time.</li>
+    <li>Delete your account in Settings: everything stored for it in the cloud is deleted.</li>
+  </ul>
+  <p class="sheet-text">You need to be ${MIN_AGE} or older to create an account, or have a parent's or guardian's permission.</p>`;
+
+function showPrivacy() {
+  return openSheet({ title: 'Privacy', body: PRIVACY, actions: [{ label: 'Close', value: true, tone: 'secondary' }] });
+}
+
 function accountCard() {
-  if (!cloudConfigured()) return html`<section class="card"><h2>Account</h2><p class="muted">Accounts are not available in this build.</p></section>`;
+  if (!cloudConfigured()) return html`<section class="card"><h2>Account</h2><p class="muted">Accounts are not available in this version of the app.</p></section>`;
   if (!account.user) {
     const signup = authMode === 'signup';
     return html`<form class="card auth" id="authForm" novalidate>
@@ -41,8 +71,9 @@ function accountCard() {
       <p class="muted small">${signup ? 'Back up your workouts, use several devices, add friends and plan gym dates together.' : 'Welcome back. Your workouts on this phone stay here either way.'}</p>
       <label class="field"><span>Email</span><input class="input" name="email" type="email" autocomplete="email" required></label>
       <label class="field"><span>Password</span><input class="input" name="password" type="password" minlength="8" autocomplete="${signup ? 'new-password' : 'current-password'}" required placeholder="At least 8 characters"></label>
-      ${signup ? html`<label class="field"><span>Username</span><div class="input-row"><span class="input-prefix">@</span><input class="input" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20" placeholder="3–20 letters, numbers or _"></div></label>
-        <p class="hint">Friends find you by your exact username. Don’t use your real full name.</p>` : ''}
+      ${signup ? html`<div class="field"><label for="authUsername">Username</label><div class="input-row"><span class="input-prefix" aria-hidden="true">@</span><input class="input" id="authUsername" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20" placeholder="3–20 letters, numbers or _"></div></div>
+        <p class="hint">Friends find you by your exact username. Don’t use your real full name.</p>
+        <label class="check-row consent"><input type="checkbox" name="consent"> <span>I am ${MIN_AGE} or older, or a parent or guardian agreed, and I have read the <button type="button" class="link-btn inline" data-privacy>privacy notice</button>.</span></label>` : ''}
       <p class="form-error" aria-live="polite"></p>
       <button class="btn btn-primary btn-block" type="submit"${busy ? ' disabled' : ''}>${signup ? 'Create account' : 'Sign in'}</button>
       ${signup ? '' : html`<button type="button" class="link-btn" data-forgot>Forgot password?</button>`}
@@ -51,7 +82,7 @@ function accountCard() {
   const p = account.profile;
   return html`<section class="card">
     <header class="card-head"><div><h2>@${p?.username || '…'}</h2><small class="muted">${account.user.email}</small></div>
-      <button type="button" class="btn btn-soft btn-sm" data-change-username>Change</button></header>
+      <button type="button" class="btn btn-soft btn-sm" data-change-username aria-label="Change username">Change</button></header>
     <p class="status ${account.statusTone}" role="status">${account.status}</p>
     <div class="btn-row">
       <button type="button" class="btn btn-soft" data-sync>Sync now</button>
@@ -62,7 +93,12 @@ function accountCard() {
     <h2>Privacy</h2>
     <label class="toggle row-toggle"><input type="checkbox" data-share-weight${p?.share_weight ? ' checked' : ''}${p && 'share_weight' in p ? '' : ' disabled'}>
       <span><b>Show my weight to friends</b><small>Friends see only your latest weigh-in, never the full history.</small></span></label>
-    <p class="muted small">Friends can see your username, gym dates you share with them, and stats or routines you choose to share. Your workout history syncs only to your own account.</p>
+    <p class="muted small">Friends see your username, gym dates you share with them, and stats or routines you choose to share. Your workout history syncs only to your own account. <button type="button" class="link-btn inline" data-privacy>Read the privacy notice</button></p>
+    <h3 class="sub">Blocked people</h3>
+    ${blocks == null ? html`<p class="muted small">Loading…</p>` : blocks.length ? html`<div class="list">${blocks.map((b) => html`
+      <div class="row" data-key="block-${b.blocked_id}"><div class="row-main"><b>@${b.username}</b></div>
+        <button type="button" class="btn btn-ghost btn-sm" data-unblock="${b.blocked_id}" aria-label="Unblock ${b.username}">Unblock</button></div>`)}</div>`
+      : html`<p class="muted small">Nobody. You can block someone from the Crew tab.</p>`}
   </section>`;
 }
 
@@ -71,7 +107,7 @@ function trainingCard() {
   return html`<section class="card">
     <h2>Training</h2>
     <div class="field"><span id="stepLabel">Round weights to</span>
-      <div class="chips" role="radiogroup" aria-labelledby="stepLabel">${steps.map(([v, l]) => html`<button type="button" class="chip${state.settings.weightStep === v ? ' on' : ''}" role="radio" aria-checked="${state.settings.weightStep === v ? 'true' : 'false'}" data-step="${v}">${l}</button>`)}</div>
+      <div class="chips wrap" role="radiogroup" aria-labelledby="stepLabel">${steps.map(([v, l]) => html`<button type="button" class="chip${state.settings.weightStep === v ? ' on' : ''}" role="radio" aria-checked="${state.settings.weightStep === v ? 'true' : 'false'}" data-step="${v}">${l}</button>`)}</div>
       <p class="hint">Match the smallest plates or dumbbell steps at your gym.</p></div>
     <div class="field"><span>Rest-day picture</span>
       <div class="rest-pick"><img src="${restImage()}" alt="Current rest-day picture">
@@ -82,6 +118,7 @@ function trainingCard() {
 }
 
 function backupCard() {
+  const switched = !!readText(KEYS.switchBackup);
   return html`<section class="card">
     <h2>Backup</h2>
     <p class="muted small">Everything on this phone: workouts, plan, weigh-ins and settings.</p>
@@ -90,6 +127,7 @@ function backupCard() {
       <button type="button" class="btn btn-soft" data-backup-copy>${icons.copy} Copy</button>
       <button type="button" class="btn btn-soft" data-restore>${icons.upload} Restore</button>
     </div>
+    ${switched ? html`<p class="hint">This phone kept a copy of the data from before another account signed in. <button type="button" class="link-btn inline" data-switch-backup>Save it as a file</button></p>` : ''}
     <input type="file" id="restoreFile" accept="application/json,.json,.txt" hidden>
   </section>`;
 }
@@ -98,29 +136,28 @@ function dangerCard() {
   if (!account.user) return '';
   return html`<section class="card danger-zone">
     <h2>Delete account</h2>
-    <p class="muted small">Deletes your account, friends, gym dates and everything synced to the cloud. Workouts on this phone stay until you delete the app.</p>
+    <p class="muted small">Deletes your account, friends, gym dates and everything synced to the cloud.</p>
     <button type="button" class="btn btn-danger" data-delete-account>Delete my account</button>
   </section>`;
 }
 
 export function renderSettings() {
   render($('page-settings'), html`
-    <header class="top editor-top">
+    <header class="top editor-top" data-view="settings-${account.user ? 'in' : authMode}">
       <button type="button" class="icon-btn" data-close-settings aria-label="Back">${icons.back}</button>
       <div class="grow"><p class="eyebrow">Tracker v${APP_VERSION}</p><h1 class="h1-sm">Settings</h1></div></header>
     ${accountCard()}
     ${trainingCard()}
     ${backupCard()}
     ${dangerCard()}
-    <p class="about muted small">Exercise list and app made for training with friends. <button type="button" class="link-btn" data-check-update>Check for updates</button></p>`);
+    <p class="about muted small"><button type="button" class="link-btn inline" data-privacy>Privacy</button> · <button type="button" class="link-btn inline" data-check-update>Check for updates</button></p>`);
 }
 
-function refreshIfShown() {
-  if (currentPage() === 'settings') {
-    const f = document.activeElement;
-    if (f && $('page-settings').contains(f) && f.matches('input')) return;
-    renderSettings();
-  }
+async function refreshBlocks() {
+  if (!account.user || !account.ready) { blocks = null; return; }
+  const r = await loadBlocks();
+  blocks = r.error ? [] : r.data;
+  if (currentPage() === 'settings') renderSettings();
 }
 
 function resizeImage(file) {
@@ -148,55 +185,101 @@ function backupText() {
   return makeBackup((k) => localStorage.getItem(k), APP_VERSION);
 }
 
+function download(text, name) {
+  const blob = new Blob([text], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
 async function restoreFrom(text) {
+  if (!String(text || '').trim()) { toast('Paste the backup text first.', { tone: 'error' }); return; }
   let data;
   try { data = parseBackup(text); } catch (e) { toast(e.message, { tone: 'error' }); return; }
   const ok = await confirmDialog(account.user
     ? 'Your workouts on this phone are replaced by the backup. Workouts already in your account are merged back in at the next sync.'
     : 'Everything on this phone is replaced by the backup.', { title: 'Restore this backup?', ok: 'Restore', danger: true });
   if (!ok) return;
+  // Replace everything: keys the backup does not have are removed, not kept.
+  BACKUP_KEYS.forEach((k) => { if (!(k in data)) localStorage.removeItem(k); });
   Object.entries(data).forEach(([k, v]) => localStorage.setItem(k, v));
+  // This phone's copy changed wholesale: forget what it last saw in the cloud.
+  [KEYS.planBase, KEYS.drafts, KEYS.draft, KEYS.active].forEach((k) => localStorage.removeItem(k));
   state.sync.syncedWeightDates = [];
-  localStorage.setItem('gymSyncState', JSON.stringify(state.sync));
+  state.sync.pendingWeightDeletes = {};
+  localStorage.setItem(KEYS.sync, JSON.stringify(state.sync));
   loadState();
   toast('Backup restored.');
   setTimeout(() => location.reload(), 600);
 }
 
+async function forgotPassword() {
+  const email = await promptDialog({ title: 'Reset password', label: 'Your account email', type: 'email', value: $('authForm')?.email.value || '', ok: 'Send email', maxLength: 120 });
+  if (!email) return;
+  const sent = await resetPassword(email);
+  if (sent) { toast(sent, { tone: 'error' }); return; }
+  // The email has a link (opens the web app) and, if the project's email
+  // template includes it, a code that works right here, e.g. in the Android app.
+  const code = await promptDialog({
+    title: 'Check your email',
+    label: 'Code from the email',
+    hint: 'Or tap the link in the email instead. It opens Tracker in your browser.',
+    ok: 'Continue', maxLength: 10, type: 'text',
+    validate: (v) => (/^\d{6,10}$/.test(v) ? '' : 'Enter the code from the email.'),
+  });
+  if (!code) return;
+  const r = await verifyRecoveryCode(email, code);
+  if (r) toast(r, { tone: 'error' });
+  // On success the PASSWORD_RECOVERY event asks for the new password.
+}
+
 export function initSettings() {
   const page = $('page-settings');
   on(page, 'click', '[data-close-settings]', closeSettings);
+  on(page, 'click', '[data-privacy]', (e) => { e.preventDefault(); showPrivacy(); });
   on(page, 'click', '[data-auth-mode]', (e, b) => { authMode = b.dataset.authMode; renderSettings(); });
   on(page, 'submit', '#authForm', async (e) => {
     e.preventDefault();
     const f = e.target, err = f.querySelector('.form-error');
     const email = f.email.value.trim(), password = f.password.value;
-    const username = authMode === 'signup' ? f.username.value.trim().toLowerCase() : '';
+    const signup = authMode === 'signup';
+    const username = signup ? f.username.value.trim().toLowerCase() : '';
     if (!/^\S+@\S+\.\S+$/.test(email)) { err.textContent = 'Enter a valid email address.'; return; }
     if (password.length < 8) { err.textContent = 'Use a password with at least 8 characters.'; return; }
-    if (authMode === 'signup' && !/^[a-z0-9_]{3,20}$/.test(username)) { err.textContent = 'Usernames have 3–20 letters, numbers or _.'; return; }
+    if (signup && !/^[a-z0-9_]{3,20}$/.test(username)) { err.textContent = 'Usernames have 3–20 letters, numbers or _.'; return; }
+    if (signup && !f.consent.checked) { err.textContent = `Please confirm you are ${MIN_AGE} or older, or have a parent's permission.`; f.consent.focus(); return; }
     busy = true; f.querySelector('[type=submit]').disabled = true;
-    const r = authMode === 'signup' ? await signUp(email, password, username) : await signIn(email, password);
+    const r = signup ? await signUp(email, password, username) : await signIn(email, password);
     busy = false;
     if (r === 'confirm-email') { toast('Account created. Check your email to confirm it, then sign in.', { ms: 6000 }); authMode = 'signin'; renderSettings(); return; }
     if (r) { err.textContent = r; f.querySelector('[type=submit]').disabled = false; return; }
-    toast(authMode === 'signup' ? 'Welcome! Your account is ready.' : 'Signed in. Syncing your workouts…');
+    toast(signup ? 'Welcome! Your account is ready.' : 'Signed in. Syncing your workouts…');
+    renderSettings();
   });
-  on(page, 'click', '[data-forgot]', async () => {
-    const email = await promptDialog({ title: 'Reset password', label: 'Your account email', type: 'email', value: $('authForm')?.email.value || '', ok: 'Send link', maxLength: 120 });
-    if (!email) return;
-    const r = await resetPassword(email);
-    toast(r || 'Check your inbox for the reset link.', { tone: r ? 'error' : 'default' });
-  });
+  on(page, 'click', '[data-forgot]', forgotPassword);
   on(page, 'click', '[data-sync]', () => syncAll());
   on(page, 'click', '[data-signout]', async () => {
     const choice = await openSheet({
       title: 'Sign out?',
-      body: html`<p class="sheet-text">If someone else uses this phone, remove your workouts from it. They stay safe in your account.</p>`,
-      actions: [{ label: 'Sign out, keep data here', value: 'keep', tone: 'secondary' }, { label: 'Sign out and remove my data', value: 'remove', tone: 'danger' }],
+      body: html`<p class="sheet-text">If someone else uses this phone, remove your workouts from it. They stay in your account.</p>`,
+      actions: [
+        { label: 'Cancel', value: null, tone: 'ghost' },
+        { label: 'Sign out, keep data here', value: 'keep', tone: 'secondary' },
+        { label: 'Sign out and remove my data', value: 'remove', tone: 'danger' },
+      ],
     });
     if (!choice) return;
-    await signOut({ removeLocalData: choice === 'remove' });
+    const btn = page.querySelector('[data-signout]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
+    const r = await signOut({ removeLocalData: choice === 'remove' });
+    if (btn && document.contains(btn)) { btn.disabled = false; btn.textContent = 'Sign out'; }
+    if (r === 'not-synced') {
+      const force = await confirmDialog('Some workouts on this phone have not reached your account yet (no connection?). If you remove the data now, they are lost.', { title: 'Not synced yet', ok: 'Remove anyway', cancel: 'Keep my data', danger: true });
+      if (!force) return;
+      await signOut({ removeLocalData: true, force: true });
+    }
     toast('Signed out.');
   });
   on(page, 'click', '[data-change-username]', async () => {
@@ -206,9 +289,18 @@ export function initSettings() {
     toast(r || 'Username changed.', { tone: r ? 'error' : 'default' });
   });
   on(page, 'change', '[data-share-weight]', async (e, input) => {
+    input.disabled = true;
     const r = await setShareWeight(input.checked);
+    input.disabled = false;
     if (r) { toast(r, { tone: 'error' }); input.checked = !input.checked; }
     else toast(input.checked ? 'Friends can see your latest weight.' : 'Your weight is hidden from friends.');
+  });
+  on(page, 'click', '[data-unblock]', async (e, b) => {
+    b.disabled = true;
+    const r = await unblock(b.dataset.unblock);
+    if (r.error) { b.disabled = false; toast(r.error, { tone: 'error' }); return; }
+    toast('Unblocked.');
+    refreshBlocks();
   });
   on(page, 'click', '[data-step]', (e, b) => { state.settings.weightStep = +b.dataset.step; saveSettings(); renderSettings(); });
   on(page, 'click', '[data-pick-image]', () => $('restFile').click());
@@ -220,16 +312,11 @@ export function initSettings() {
       toast('Rest-day picture updated.');
       renderSettings();
     } catch { toast('That picture could not be saved. Try a smaller one.', { tone: 'error' }); }
+    input.value = '';
   });
   on(page, 'click', '[data-reset-image]', () => { setRestImage(null); renderSettings(); });
-  on(page, 'click', '[data-backup-file]', () => {
-    const blob = new Blob([backupText()], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'tracker-backup-' + new Date().toISOString().slice(0, 10) + '.json';
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  });
+  on(page, 'click', '[data-backup-file]', () => download(backupText(), 'tracker-backup-' + new Date().toISOString().slice(0, 10) + '.json'));
+  on(page, 'click', '[data-switch-backup]', () => download(readText(KEYS.switchBackup), 'tracker-backup-before-switch.json'));
   on(page, 'click', '[data-backup-copy]', async () => {
     try { await navigator.clipboard.writeText(backupText()); toast('Backup copied. Paste it somewhere safe.'); } catch { toast('Copying is blocked here. Use “Save file” instead.', { tone: 'error' }); }
   });
@@ -240,7 +327,7 @@ export function initSettings() {
       actions: [{ label: 'Choose file', value: 'file', tone: 'ghost' }, { label: 'Restore pasted text', tone: 'primary', onClick: (finish) => finish({ text: document.querySelector('.sheet textarea[name=paste]').value }) }],
     });
     if (choice === 'file') $('restoreFile').click();
-    else if (choice && choice.text) restoreFrom(choice.text);
+    else if (choice && 'text' in choice) restoreFrom(choice.text);
   });
   on(page, 'change', '#restoreFile', async (e, input) => {
     const file = input.files && input.files[0];
@@ -248,18 +335,43 @@ export function initSettings() {
     input.value = '';
   });
   on(page, 'click', '[data-delete-account]', async () => {
-    const typed = await promptDialog({ title: 'Delete your account?', label: `Type DELETE to confirm`, ok: 'Delete forever', maxLength: 10, hint: 'This cannot be undone.', validate: (v) => (v === 'DELETE' ? '' : 'Type DELETE in capital letters.') });
-    if (typed !== 'DELETE') return;
-    const r = await deleteAccount();
+    const result = await openSheet({
+      title: 'Delete your account?',
+      body: html`<p class="sheet-text">Your account, friends, gym dates and everything synced to the cloud are deleted. This cannot be undone.</p>
+        <label class="field"><span>Type DELETE to confirm</span><input class="input" name="confirm" autocomplete="off" autocapitalize="characters" maxlength="10"></label>
+        <label class="check-row"><input type="checkbox" name="wipe" checked> <span>Also remove my workouts from this phone</span></label>
+        <p class="form-error" aria-live="polite"></p>`,
+      actions: [
+        { label: 'Cancel', value: null, tone: 'ghost' },
+        {
+          label: 'Delete forever', tone: 'danger', submit: true,
+          onClick: (finish) => {
+            const sheet = document.querySelector('.sheet-backdrop:last-child .sheet');
+            if (sheet.querySelector('[name=confirm]').value !== 'DELETE') { sheet.querySelector('.form-error').textContent = 'Type DELETE in capital letters.'; return; }
+            finish({ wipe: sheet.querySelector('[name=wipe]').checked });
+          },
+        },
+      ],
+    });
+    if (!result) return;
+    const r = await deleteAccount({ removeLocalData: result.wipe });
     toast(r || 'Your account was deleted.', { tone: r ? 'error' : 'default' });
   });
   on(page, 'click', '[data-check-update]', () => window.dispatchEvent(new CustomEvent('gym:check-update', { detail: { manual: true } })));
 
-  listen('gym:account', refreshIfShown);
+  listen('gym:account', () => {
+    if (account.user && account.ready && blocks == null) refreshBlocks();
+    if (!account.user) blocks = null;
+    if (currentPage() === 'settings') renderSettings();
+  });
   listen('gym:password-recovery', async () => {
     const pw = await promptDialog({ title: 'Choose a new password', label: 'New password', type: 'password', maxLength: 72, ok: 'Save password', validate: (v) => (v.length >= 8 ? '' : 'Use at least 8 characters.') });
     if (!pw) return;
     const r = await updatePassword(pw);
     toast(r || 'Password changed.', { tone: r ? 'error' : 'default' });
   });
+}
+
+export function onSettingsShown() {
+  if (account.user && account.ready) refreshBlocks();
 }

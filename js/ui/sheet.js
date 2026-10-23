@@ -15,7 +15,7 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
     const backdrop = document.createElement('div');
     backdrop.className = 'sheet-backdrop';
     render(backdrop, html`
-      <form class="sheet ${className}" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" novalidate>
+      <form class="sheet ${className}" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" tabindex="-1" novalidate>
         <div class="sheet-handle" aria-hidden="true"></div>
         <header class="sheet-head">
           <div>
@@ -25,17 +25,22 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
           <button type="button" class="icon-btn" data-sheet-close aria-label="Close">${closeIcon}</button>
         </header>
         <div class="sheet-body">${body}</div>
-        ${actions.length ? html`<div class="sheet-actions">${actions.map((a, i) => html`<button type="${a.submit ? 'submit' : 'button'}" class="btn btn-${a.tone || 'secondary'}" data-sheet-action="${i}">${a.label}</button>`)}</div>` : ''}
+        ${actions.length ? html`<div class="sheet-actions">${actions.map((a, i) => ({ a, i })).reverse().map(({ a, i }) => html`<button type="${a.submit ? 'submit' : 'button'}" class="btn btn-${a.tone || 'secondary'}" data-sheet-action="${i}">${a.label}</button>`)}</div>` : ''}
       </form>`);
     root.appendChild(backdrop);
     const sheet = backdrop.querySelector('.sheet');
+    // Everything behind the sheet (the page, the workout screen, older sheets) is inert.
+    const behind = [...document.querySelectorAll('#app, #bottomNav, #activeBar, #session, #sheetRoot > .sheet-backdrop')].filter((el) => el !== backdrop && !el.inert);
+    behind.forEach((el) => { el.inert = true; });
     let done = false;
     const previousFocus = document.activeElement;
 
     const finish = (value, fromBack) => {
       if (done) return;
       done = true;
+      behind.forEach((el) => { el.inert = false; });
       if (!fromBack) closeLayer();
+      backdrop.classList.remove('open');
       backdrop.classList.add('closing');
       setTimeout(() => backdrop.remove(), 180);
       document.removeEventListener('keydown', onKey);
@@ -61,7 +66,7 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
     onMount?.(sheet, finish);
     requestAnimationFrame(() => {
       backdrop.classList.add('open');
-      (sheet.querySelector('[autofocus]') || sheet.querySelector('.sheet-actions .btn') || sheet).focus?.({ preventScroll: true });
+      (sheet.querySelector('[autofocus]') || sheet).focus({ preventScroll: true });
     });
   });
 }

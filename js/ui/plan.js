@@ -19,7 +19,7 @@ const REST_OPTIONS = [0, 30, 45, 60, 75, 90, 120, 150, 180, 240, 300];
 function weekView() {
   const names = Object.keys(state.workouts);
   return html`
-    <header class="top"><div><p class="eyebrow">Your training, your way</p><h1>Plan</h1></div>
+    <header class="top" data-view="week"><div><p class="eyebrow">Your training, your way</p><h1>Plan</h1></div>
       <button type="button" class="icon-btn" data-open-settings aria-label="Settings">${icons.settings}</button></header>
     <section class="card list">
       <h2 class="card-title">Your week</h2>
@@ -74,7 +74,7 @@ function searchResults(list) {
 function editorView() {
   const name = editing, list = state.workouts[name];
   return html`
-    <header class="top editor-top">
+    <header class="top editor-top" data-view="editor-${name}">
       <button type="button" class="icon-btn" data-close-editor aria-label="Back to my plan">${icons.back}</button>
       <div class="grow"><p class="eyebrow">Workout · ${workoutSummary(list)}</p><h1 class="h1-sm">${name}</h1></div>
       <button type="button" class="icon-btn" data-rename aria-label="Rename workout">${icons.edit}</button>
@@ -103,6 +103,11 @@ function openEditor(name) {
   if (!closeEditorLayer) closeEditorLayer = pushLayer(() => { closeEditorLayer = null; editing = null; renderPlan(); });
   renderPlan();
   window.scrollTo(0, 0);
+}
+
+/** Called when the user switches tabs: the editor's back entry must not linger. */
+export function leavePlan() {
+  if (editing) closeEditor();
 }
 
 function closeEditor() {
@@ -184,8 +189,12 @@ export function initPlan() {
     savePlan();
   });
   on(page, 'click', '[data-remove]', (e, b) => {
-    list().splice(+b.closest('[data-i]').dataset.i, 1);
+    const i = +b.closest('[data-i]').dataset.i, name = editing;
+    const [removed] = list().splice(i, 1);
     savePlan();
+    toast(removed.name + ' removed.', {
+      action: { label: 'Undo', onClick: () => { const l = state.workouts[name]; if (!l) return; l.splice(Math.min(i, l.length), 0, removed); savePlan(); } },
+    });
   });
   on(page, 'click', '[data-sets]', (e, b) => {
     const ex = list()[+b.closest('[data-i]').dataset.i];

@@ -1,9 +1,8 @@
 // Stats: totals, body weight and per-exercise progress.
 import { $, html, render, on, toast } from '../core/dom.js';
 import { ymd, fmtShort, fmtDuration } from '../core/dates.js';
-import { state, setWeight, deleteWeight } from '../state.js';
-import { totals, exerciseNames, liftPoints, streak, bestStreak } from '../domain/logs.js';
-import { KEYS, read } from '../core/store.js';
+import { state, setWeight, deleteWeight, streaks } from '../state.js';
+import { totals, exerciseNames, liftPoints } from '../domain/logs.js';
 import { weightTrend } from '../domain/weights.js';
 import { lineChart } from './graph.js';
 import { icons } from './icons.js';
@@ -14,8 +13,7 @@ let showAllLifts = false;
 
 function tiles() {
   const t = totals(state.logs, ymd().slice(0, 7));
-  const st = streak(state.logs, state.bypass, state.schedule);
-  const best = Math.max(bestStreak(state.logs, state.bypass, state.schedule), Number((read(KEYS.legacyStats, {}) || {}).best_streak) || 0);
+  const { current: st, best } = streaks();
   const tile = (value, label) => html`<div class="tile"><b>${value}</b><span>${label}</span></div>`;
   return html`<div class="tiles">${tile(t.workouts, 'Workouts')}${tile(t.month, 'This month')}${tile(t.seconds ? fmtDuration(t.seconds) : '–', 'Total time')}${tile(st + (best > st ? ' / ' + best : ''), best > st ? 'Streak / best' : 'Streak')}</div>`;
 }
@@ -49,7 +47,7 @@ function liftCards() {
     const best = Math.max(...p.map((x) => x.w));
     const diff = p.length > 1 ? Math.round((p[p.length - 1].w - p[0].w) * 10) / 10 : 0;
     return html`<section class="card lift">
-      <header class="card-head"><div><h3>${name}</h3><small class="${diff > 0 ? 'up' : ''}">${p.length === 1 ? 'First session' : diff > 0 ? '▲ +' + diff + ' kg since the first session' : diff < 0 ? '▼ ' + diff + ' kg since the first session' : 'Same as the first session'}</small></div>
+      <header class="card-head"><div><h3>${name}</h3><small class="${diff > 0 ? 'up' : ''}">${p.length === 1 ? 'First session' : diff > 0 ? '▲ +' + diff + ' kg since the first session' : diff < 0 ? '▼ ' + Math.abs(diff) + ' kg less than the first session' : 'Same as the first session'}</small></div>
         <div class="big-num sm">${best}<small> kg best</small></div></header>
       ${lineChart(p.slice(-30), { markBest: true, label: name + ' progress' })}
       <p class="muted small">${p.length} ${p.length === 1 ? 'session' : 'sessions'} · ring marks your best</p></section>`;
@@ -78,5 +76,9 @@ export function initStats() {
   });
   on(page, 'click', '[data-toggle-entries]', () => { showEntries = !showEntries; renderStats(); });
   on(page, 'click', '[data-all-lifts]', () => { showAllLifts = true; renderStats(); });
-  on(page, 'click', '[data-del-weight]', (e, b) => { deleteWeight(b.dataset.delWeight); toast('Weigh-in deleted.'); });
+  on(page, 'click', '[data-del-weight]', (e, b) => {
+    const date = b.dataset.delWeight, entry = state.weights.find((x) => x.date === date);
+    deleteWeight(date);
+    toast('Weigh-in deleted.', { action: entry ? { label: 'Undo', onClick: () => setWeight(date, entry.weight) } : null });
+  });
 }

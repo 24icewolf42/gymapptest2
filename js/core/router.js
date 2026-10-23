@@ -34,10 +34,6 @@ function closeLayer(layer) {
   try { history.back(); } catch { skipPops--; }
 }
 
-export function hasLayers() {
-  return layers.length > 0;
-}
-
 window.addEventListener('popstate', () => {
   if (skipPops > 0) {
     skipPops--;
@@ -68,6 +64,8 @@ let tabLayerClose = null;
 export function go(name, { fromBack = false } = {}) {
   if (!pages[name]) return;
   const changed = name !== current;
+  // Let the page we leave close its own history layers (e.g. the plan editor).
+  if (changed) pages[current]?.leave?.();
   current = name;
   document.querySelectorAll('.page').forEach((p) => p.classList.toggle('active', p.id === 'page-' + name));
   document.querySelectorAll('.nav-btn').forEach((b) => {

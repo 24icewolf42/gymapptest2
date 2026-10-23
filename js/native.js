@@ -1,6 +1,7 @@
 // Platform glue: Android back button, APK self-update, the web update check,
 // the "get the app" banner and the offline service worker.
 import { $, html, render, toast } from './core/dom.js';
+import { openSheet } from './ui/sheet.js';
 import { handleNativeBack } from './core/router.js';
 import { APP_VERSION } from './version.js';
 
@@ -34,28 +35,65 @@ function showBanner(title, sub, onTap) {
   el.querySelector('button').onclick = onTap;
 }
 
+/** Parses "Tracker v3.0.1 (build 57)" into { version, build }. */
+export function parseRelease(name) {
+  const v = /v(\d+\.\d+\.\d+)/.exec(name || '');
+  const b = /\(build (\d+)\)/.exec(name || '');
+  return { version: v ? v[1] : null, build: b ? +b[1] : null };
+}
+
+/** Newer by build number when both are known (catches releases without a version bump). */
+export function releaseIsNewer(release, installed) {
+  if (release.build != null && installed.build != null) return release.build > installed.build;
+  return !!release.version && isNewer(release.version, installed.version);
+}
+
+async function installedBuild() {
+  try {
+    const info = await plugin('App')?.getInfo?.();
+    return { version: info?.version || APP_VERSION, build: info && /^\d+$/.test(String(info.build)) ? +info.build : null };
+  } catch { return { version: APP_VERSION, build: null }; }
+}
+
+function installUpdate() {
+  const P = plugin('ApkUpdater');
+  if (!P) { toast('The updater is not available in this build.'); return; }
+  toast('Downloading update…');
+  P.install({ url: APK_URL })
+    .then(() => toast('Tap Install when Android asks.'))
+    .catch((e) => {
+      if (e && e.code === 'SIGNATURE_MISMATCH') {
+        // The release key changed: Android only allows this as a fresh install.
+        openSheet({
+          title: 'One-time reinstall needed',
+          body: html`<p class="sheet-text">This update is signed with a new, private key, so Android can't install it over the old app.</p>
+            <ol class="plain"><li>Settings → Backup → Save file (or sign in, so your data is in your account).</li><li>Uninstall Tracker.</li><li>Install the new version from the link below, then restore or sign in.</li></ol>`,
+          actions: [{ label: 'Later', value: null, tone: 'ghost' }, { label: 'Open download page', value: 'open', tone: 'primary' }],
+        }).then((v) => { if (v) window.open(APK_URL, '_blank'); });
+        return;
+      }
+      toast('Update failed: ' + ((e && e.message) || e), { tone: 'error' });
+    });
+}
+
 let lastApkCheck = 0;
 async function checkApk(manual) {
   if (!manual && Date.now() - lastApkCheck < 10 * 60 * 1000) return;
   lastApkCheck = Date.now();
   try {
     const r = await fetch(`https://api.github.com/repos/${APK_REPO}/releases/tags/latest`, { cache: 'no-store', headers: { Accept: 'application/vnd.github+json' } });
-    const rel = r.ok ? await r.json() : null;
-    const m = rel && /v(\d+\.\d+\.\d+)/.exec(rel.name || '');
-    if (m && isNewer(m[1], APP_VERSION)) {
-      showBanner(`Update available: v${m[1]}`, 'Tap to download and install', () => {
-        const P = plugin('ApkUpdater');
-        if (!P) { toast('The updater is not available in this build.'); return; }
-        toast('Downloading update…');
-        P.install({ url: APK_URL }).then(() => toast('Tap Install when Android asks.')).catch((e) => toast('Update failed: ' + ((e && e.message) || e), { tone: 'error' }));
-      });
+    const rel = r.ok ? parseRelease((await r.json()).name) : null;
+    if (rel && releaseIsNewer(rel, await installedBuild())) {
+      showBanner(`Update available${rel.version ? ': v' + rel.version : ''}`, 'Tap to download and install', installUpdate);
     } else if (manual) toast('You have the latest version.');
   } catch { if (manual) toast('Could not check for updates. Are you online?'); }
 }
 
 // Activates the new service worker (which reloads the page via controllerchange),
 // or simply reloads when there is no service worker.
+let updateRequested = false;
 async function applyWebUpdate() {
+  updateRequested = true;
   const reg = await navigator.serviceWorker?.getRegistration().catch(() => null);
   if (!reg) { location.reload(); return; }
   await reg.update().catch(() => {});
@@ -97,8 +135,9 @@ export function initNative() {
 
   // Offline support for the web version. The Android app ships its files already.
   if (!native && 'serviceWorker' in navigator && location.protocol === 'https:') {
+    // The first install takes control without a reload; only an update the user
+    // asked for (applyWebUpdate) reloads the page.
     navigator.serviceWorker.register('sw.js').catch(() => {});
-    let reloading = false;
-    navigator.serviceWorker.addEventListener('controllerchange', () => { if (!reloading) { reloading = true; location.reload(); } });
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (updateRequested) location.reload(); });
   }
 }
