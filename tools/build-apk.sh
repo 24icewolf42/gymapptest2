@@ -165,6 +165,7 @@ cat > "$PKG_DIR/MainActivity.java" <<'JAVA'
 package com.roguelineage.rattracker;
 
 import android.os.Bundle;
+import android.view.WindowManager;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -172,6 +173,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ApkUpdaterPlugin.class);
         super.onCreate(savedInstanceState);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
 }
 JAVA

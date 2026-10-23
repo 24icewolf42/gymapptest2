@@ -6,7 +6,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#000000">
+    <meta name="theme-color" content="#151513">
     <link rel="manifest" href="manifest.json">
     <title>Tracker</title>
     <style>
@@ -17,18 +17,18 @@
       @font-face { font-family: "Inter"; font-style: normal; font-weight: 800; font-display: block; src: url("fonts/inter-800.woff") format("woff"); }
       @font-face { font-family: "Inter Display"; font-style: normal; font-weight: 800; font-display: block; src: url("fonts/inter-display-800.woff") format("woff"); }
     
-      /* ---------- Tokens: black void, one bone-white ink ---------- */
+      /* ---------- Tokens: soft charcoal and warm neutral ink ---------- */
       :root {
-        --bg: #000000;
-        --bg-subtle: #070707;
-        --surface: #0e0e0e;
-        --surface-2: #161616;
-        --surface-3: #1f1f1f;
-        --border: #232323;
-        --border-light: #363636;
-        --text: #e9e6de;
-        --text-muted: #8e8c86;
-        --text-dim: #5c5b57;
+        --bg: #151513;
+        --bg-subtle: #1c1b19;
+        --surface: #22211f;
+        --surface-2: #292825;
+        --surface-3: #34322f;
+        --border: #393733;
+        --border-light: #494640;
+        --text: #f0eee8;
+        --text-muted: #aaa69c;
+        --text-dim: #77736a;
         --accent: #f1eee6;
         --danger: #d0594a;
         --radius-sm: 10px;
@@ -40,7 +40,7 @@
       }
     
       * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-      html { background: #000; }
+      html { background: #151513; }
       body {
         margin: 0;
         font-family: var(--font);
@@ -49,7 +49,7 @@
         line-height: 1.45;
         color: var(--text);
         background: var(--bg);
-        background-image: radial-gradient(ellipse 120% 55% at 50% -8%, rgba(255,255,255,0.11), transparent 70%), linear-gradient(180deg, #181818 0%, #0b0b0b 55%, #000000 100%);
+        background-image: radial-gradient(ellipse 120% 55% at 50% -8%, rgba(255,255,255,0.08), transparent 70%), linear-gradient(180deg, #242321 0%, #191918 55%, #151513 100%);
         background-repeat: no-repeat;
         background-attachment: fixed;
         min-height: 100vh;
@@ -365,15 +365,15 @@
       .bottom-nav {
         position: fixed; left: 0; right: 0; bottom: 0;
         display: flex;
-        background: rgba(8,8,8,0.94);
+        background: rgba(28,27,25,0.96);
         backdrop-filter: blur(20px);
         -webkit-backdrop-filter: blur(20px);
         border-top: 1px solid var(--border);
         z-index: 15;
         padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
       }
-      .bottom-nav button { flex: 1; position: relative; background: none; border: none; color: var(--text-dim); padding: 10px 0 6px; font-size: 11px; font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 5px; border-radius: 10px; }
-      .bottom-nav button svg { width: 22px; height: 22px; }
+      .bottom-nav button { flex: 1; min-width: 0; position: relative; background: none; border: none; color: var(--text-dim); padding: 9px 0 6px; font-size: clamp(8px, 2.3vw, 10px); font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 4px; border-radius: 10px; white-space: nowrap; }
+      .bottom-nav button svg { width: 20px; height: 20px; flex: none; }
       .bottom-nav button.active { color: var(--accent); }
       .bottom-nav button.active::before { content: ""; position: absolute; top: 0; left: 50%; width: 22px; height: 2px; margin-left: -11px; background: var(--accent); border-radius: 2px; }
     
@@ -405,7 +405,7 @@
       }
       #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     
-      #loadingScreen { position: fixed; inset: 0; background: #000; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.4s ease; }
+      #loadingScreen { position: fixed; inset: 0; background: #151513; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.4s ease; }
       #loadingScreen img { width: 150px; height: 150px; }
       #loadingScreen .loading-label {
         font-family: var(--display);
@@ -479,6 +479,10 @@
       <header class="page-head"><h1>Friends</h1></header>
       <div id="socialRoot"></div>
     </div>
+    <div class="page" id="page-settings">
+      <header class="page-head"><h1>Settings</h1></header>
+      <div id="settingsRoot"></div>
+    </div>
     <div class="bottom-nav" id="bottomNav">
       <button class="nav-btn active" data-page="today">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
@@ -499,6 +503,10 @@
       <button class="nav-btn" data-page="social" aria-label="Friends">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM20 8v6M23 11h-6"/></svg>
         <span>Friends</span>
+      </button>
+      <button class="nav-btn" data-page="settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1a1.7 1.7 0 0 1-2.4 2.4l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a1.7 1.7 0 0 1-3.4 0v-.2a1.7 1.7 0 0 0-2.9-1.2l-.1.1a1.7 1.7 0 0 1-2.4-2.4l.1-.1a1.7 1.7 0 0 0-1.2-2.9H4a1.7 1.7 0 0 1 0-3.4h.2a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a1.7 1.7 0 0 1 2.4-2.4l.1.1a1.7 1.7 0 0 0 2.9-1.2V2a1.7 1.7 0 0 1 3.4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a1.7 1.7 0 0 1 2.4 2.4l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.2a1.7 1.7 0 0 1 0 3.4h-.2a1.7 1.7 0 0 0-1.2 2.9Z"/></svg>
+        <span>Settings</span>
       </button>
     </div>
     
@@ -540,7 +548,7 @@
     
     <script>
     // ---------- APP VERSION / AUTO UPDATE ----------
-    const APP_VERSION = "2.7.2";
+    const APP_VERSION = "2.8.0";
     document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
     
     function checkForUpdate() {
@@ -1241,7 +1249,7 @@
     document.getElementById('nextMonth').onclick = () => { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } renderCalendar(); };
     
     // ---------- SWIPE BETWEEN PAGES ----------
-    const PAGE_ORDER = ['today', 'calendar', 'stats', 'plan', 'social'];
+    const PAGE_ORDER = ['today', 'calendar', 'stats', 'plan', 'social', 'settings'];
     
     function currentPageIndex() {
       const activeBtn = document.querySelector('.nav-btn.active');
@@ -1451,9 +1459,9 @@
 
   /* speed: no fixed-attachment background, no live blur, browser scrolls vertically on its own */
   body { background: transparent !important; }
-  body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; background: radial-gradient(ellipse 120% 55% at 50% -8%, rgba(255,255,255,0.11), transparent 70%), linear-gradient(180deg, #181818 0%, #0b0b0b 55%, #000 100%); }
+  body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; background: radial-gradient(ellipse 120% 55% at 50% -8%, rgba(255,255,255,0.08), transparent 70%), linear-gradient(180deg, #242321 0%, #191918 55%, #151513 100%); }
   .bottom-nav, .save-bar, .session-top, .modal-overlay { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-  .bottom-nav { background: rgba(8,8,8,0.97); }
+  .bottom-nav { background: rgba(30,29,27,0.97); }
   .session-top { background: rgba(0,0,0,0.92); }
   .save-bar { background: rgba(0,0,0,0.95); }
   .modal-overlay { background: rgba(0,0,0,0.86); }
@@ -2045,7 +2053,7 @@
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./cloud-config.js?v=2.7.2"></script>
-<script src="./cloud.js?v=2.7.2"></script>
-<script src="./plan.js?v=2.7.2"></script>
+<script src="./cloud-config.js?v=2.8.0"></script>
+<script src="./cloud.js?v=2.8.0"></script>
+<script src="./plan.js?v=2.8.0"></script>
     </html>
