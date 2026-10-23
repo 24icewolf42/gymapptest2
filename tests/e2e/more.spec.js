@@ -220,3 +220,97 @@ test('a taken username at sign-up asks for another one', async ({ page }) => {
   await fillPrompt(page, uniqueName('mine'));
   await expect(page.locator('#toast')).toContainText('Username saved');
 });
+
+test('a long weigh-in history syncs in batches, and a weigh-in deleted elsewhere stays deleted', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('w450'));
+  // Deleted on another phone: this phone still has an old copy of it.
+  await u.client.rpc('save_my_weights', { entries: [{ log_date: '2024-01-01', weight_kg: 180, fresh: true }] });
+  await u.client.from('body_weight_logs').delete().eq('user_id', u.id).eq('log_date', '2024-01-01');
+  await page.addInitScript(() => {
+    if (localStorage.getItem('seeded')) return;
+    localStorage.setItem('seeded', '1');
+    const list = [];
+    for (let i = 0; i < 450; i++) {
+      const d = new Date(2024, 0, 1 + i);
+      list.push({ date: d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'), weight: i === 0 ? 180 : 70 + (i % 10) / 10 });
+    }
+    localStorage.setItem('bodyWeightLogs', JSON.stringify(list));
+  });
+  await open(page);
+  await signInAs(page, u);
+  const rows = (await u.client.from('body_weight_logs').select('log_date,weight_kg').eq('user_id', u.id)).data;
+  expect(rows).toHaveLength(449);
+  expect(rows.find((r) => r.log_date === '2024-01-01')).toBeUndefined();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('bodyWeightLogs')).length)).toBe(449);
+});
+
+test('a sync still running when the data is removed at sign-out does not bring it back', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('race'));
+  await u.client.from('workout_data').insert({ user_id: u.id, logs: { '2026-10-01': [{ id: 'x1', day: 'Push', time: '2026-10-01T10:00:00Z', exercises: [{ name: 'Bench', target: '5', sets: [{ w: '100', r: '5', done: true }] }] }] }, progress: {} });
+  await open(page);
+  await signInAs(page, u);
+  expect(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('gymLogs') || '{}')))).toEqual(['2026-10-01']);
+  // A slow network from here on: reads take a while to come back.
+  await page.route('**/rest/v1/{body_weight_logs,workout_data}*', async (r) => {
+    if (r.request().method() === 'GET') await new Promise((res) => setTimeout(res, 1500));
+    return r.continue();
+  });
+  await page.evaluate(async () => {
+    const sync = await import('/js/cloud/sync.js');
+    const store = await import('/js/core/store.js');
+    const out = sync.signOut({ removeLocalData: true });
+    // A workout change during the final sync queues another upload.
+    setTimeout(() => store.emit('gym:logs-changed'), 1700);
+    window.signOutResult = await out;
+  });
+  expect(await page.evaluate(() => window.signOutResult)).toBe('');
+  await page.waitForTimeout(4000);
+  expect(await page.evaluate(() => localStorage.getItem('gymLogs'))).toBeNull();
+});
+
+test('a workout open in one tab does not overwrite what another tab saved', async ({ browser }) => {
+  const ctx = await newPhone(browser);
+  await ctx.route('**/cloud-config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: 'window.GYM_CLOUD_CONFIG = {};' }));
+  const a = await ctx.newPage();
+  await open(a);
+  await createWorkout(a, 'Push', ['Dips']);
+  await scheduleToday(a, 'Push');
+  await tab(a, 'today');
+  await a.locator('#startToday').click();
+  await a.locator('#sessionMain').click();
+  // Meanwhile a second tab adds a routine.
+  const b = await ctx.newPage();
+  await open(b);
+  await createWorkout(b, 'Yoga', ['Plank']);
+  await b.evaluate(() => {
+    const logs = JSON.parse(localStorage.getItem('gymLogs') || '{}');
+    logs['2026-01-05'] = [{ id: 'b1', day: 'Yoga', time: '2026-01-05T10:00:00.000Z', exercises: [{ name: 'Plank', target: '1', sets: [{ w: '', r: '60', done: true }] }] }];
+    localStorage.setItem('gymLogs', JSON.stringify(logs));
+  });
+  await a.locator('#session .w').first().fill('10');
+  await a.locator('#session .r').first().fill('8');
+  await a.locator('#session .check').first().click();
+  await a.locator('#session').getByRole('button', { name: 'Finish workout' }).click();
+  await sheetAction(a, 'Save workout');
+  await expect(a.locator('#session')).toBeHidden();
+  const stored = await a.evaluate(() => ({ plan: Object.keys(JSON.parse(localStorage.getItem('gymCustomWorkouts'))), days: Object.keys(JSON.parse(localStorage.getItem('gymLogs'))) }));
+  expect(stored.plan.sort()).toEqual(['Push', 'Yoga']);
+  expect(stored.days).toHaveLength(2);
+});
+
+test('an unsaved extra workout of a day can be opened again', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await createWorkout(page, 'Legs', ['Dips']);
+  const yesterday = await page.evaluate(() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); });
+  // "Log another workout" opens a new session, not the logged one.
+  const openFresh = () => page.evaluate(async (ds) => (await import('/js/ui/session.js')).openSession('Legs', ds, { fresh: true }), yesterday);
+  await openFresh();
+  await page.locator('#session .w').first().fill('120');
+  await page.locator('#sessionBack').click();
+  await expect(page.locator('#toast')).toContainText('Workout kept');
+  await openFresh();
+  await expect(page.locator('#session .w').first()).toHaveValue('120');
+});

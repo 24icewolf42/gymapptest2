@@ -1,4 +1,4 @@
-import { test as base, expect } from '@playwright/test';
+import { test as base, expect, devices } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
 /**
@@ -16,7 +16,7 @@ export function trackErrors(page) {
 const contexts = [];
 /** A fresh browser context (a second "phone"), closed automatically after the test. */
 export async function newPhone(browser) {
-  const ctx = await browser.newContext();
+  const ctx = await browser.newContext({ ...devices['Pixel 7'], serviceWorkers: 'block' });
   contexts.push(ctx);
   return ctx;
 }
