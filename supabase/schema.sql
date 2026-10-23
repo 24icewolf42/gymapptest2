@@ -50,7 +50,7 @@ create policy "Users update their profile" on public.profiles
 create policy "Participants read friend requests" on public.friend_requests
   for select to authenticated using (requester_id = auth.uid() or target_id = auth.uid());
 create policy "Users send friend requests" on public.friend_requests
-  for insert to authenticated with check (requester_id = auth.uid());
+  for insert to authenticated with check (requester_id = auth.uid() and status = 'pending');
 create policy "Recipient accepts request" on public.friend_requests
   for update to authenticated using (target_id = auth.uid() and status = 'pending')
   with check (target_id = auth.uid() and status = 'accepted');
@@ -84,3 +84,4 @@ create policy "Users update their own aggregate stats" on public.leaderboard_sta
   for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 create policy "Users remove their published stats" on public.leaderboard_stats
   for delete to authenticated using (user_id = auth.uid());
+
