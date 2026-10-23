@@ -34,7 +34,7 @@ export async function makeUser(username, extra = {}) {
   const tag = randomUUID().slice(0, 8);
   const email = `${username || 'u'}-${tag}@example.test`;
   const password = 'test-password-123';
-  const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: username ? { username, ...extra } : extra });
+  const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { age_confirmed: 'true', ...(username ? { username } : {}), ...extra } });
   if (error) throw error;
   const client = anonClient();
   const signIn = await client.auth.signInWithPassword({ email, password });

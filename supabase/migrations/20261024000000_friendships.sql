@@ -64,8 +64,8 @@ as $$
     where (k.blocker_id = a and k.blocked_id = b) or (k.blocker_id = b and k.blocked_id = a)
   );
 $$;
-revoke all on function private.blocked_between(uuid, uuid) from public, anon;
-grant execute on function private.blocked_between(uuid, uuid) to authenticated;
+-- Only the definer triggers below call it.
+revoke all on function private.blocked_between(uuid, uuid) from public, anon, authenticated;
 
 -- Blocking ends any friendship or pending request between the two.
 create or replace function private.friend_blocks_after_insert()
@@ -86,6 +86,13 @@ drop trigger if exists friend_blocks_after_insert on public.friend_blocks;
 create trigger friend_blocks_after_insert after insert on public.friend_blocks
   for each row execute function private.friend_blocks_after_insert();
 
+-- Every request ever sent, so cancelling requests does not reset the daily limit.
+create table if not exists private.friend_request_log (
+  requester_id uuid not null,
+  sent_at timestamptz not null default now()
+);
+create index if not exists friend_request_log_idx on private.friend_request_log (requester_id, sent_at);
+
 -- New requests: server time, at most 20 a day, never to or from someone blocked.
 create or replace function private.friend_requests_guard()
 returns trigger
@@ -104,12 +111,16 @@ begin
   if private.blocked_between(new.requester_id, new.target_id) then
     raise exception 'This person cannot be added' using errcode = '42501';
   end if;
+  -- One sender at a time, so parallel requests cannot all pass the count.
+  perform pg_advisory_xact_lock(hashtextextended('friend_request:' || new.requester_id::text, 0));
+  delete from private.friend_request_log where sent_at < now() - interval '2 days';
   if (
-    select count(*) from public.friend_requests
-    where requester_id = new.requester_id and created_at > now() - interval '1 day'
+    select count(*) from private.friend_request_log
+    where requester_id = new.requester_id and sent_at > now() - interval '1 day'
   ) >= 20 then
     raise exception 'Too many friend requests today. Try again tomorrow.' using errcode = '54000';
   end if;
+  insert into private.friend_request_log (requester_id) values (new.requester_id);
   return new;
 end;
 $$;

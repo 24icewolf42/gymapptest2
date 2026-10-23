@@ -316,3 +316,53 @@ describe('hardening', () => {
     expect(del.error || del.data.length === 0).toBeTruthy();
   });
 });
+
+describe('hardening, round 2', () => {
+  it('keeps counting cancelled requests and parallel requests toward the daily limit', async () => {
+    const spammer = await makeUser(uniqueName('sp2'));
+    const targets = await Promise.all(Array.from({ length: 26 }, (_, i) => makeUser(uniqueName('q' + i))));
+    for (const t of targets.slice(0, 10)) {
+      await spammer.client.from('friend_requests').insert({ requester_id: spammer.id, target_id: t.id, status: 'pending' });
+    }
+    await spammer.client.from('friend_requests').delete().eq('requester_id', spammer.id);
+    const results = await Promise.all(targets.slice(10).map((t) => spammer.client.from('friend_requests').insert({ requester_id: spammer.id, target_id: t.id, status: 'pending' })));
+    expect(results.filter((r) => !r.error).length).toBe(10);
+  });
+
+  it('holds the lookup limit under parallel calls', async () => {
+    const u = await makeUser(uniqueName('pl'));
+    const results = await Promise.all(Array.from({ length: 40 }, (_, i) => u.client.rpc('find_profile', { name: 'nobody_' + i })));
+    expect(results.filter((r) => !r.error).length).toBe(30);
+  });
+
+  it('removes replies and invites between two people when one blocks or unfriends', async () => {
+    const host = await makeUser(uniqueName('bh'));
+    const fr = await makeUser(uniqueName('bf'));
+    const fid = await befriend(host, fr);
+    const d = (await host.client.from('gym_dates').insert({ host_id: host.id, starts_at: new Date(Date.now() + 3600e3).toISOString(), gym: 'G', invite_only: true }).select('id').single()).data;
+    await host.client.from('gym_date_invites').insert({ date_id: d.id, user_id: fr.id });
+    await fr.client.from('gym_date_rsvps').insert({ date_id: d.id, user_id: fr.id, status: 'going' });
+    await fr.client.from('friend_blocks').insert({ blocker_id: fr.id, blocked_id: host.id });
+    const admin = adminClient();
+    expect((await admin.from('gym_date_rsvps').select('user_id').eq('date_id', d.id)).data.map((r) => r.user_id)).toEqual([host.id]);
+    expect((await admin.from('gym_date_invites').select('user_id').eq('date_id', d.id)).data).toEqual([]);
+    expect((await admin.from('friend_requests').select('id').eq('id', fid)).data).toEqual([]);
+  });
+
+  it('refuses sign-ups without the age confirmation', async () => {
+    const { anonClient } = await import('./helpers.js');
+    const r = await anonClient().auth.signUp({ email: uniqueName('noage') + '@example.test', password: 'test-password-123', options: { data: { username: uniqueName('noage') } } });
+    expect(r.error).not.toBeNull();
+  });
+
+  it('leaves no sign-in records behind after deleting an account', async () => {
+    const u = await makeUser(uniqueName('aud'));
+    const { execFileSync } = await import('node:child_process');
+    const q = (sql) => execFileSync('docker', ['exec', '-i', 'supabase_db_gymapptest2', 'psql', '-U', 'postgres', '-d', 'postgres', '-At', '-c', sql], { encoding: 'utf8' }).trim();
+    const count = () => Number(q(`select count(*) from auth.audit_log_entries where payload->>'actor_id' = '${u.id}' or payload->>'actor_username' = '${u.email}'`));
+    expect(count()).toBeGreaterThan(0);
+    await u.client.rpc('delete_my_account');
+    expect(count()).toBe(0);
+    expect(q("select count(*) from information_schema.role_table_grants where grantee = 'anon' and table_schema = 'public'")).toBe('0');
+  });
+});

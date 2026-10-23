@@ -1,6 +1,7 @@
 -- Re-creates the original policies with (select auth.uid()), which Postgres
 -- evaluates once per query instead of once per row (Supabase performance
--- advisor). Behaviour is unchanged. Safe to run more than once.
+-- advisor). Behaviour is unchanged. Also removes the anon key's rights on the
+-- original tables. Safe to run more than once.
 
 drop policy if exists "Users create their profile" on public.profiles;
 create policy "Users create their profile" on public.profiles
@@ -89,3 +90,7 @@ create policy "Users update their own workout data" on public.workout_data
 drop policy if exists "Users remove their own workout data" on public.workout_data;
 create policy "Users remove their own workout data" on public.workout_data
   for delete to authenticated using (user_id = (select auth.uid()));
+
+-- Nobody signed out needs these tables; keep them out of reach of the anon key.
+revoke all on public.profiles, public.friend_requests, public.shared_workouts, public.leaderboard_stats,
+  public.workout_plans, public.body_weight_logs, public.workout_data from anon;

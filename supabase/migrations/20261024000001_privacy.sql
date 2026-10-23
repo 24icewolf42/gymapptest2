@@ -6,6 +6,7 @@
 --   * leaderboard totals are computed from synced history, not taken on trust
 --   * a deleted weigh-in stays deleted even if an older app version re-uploads it
 --   * profiles are created on sign-up, so a taken username can't break sync
+--   * sign-ups must confirm their age (14+) or a parent's permission
 --   * users can delete their own account and all its data
 -- Requires 20261024000000_friendships.sql and the 2026-10-23 workout-sync
 -- migrations. Safe to run more than once.
@@ -46,6 +47,8 @@ begin
   if me is null then
     return;
   end if;
+  -- One lookup at a time per user, so parallel calls cannot all pass the count.
+  perform pg_advisory_xact_lock(hashtextextended('profile_lookup:' || me::text, 0));
   delete from private.profile_lookups where looked_up_at < now() - interval '1 day';
   if (select count(*) from private.profile_lookups l where l.user_id = me and l.looked_up_at > now() - interval '1 hour') >= 30 then
     raise exception 'Too many searches. Try again in an hour.' using errcode = '54000';
@@ -76,8 +79,15 @@ $$;
 revoke all on function public.my_blocks() from public, anon;
 grant execute on function public.my_blocks() to authenticated;
 
+-- Sign-ups must confirm "14 or older, or a parent or guardian agreed". The
+-- confirmation is kept where the user cannot change it later.
+create table if not exists private.account_consents (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  age_confirmed_at timestamptz not null default now()
+);
+
 -- Create the profile when the account is created. A taken or invalid username
--- gets a random one, which the user can change in Settings.
+-- gets a random one; the app then asks the user to pick another.
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -87,6 +97,10 @@ as $$
 declare
   wanted text := lower(coalesce(new.raw_user_meta_data ->> 'username', ''));
 begin
+  if coalesce(new.raw_user_meta_data ->> 'age_confirmed', '') <> 'true' then
+    raise exception 'Please confirm you are 14 or older, or that a parent or guardian agreed.' using errcode = '23514';
+  end if;
+  insert into private.account_consents (user_id) values (new.id) on conflict (user_id) do nothing;
   if wanted !~ '^[a-z0-9_]{3,20}$' or exists (select 1 from public.profiles where username = wanted) then
     wanted := 'user_' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8);
   end if;
@@ -163,6 +177,37 @@ create trigger body_weight_after_delete after delete on public.body_weight_logs
 drop trigger if exists body_weight_before_write on public.body_weight_logs;
 create trigger body_weight_before_write before insert or update on public.body_weight_logs
   for each row execute function private.body_weight_before_write();
+
+-- Weigh-ins entered on a phone running this version: stored with server time,
+-- so a phone with a wrong clock can't lose a new entry to an older deletion.
+create or replace function public.save_my_weights(entries jsonb)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  e jsonb;
+  n integer := 0;
+begin
+  if auth.uid() is null then
+    raise exception 'Not signed in' using errcode = '42501';
+  end if;
+  if jsonb_typeof(entries) <> 'array' or jsonb_array_length(entries) > 400 then
+    raise exception 'Send up to 400 weigh-ins at a time' using errcode = '22023';
+  end if;
+  for e in select value from jsonb_array_elements(entries) loop
+    delete from private.body_weight_tombstones where user_id = auth.uid() and log_date = (e ->> 'log_date')::date;
+    insert into public.body_weight_logs (user_id, log_date, weight_kg, updated_at)
+    values (auth.uid(), (e ->> 'log_date')::date, (e ->> 'weight_kg')::numeric, now())
+    on conflict (user_id, log_date) do update set weight_kg = excluded.weight_kg, updated_at = now();
+    n := n + 1;
+  end loop;
+  return n;
+end;
+$$;
+revoke all on function public.save_my_weights(jsonb) from public, anon;
+grant execute on function public.save_my_weights(jsonb) to authenticated;
 
 -- Totals from a synced history (sessions, seconds, kg x reps). Values that are
 -- not plain numbers count as zero.
@@ -266,6 +311,11 @@ begin
   if auth.uid() is null then
     raise exception 'Not signed in' using errcode = '42501';
   end if;
+  -- Sign-in records mention the email address; remove them too.
+  delete from auth.audit_log_entries a
+  where a.payload ->> 'actor_id' = auth.uid()::text
+     or a.payload -> 'traits' ->> 'user_id' = auth.uid()::text
+     or a.payload ->> 'actor_username' = (select email from auth.users where id = auth.uid());
   delete from auth.users where id = auth.uid();
 end;
 $$;

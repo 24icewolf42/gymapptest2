@@ -265,6 +265,56 @@ drop function if exists public.gym_dates_before_write();
 drop function if exists public.gym_dates_add_host();
 drop function if exists public.gym_date_rsvps_before_write();
 
+-- Ending a friendship (unfriend or block) also ends the shared gym-date state:
+-- replies to each other's dates and invites between the two are removed, so a
+-- blocked person no longer sees you as "going" and old invites never come back.
+create or replace function private.gym_dates_forget_pair(a uuid, b uuid)
+returns void
+language sql
+security definer
+set search_path = ''
+as $$
+  delete from public.gym_date_rsvps r using public.gym_dates g
+  where r.date_id = g.id and ((g.host_id = a and r.user_id = b) or (g.host_id = b and r.user_id = a));
+  delete from public.gym_date_invites i using public.gym_dates g
+  where i.date_id = g.id and ((g.host_id = a and i.user_id = b) or (g.host_id = b and i.user_id = a));
+$$;
+revoke all on function private.gym_dates_forget_pair(uuid, uuid) from public, anon, authenticated;
+
+create or replace function private.friend_requests_after_delete()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if old.status = 'accepted' then
+    perform private.gym_dates_forget_pair(old.requester_id, old.target_id);
+  end if;
+  return old;
+end;
+$$;
+revoke all on function private.friend_requests_after_delete() from public, anon, authenticated;
+drop trigger if exists friend_requests_after_delete on public.friend_requests;
+create trigger friend_requests_after_delete after delete on public.friend_requests
+  for each row execute function private.friend_requests_after_delete();
+
+create or replace function private.friend_blocks_forget()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform private.gym_dates_forget_pair(new.blocker_id, new.blocked_id);
+  return new;
+end;
+$$;
+revoke all on function private.friend_blocks_forget() from public, anon, authenticated;
+drop trigger if exists friend_blocks_forget on public.friend_blocks;
+create trigger friend_blocks_forget after insert on public.friend_blocks
+  for each row execute function private.friend_blocks_forget();
+
 -- Reply counts for dates the caller can see, including friends-of-friends they
 -- cannot read individually.
 create or replace function public.gym_date_counts(ids uuid[])

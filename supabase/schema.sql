@@ -366,8 +366,8 @@ as $$
     where (k.blocker_id = a and k.blocked_id = b) or (k.blocker_id = b and k.blocked_id = a)
   );
 $$;
-revoke all on function private.blocked_between(uuid, uuid) from public, anon;
-grant execute on function private.blocked_between(uuid, uuid) to authenticated;
+-- Only the definer triggers below call it.
+revoke all on function private.blocked_between(uuid, uuid) from public, anon, authenticated;
 
 -- Blocking ends any friendship or pending request between the two.
 create or replace function private.friend_blocks_after_insert()
@@ -388,6 +388,13 @@ drop trigger if exists friend_blocks_after_insert on public.friend_blocks;
 create trigger friend_blocks_after_insert after insert on public.friend_blocks
   for each row execute function private.friend_blocks_after_insert();
 
+-- Every request ever sent, so cancelling requests does not reset the daily limit.
+create table if not exists private.friend_request_log (
+  requester_id uuid not null,
+  sent_at timestamptz not null default now()
+);
+create index if not exists friend_request_log_idx on private.friend_request_log (requester_id, sent_at);
+
 -- New requests: server time, at most 20 a day, never to or from someone blocked.
 create or replace function private.friend_requests_guard()
 returns trigger
@@ -406,12 +413,16 @@ begin
   if private.blocked_between(new.requester_id, new.target_id) then
     raise exception 'This person cannot be added' using errcode = '42501';
   end if;
+  -- One sender at a time, so parallel requests cannot all pass the count.
+  perform pg_advisory_xact_lock(hashtextextended('friend_request:' || new.requester_id::text, 0));
+  delete from private.friend_request_log where sent_at < now() - interval '2 days';
   if (
-    select count(*) from public.friend_requests
-    where requester_id = new.requester_id and created_at > now() - interval '1 day'
+    select count(*) from private.friend_request_log
+    where requester_id = new.requester_id and sent_at > now() - interval '1 day'
   ) >= 20 then
     raise exception 'Too many friend requests today. Try again tomorrow.' using errcode = '54000';
   end if;
+  insert into private.friend_request_log (requester_id) values (new.requester_id);
   return new;
 end;
 $$;
@@ -454,6 +465,7 @@ drop function if exists public.is_friend(uuid);
 --   * leaderboard totals are computed from synced history, not taken on trust
 --   * a deleted weigh-in stays deleted even if an older app version re-uploads it
 --   * profiles are created on sign-up, so a taken username can't break sync
+--   * sign-ups must confirm their age (14+) or a parent's permission
 --   * users can delete their own account and all its data
 -- Requires 20261024000000_friendships.sql and the 2026-10-23 workout-sync
 -- migrations. Safe to run more than once.
@@ -494,6 +506,8 @@ begin
   if me is null then
     return;
   end if;
+  -- One lookup at a time per user, so parallel calls cannot all pass the count.
+  perform pg_advisory_xact_lock(hashtextextended('profile_lookup:' || me::text, 0));
   delete from private.profile_lookups where looked_up_at < now() - interval '1 day';
   if (select count(*) from private.profile_lookups l where l.user_id = me and l.looked_up_at > now() - interval '1 hour') >= 30 then
     raise exception 'Too many searches. Try again in an hour.' using errcode = '54000';
@@ -524,8 +538,15 @@ $$;
 revoke all on function public.my_blocks() from public, anon;
 grant execute on function public.my_blocks() to authenticated;
 
+-- Sign-ups must confirm "14 or older, or a parent or guardian agreed". The
+-- confirmation is kept where the user cannot change it later.
+create table if not exists private.account_consents (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  age_confirmed_at timestamptz not null default now()
+);
+
 -- Create the profile when the account is created. A taken or invalid username
--- gets a random one, which the user can change in Settings.
+-- gets a random one; the app then asks the user to pick another.
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -535,6 +556,10 @@ as $$
 declare
   wanted text := lower(coalesce(new.raw_user_meta_data ->> 'username', ''));
 begin
+  if coalesce(new.raw_user_meta_data ->> 'age_confirmed', '') <> 'true' then
+    raise exception 'Please confirm you are 14 or older, or that a parent or guardian agreed.' using errcode = '23514';
+  end if;
+  insert into private.account_consents (user_id) values (new.id) on conflict (user_id) do nothing;
   if wanted !~ '^[a-z0-9_]{3,20}$' or exists (select 1 from public.profiles where username = wanted) then
     wanted := 'user_' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8);
   end if;
@@ -611,6 +636,37 @@ create trigger body_weight_after_delete after delete on public.body_weight_logs
 drop trigger if exists body_weight_before_write on public.body_weight_logs;
 create trigger body_weight_before_write before insert or update on public.body_weight_logs
   for each row execute function private.body_weight_before_write();
+
+-- Weigh-ins entered on a phone running this version: stored with server time,
+-- so a phone with a wrong clock can't lose a new entry to an older deletion.
+create or replace function public.save_my_weights(entries jsonb)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  e jsonb;
+  n integer := 0;
+begin
+  if auth.uid() is null then
+    raise exception 'Not signed in' using errcode = '42501';
+  end if;
+  if jsonb_typeof(entries) <> 'array' or jsonb_array_length(entries) > 400 then
+    raise exception 'Send up to 400 weigh-ins at a time' using errcode = '22023';
+  end if;
+  for e in select value from jsonb_array_elements(entries) loop
+    delete from private.body_weight_tombstones where user_id = auth.uid() and log_date = (e ->> 'log_date')::date;
+    insert into public.body_weight_logs (user_id, log_date, weight_kg, updated_at)
+    values (auth.uid(), (e ->> 'log_date')::date, (e ->> 'weight_kg')::numeric, now())
+    on conflict (user_id, log_date) do update set weight_kg = excluded.weight_kg, updated_at = now();
+    n := n + 1;
+  end loop;
+  return n;
+end;
+$$;
+revoke all on function public.save_my_weights(jsonb) from public, anon;
+grant execute on function public.save_my_weights(jsonb) to authenticated;
 
 -- Totals from a synced history (sessions, seconds, kg x reps). Values that are
 -- not plain numbers count as zero.
@@ -714,6 +770,11 @@ begin
   if auth.uid() is null then
     raise exception 'Not signed in' using errcode = '42501';
   end if;
+  -- Sign-in records mention the email address; remove them too.
+  delete from auth.audit_log_entries a
+  where a.payload ->> 'actor_id' = auth.uid()::text
+     or a.payload -> 'traits' ->> 'user_id' = auth.uid()::text
+     or a.payload ->> 'actor_username' = (select email from auth.users where id = auth.uid());
   delete from auth.users where id = auth.uid();
 end;
 $$;
@@ -988,6 +1049,56 @@ drop function if exists public.gym_dates_before_write();
 drop function if exists public.gym_dates_add_host();
 drop function if exists public.gym_date_rsvps_before_write();
 
+-- Ending a friendship (unfriend or block) also ends the shared gym-date state:
+-- replies to each other's dates and invites between the two are removed, so a
+-- blocked person no longer sees you as "going" and old invites never come back.
+create or replace function private.gym_dates_forget_pair(a uuid, b uuid)
+returns void
+language sql
+security definer
+set search_path = ''
+as $$
+  delete from public.gym_date_rsvps r using public.gym_dates g
+  where r.date_id = g.id and ((g.host_id = a and r.user_id = b) or (g.host_id = b and r.user_id = a));
+  delete from public.gym_date_invites i using public.gym_dates g
+  where i.date_id = g.id and ((g.host_id = a and i.user_id = b) or (g.host_id = b and i.user_id = a));
+$$;
+revoke all on function private.gym_dates_forget_pair(uuid, uuid) from public, anon, authenticated;
+
+create or replace function private.friend_requests_after_delete()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if old.status = 'accepted' then
+    perform private.gym_dates_forget_pair(old.requester_id, old.target_id);
+  end if;
+  return old;
+end;
+$$;
+revoke all on function private.friend_requests_after_delete() from public, anon, authenticated;
+drop trigger if exists friend_requests_after_delete on public.friend_requests;
+create trigger friend_requests_after_delete after delete on public.friend_requests
+  for each row execute function private.friend_requests_after_delete();
+
+create or replace function private.friend_blocks_forget()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform private.gym_dates_forget_pair(new.blocker_id, new.blocked_id);
+  return new;
+end;
+$$;
+revoke all on function private.friend_blocks_forget() from public, anon, authenticated;
+drop trigger if exists friend_blocks_forget on public.friend_blocks;
+create trigger friend_blocks_forget after insert on public.friend_blocks
+  for each row execute function private.friend_blocks_forget();
+
 -- Reply counts for dates the caller can see, including friends-of-friends they
 -- cannot read individually.
 create or replace function public.gym_date_counts(ids uuid[])
@@ -1039,7 +1150,8 @@ $$;
 -- ===== 20261024000003_policy_performance.sql =====
 -- Re-creates the original policies with (select auth.uid()), which Postgres
 -- evaluates once per query instead of once per row (Supabase performance
--- advisor). Behaviour is unchanged. Safe to run more than once.
+-- advisor). Behaviour is unchanged. Also removes the anon key's rights on the
+-- original tables. Safe to run more than once.
 
 drop policy if exists "Users create their profile" on public.profiles;
 create policy "Users create their profile" on public.profiles
@@ -1128,3 +1240,7 @@ create policy "Users update their own workout data" on public.workout_data
 drop policy if exists "Users remove their own workout data" on public.workout_data;
 create policy "Users remove their own workout data" on public.workout_data
   for delete to authenticated using (user_id = (select auth.uid()));
+
+-- Nobody signed out needs these tables; keep them out of reach of the anon key.
+revoke all on public.profiles, public.friend_requests, public.shared_workouts, public.leaderboard_stats,
+  public.workout_plans, public.body_weight_logs, public.workout_data from anon;
