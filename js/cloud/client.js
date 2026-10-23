@@ -15,8 +15,14 @@ export function cloudConfigured() {
 // never keeps the user waiting.
 function boundedFetch(input, init = {}) {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return Promise.reject(new TypeError('Failed to fetch (offline)'));
-  const signals = [AbortSignal.timeout(15000), init.signal].filter(Boolean);
-  return fetch(input, { ...init, signal: signals.length > 1 ? AbortSignal.any(signals) : signals[0] });
+  // AbortSignal.timeout/any are missing in older Android WebViews; build it by hand.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException('The request timed out', 'TimeoutError')), 15000);
+  if (init.signal) {
+    if (init.signal.aborted) controller.abort(init.signal.reason);
+    else init.signal.addEventListener('abort', () => controller.abort(init.signal.reason), { once: true });
+  }
+  return fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
 export const supabase = cloudConfigured()

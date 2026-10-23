@@ -1,6 +1,6 @@
 // Crew tab: gym dates, friends and the leaderboard. All server traffic runs in
 // the background; results patch the page in place (render() keeps focus).
-import { $, html, render, on, toast, avatar, haptic } from '../core/dom.js';
+import { $, html, render, on, toast, avatar, haptic, busyAttr } from '../core/dom.js';
 import { KEYS, read, write, listen, emit } from '../core/store.js';
 import { ymd, fmtTime, relativeDay, relativeFromNow, toLocalInput } from '../core/dates.js';
 import { refresh, currentPage } from '../core/router.js';
@@ -19,7 +19,7 @@ import { icons } from './icons.js';
 
 const REFRESH_MS = 60000;
 
-export const crew = {
+const crew = {
   tab: 'dates',
   friendships: null,
   dates: null,
@@ -36,7 +36,7 @@ const pending = new Set(); // keys of actions in flight, to block double taps
 // ---------- data ----------
 let loading = null, reloadAfter = false;
 /** Reloads friends and dates. A call while a load runs queues one more, so writes are never shown stale. */
-export function refreshCrew() {
+function refreshCrew() {
   if (!account.user || !account.ready) return Promise.resolve();
   if (loading) { reloadAfter = true; return loading; }
   const forUser = me();
@@ -88,7 +88,7 @@ function hostLabel(d) {
   return d.host_id === me() ? 'You' : '@' + (d.host?.username || usernameOf(d.host_id) || 'friend');
 }
 
-export function myUpcomingDates() {
+function myUpcomingDates() {
   if (!crew.dates || !me()) return [];
   return crew.dates.dates.filter((d) => ['live', 'upcoming'].includes(phase(d)) &&
     (d.host_id === me() || crew.dates.rsvps.some((r) => r.date_id === d.id && r.user_id === me() && r.status === 'going')));
@@ -134,7 +134,7 @@ function countText(d) {
 }
 
 // ---------- rendering ----------
-const TABS = [['dates', 'Gym dates'], ['friends', 'Friends'], ['ranking', 'Ranking']];
+const SECTIONS = [['dates', 'Gym dates'], ['friends', 'Friends'], ['ranking', 'Ranking']];
 
 export function renderCrew() {
   const page = $('page-crew');
@@ -158,7 +158,7 @@ export function renderCrew() {
   const incoming = crew.friendships?.incoming.length || 0;
   render(page, html`${head('crew-' + crew.tab)}
     <div class="segmented" role="tablist" aria-label="Crew sections">
-      ${TABS.map(([id, label]) => html`<button type="button" role="tab" id="crew-tab-${id}" aria-controls="crew-panel" aria-selected="${crew.tab === id ? 'true' : 'false'}" tabindex="${crew.tab === id ? '0' : '-1'}" data-crew-tab="${id}">${label}${id === 'friends' && incoming ? html`<span class="dot-badge" aria-label="${incoming} new">${incoming}</span>` : ''}</button>`)}
+      ${SECTIONS.map(([id, label]) => html`<button type="button" role="tab" id="crew-tab-${id}" aria-controls="crew-panel" aria-selected="${crew.tab === id ? 'true' : 'false'}" tabindex="${crew.tab === id ? '0' : '-1'}" data-crew-tab="${id}">${label}${id === 'friends' && incoming ? html`<span class="dot-badge" aria-hidden="true">${incoming}</span><span class="sr-only">, ${incoming} new</span>` : ''}</button>`)}
     </div>
     ${crew.error ? html`<div class="notice error" role="alert"><span>${crew.error}</span> <button type="button" class="link-btn inline" data-retry>Try again</button></div>` : ''}
     <div id="crew-panel" role="tabpanel" aria-labelledby="crew-tab-${crew.tab}">
@@ -228,14 +228,14 @@ function dateCard(d) {
         <span class="sr-only">${peopleText}</span>
       </div>
       ${mine ? '' : html`
-        <div class="rsvp" role="group" aria-label="Your answer">
-          ${[['going', 'Going'], ['maybe', 'Maybe'], ['no', 'Can’t']].map(([v, l]) => html`<button type="button" class="rsvp-btn${status === v ? ' on' : ''}" aria-pressed="${status === v ? 'true' : 'false'}" data-reply="${v}"${busy ? ' disabled' : ''}>${l}</button>`)}
+        <div class="rsvp" role="radiogroup" aria-label="Your answer" data-manual>
+          ${[['going', 'Going'], ['maybe', 'Maybe'], ['no', 'Can’t']].map(([v, l], i) => html`<button type="button" role="radio" class="rsvp-btn${status === v ? ' on' : ''}" aria-checked="${status === v ? 'true' : 'false'}" tabindex="${status === v || (!status && i === 0) ? '0' : '-1'}" data-reply="${v}"${busyAttr(busy)}>${l}</button>`)}
         </div>`}
       <div class="date-actions">
         ${(mine || status === 'going' || status === 'maybe') && canCheckIn(d) ? (checkedIn
           ? html`<span class="pill pill-ok">${icons.check} You are at the gym</span>`
-          : html`<button type="button" class="btn btn-primary btn-sm" data-checkin${busy ? ' disabled' : ''}>${icons.pin} I’m here</button>`) : ''}
-        ${mine ? html`<button type="button" class="btn btn-ghost btn-sm" data-cancel-date${busy ? ' disabled' : ''}>Cancel date</button>` : ''}
+          : html`<button type="button" class="btn btn-primary btn-sm" data-checkin${busyAttr(busy)}>${icons.pin} I’m here</button>`) : ''}
+        ${mine ? html`<button type="button" class="btn btn-ghost btn-sm" data-cancel-date${busyAttr(busy)}>Cancel date</button>` : ''}
       </div>
     </article>`;
 }
@@ -247,21 +247,21 @@ function friendsPanel() {
   return html`
     <form class="card add-friend" id="addFriendForm" data-key="add-friend">
       <label class="field-label" for="friendName">Add a friend by username</label>
-      <div class="input-row"><span class="input-prefix" aria-hidden="true">@</span><input class="input" id="friendName" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="21" placeholder="username" enterkeyhint="send"><button class="btn btn-primary" type="submit"${pending.has('add') ? ' disabled' : ''}>Add</button></div>
+      <div class="input-row"><span class="input-prefix" aria-hidden="true">@</span><input class="input" id="friendName" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="21" placeholder="username" enterkeyhint="send"><button class="btn btn-primary" type="submit"${busyAttr(pending.has('add'))}>Add</button></div>
       <p class="hint">Your username is <b>@${account.profile?.username || '…'}</b>. Share it with friends so they can add you.</p>
     </form>
     ${f.incoming.length ? html`<h2 class="section-title">Requests</h2><div class="card list">${f.incoming.map((x) => html`
-      <div class="row" data-key="req-${x.id}">${avatar(x.username)}<div class="row-main"><b>@${x.username}</b><small>wants to be friends</small></div>
-        <button type="button" class="btn btn-primary btn-sm" data-accept="${x.id}"${pending.has(x.id) ? ' disabled' : ''}>Accept</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-decline="${x.id}" data-user="${x.userId}" data-name="${x.username}"${pending.has(x.id) ? ' disabled' : ''} aria-label="Decline request from ${x.username}">Decline</button></div>`)}</div>` : ''}
+      <div class="row row-request" data-key="req-${x.id}">${avatar(x.username)}<div class="row-main"><b>@${x.username}</b><small>wants to be friends</small></div>
+        <button type="button" class="btn btn-primary btn-sm" data-accept="${x.id}"${busyAttr(pending.has(x.id))}>Accept</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-decline="${x.id}" data-user="${x.userId}" data-name="${x.username}"${busyAttr(pending.has(x.id))} aria-label="Decline request from ${x.username}">Decline</button></div>`)}</div>` : ''}
     <h2 class="section-title">Friends ${f.friends.length ? html`<span class="muted">${f.friends.length}</span>` : ''}</h2>
     ${f.friends.length ? html`<div class="card list">${f.friends.map((x) => html`
       <div class="row" data-key="friend-${x.id}">${avatar(x.username)}<div class="row-main"><b>@${x.username}</b></div>
-        <button type="button" class="icon-btn" data-unfriend="${x.id}" data-user="${x.userId}" data-name="${x.username}"${pending.has(x.id) ? ' disabled' : ''} aria-label="Remove or block ${x.username}">${icons.x}</button></div>`)}</div>`
+        <button type="button" class="icon-btn" data-unfriend="${x.id}" data-user="${x.userId}" data-name="${x.username}"${busyAttr(pending.has(x.id))} aria-label="Remove or block ${x.username}">${icons.x}</button></div>`)}</div>`
       : html`<div class="empty-inline"><p>No friends yet.</p><p class="muted">Add someone by their username above.</p></div>`}
     ${f.outgoing.length ? html`<h2 class="section-title">Sent</h2><div class="card list">${f.outgoing.map((x) => html`
       <div class="row" data-key="out-${x.id}">${avatar(x.username)}<div class="row-main"><b>@${x.username}</b><small>waiting for an answer</small></div>
-        <button type="button" class="btn btn-ghost btn-sm" data-cancel-request="${x.id}"${pending.has(x.id) ? ' disabled' : ''} aria-label="Cancel request to ${x.username}">Cancel</button></div>`)}</div>` : ''}
+        <button type="button" class="btn btn-ghost btn-sm" data-cancel-request="${x.id}"${busyAttr(pending.has(x.id))} aria-label="Cancel request to ${x.username}">Cancel</button></div>`)}</div>` : ''}
     <h2 class="section-title">Shared routines</h2>
     ${!shared ? html`<p class="muted">Loading…</p>` : shared.error ? html`<p class="notice error">${shared.error} <button type="button" class="link-btn inline" data-retry>Try again</button></p>` : shared.length ? html`<div class="card list">${shared.map((x) => html`
       <div class="row" data-key="shared-${x.id}"><div class="row-main"><b>${x.title}</b><small>${x.mine ? 'Shared by you' : '@' + (x.owner?.username || 'friend')} · ${workoutSummary(x.workout)}</small></div>
@@ -283,7 +283,7 @@ function rankingPanel() {
   const published = mine && mine.workouts_count != null;
   const row = (r, rank) => html`
     <div class="row${r.user_id === me() ? ' me' : ''}" data-key="rank-${r.user_id}">
-      <span class="rank" aria-label="${rank ? 'Rank ' + rank : 'Not ranked'}">${rank || '–'}</span>${avatar(r.username)}
+      <span class="rank"><span aria-hidden="true">${rank || '–'}</span><span class="sr-only">${rank ? 'Rank ' + rank : 'Not ranked'}</span></span>${avatar(r.username)}
       <div class="row-main"><b>@${r.username}${r.user_id === me() ? ' (you)' : ''}</b>
         <small>${r.workouts_count == null ? 'Stats not shared' : [r.workouts_count + (r.workouts_count === 1 ? ' workout' : ' workouts'), Number(r.volume_kg_reps || 0).toLocaleString() + ' kg·reps', r.total_seconds ? timeText(r.total_seconds) : '', r.current_streak ? r.current_streak + '-day streak' : ''].filter(Boolean).join(' · ')}${r.routines != null ? ' · ' + r.routines + (r.routines === 1 ? ' routine' : ' routines') : ''}</small></div>
       <span class="row-end">${r.weight_kg == null ? '' : html`<b>${Number(r.weight_kg).toFixed(1)} kg</b><small>${r.weight_date || ''}</small>`}</span>
@@ -295,8 +295,8 @@ function rankingPanel() {
         ? 'Friends see your number of workouts, total kg × reps, training time, streak and how many routines you have. Update it after training.'
         : 'Share your number of workouts, total kg × reps, training time, streak and how many routines you have with your friends. Your sets and workouts themselves stay private.'}</p>
       <div class="btn-row">
-        <button type="button" class="btn btn-primary" data-publish${pending.has('publish') ? ' disabled' : ''}>${published ? 'Update my stats' : 'Share my stats'}</button>
-        ${published ? html`<button type="button" class="btn btn-ghost" data-unpublish${pending.has('publish') ? ' disabled' : ''}>Stop sharing</button>` : ''}
+        <button type="button" class="btn btn-primary" data-publish${busyAttr(pending.has('publish'))}>${published ? 'Update my stats' : 'Share my stats'}</button>
+        ${published ? html`<button type="button" class="btn btn-ghost" data-unpublish${busyAttr(pending.has('publish'))}>Stop sharing</button>` : ''}
       </div>
     </section>
     <div class="card list ranking">
@@ -343,7 +343,7 @@ async function openDateSheet(minutes) {
           <div class="friend-picks" hidden>${friends.map((f) => html`<label class="check-row"><input type="checkbox" name="invite" value="${f.userId}"> @${f.username}</label>`)}</div>
         </fieldset>` : html`<p class="hint">You have no friends added yet, so nobody will see this until you add some.</p>`}
       <p class="form-error" aria-live="polite"></p>`,
-    actions: [{ label: 'Cancel', tone: 'ghost', value: null }, { label: 'Post gym date', tone: 'primary', submit: true, onClick: (finish) => submit(finish) }],
+    actions: [{ label: 'Post gym date', tone: 'primary', submit: true, onClick: (finish, sheet) => submit(finish, sheet) }, { label: 'Cancel', tone: 'ghost', value: null }],
     onMount: (sheet) => {
       sheet.querySelectorAll('[data-duration]').forEach((b) => {
         b.onclick = () => {
@@ -355,11 +355,12 @@ async function openDateSheet(minutes) {
     },
   });
 
-  async function submit(finish) {
-    const sheet = document.querySelector('.date-sheet');
+  async function submit(finish, sheet) {
     const form = (n) => sheet.querySelector(`[name=${n}]`);
     const err = sheet.querySelector('.form-error');
-    const startsAt = new Date(form('start').value);
+    // "Now" stays now: if the start field was not changed, use the current time.
+    const startField = form('start');
+    const startsAt = minutes === 0 && startField.value === startField.defaultValue ? new Date() : new Date(startField.value);
     const draft = { gym: form('gym').value, startsAt, duration, note: form('note').value };
     const pickOnly = sheet.querySelector('input[name=who]:checked')?.value === 'some';
     const inviteIds = pickOnly ? [...sheet.querySelectorAll('input[name=invite]:checked')].map((x) => x.value) : [];
@@ -421,9 +422,9 @@ async function removeOrBlock(id, userId, name, kind) {
     title: kind === 'friend' ? `Remove @${name}?` : `Decline @${name}?`,
     body: html`<p class="sheet-text">${kind === 'friend' ? `@${name} will no longer see your gym dates, stats or shared routines.` : 'They are not told.'} Block them if they should not be able to send you requests again.</p>`,
     actions: [
-      { label: 'Cancel', value: null, tone: 'ghost' },
       { label: kind === 'friend' ? 'Remove friend' : 'Decline', value: 'remove', tone: 'secondary' },
       { label: kind === 'friend' ? 'Remove and block' : 'Decline and block', value: 'block', tone: 'danger' },
+      { label: 'Cancel', value: null, tone: 'ghost' },
     ],
   });
   if (!choice) return;
@@ -438,6 +439,7 @@ export function initCrew() {
     renderCrew();
     $('crew-tab-' + crew.tab)?.focus({ preventScroll: true });
     loadTabData();
+    if (crew.tab !== 'ranking') refreshCrew(); // pick up requests and dates sent since the last poll
   });
   on(page, 'click', '[data-retry]', () => { crew.error = ''; renderCrew(); refreshCrew().then(loadTabData); });
   on(page, 'click', '[data-quick]', (e, b) => openDateSheet(b.dataset.quick === 'later' ? 'later' : +b.dataset.quick));
@@ -496,7 +498,8 @@ export function initCrew() {
     toast('Copied to your plan.');
   });
   on(page, 'click', '[data-unshare]', async (e, b) => {
-    if (await act(b.dataset.unshare, () => social.deleteSharedWorkout(b.dataset.unshare), 'Removed.')) loadTabData();
+    if (!(await confirmDialog('Friends can no longer copy it. Copies they already made stay with them.', { title: 'Stop sharing this routine?', ok: 'Stop sharing', danger: true }))) return;
+    if (await act(b.dataset.unshare, () => social.deleteSharedWorkout(b.dataset.unshare), 'No longer shared.')) loadTabData();
   });
   on(page, 'click', '[data-publish]', async () => {
     const { current, best } = streaks();

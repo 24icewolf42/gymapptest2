@@ -12,7 +12,8 @@ export const BACKUP_KEYS = [
 export function makeBackup(getItem, version) {
   const data = {};
   BACKUP_KEYS.forEach((k) => { const v = getItem(k); if (v != null) data[k] = v; });
-  return JSON.stringify({ app: 'tracker', version, createdAt: new Date().toISOString(), data });
+  // The keys are also written at the top level, the format the original app restores.
+  return JSON.stringify({ ...data, gymLogs: data.gymLogs ?? '{}', app: 'tracker', version, createdAt: new Date().toISOString(), data });
 }
 
 /** Returns { key: rawString } to write back, or throws with a readable message. */

@@ -1,15 +1,15 @@
 // The workout screen: log sets, smart rest timer, autosave, start/finish.
 // Every opened session has its own draft, so editing an old workout never
 // touches the one that is running.
-import { $, html, replaceContent, on, toast, haptic } from '../core/dom.js';
+import { $, html, replaceContent, appendContent, on, toast, haptic, reducedMotion } from '../core/dom.js';
 import { KEYS, read, write, remove, emit } from '../core/store.js';
 import { ymd, parseYmd, fmtLong, fmtClock, fmtShort, relativeDay } from '../core/dates.js';
 import { pushLayer } from '../core/router.js';
 import { state, saveLogs, saveLastUsed, markSessionsDeleted } from '../state.js';
-import { sanitizeWorkout, rowCount } from '../domain/plan.js';
+import { sanitizeWorkout, rowCount, REST_DEFAULTS, DEFAULT_REST } from '../domain/plan.js';
 import { bestWeight, trimSets, sessionKey, newSessionId } from '../domain/logs.js';
 import { restState, roundToStep, muscleGroup } from '../domain/rest-timer.js';
-import { categoryLabel } from '../domain/catalog.js';
+import { categoryLabel, CATALOG, looksUnilateral } from '../domain/catalog.js';
 import { confirmDialog } from './sheet.js';
 import { icons } from './icons.js';
 
@@ -64,6 +64,22 @@ function writeDraft(id, draft) {
 
 export function isOpen() { return !!s; }
 
+/** A routine was renamed: the running workout and its drafts follow the new name. */
+export function renameRunningWorkout(from, to) {
+  const active = getActive();
+  if (active && active.day === from) setActive({ ...active, day: to });
+  const drafts = readDrafts();
+  let changed = false;
+  Object.keys(drafts).forEach((k) => {
+    const [date, day, ...rest] = k.split('|');
+    if (day !== from) return;
+    drafts[[date, to, ...rest].join('|')] = { ...drafts[k], day: to };
+    delete drafts[k];
+    changed = true;
+  });
+  if (changed) write(KEYS.drafts, drafts);
+}
+
 /**
  * Opens a workout. Without options it resumes the running session of that
  * workout and date, else edits the latest logged one, else starts a new one.
@@ -92,22 +108,35 @@ export function openSession(day, date = ymd(), { key = null, fresh = false } = {
     existing = sameDay[sameDay.length - 1];
     sessionRef = sessionKey(date, existing);
   } else {
-    sessionRef = NEW + newSessionId();
+    // Continue an unsaved new session of this workout and day if there is one.
+    const prefix = date + '|' + day + '|' + NEW;
+    const drafts = readDrafts();
+    const newest = Object.keys(drafts).filter((k) => k.startsWith(prefix)).sort((a, b) => (drafts[b].active || 0) - (drafts[a].active || 0))[0];
+    sessionRef = !fresh && newest ? newest.slice(date.length + day.length + 2) : NEW + newSessionId();
   }
   const id = draftId(day, date, sessionRef);
   const saved = readDrafts()[id];
   const resume = saved && saved.ex ? saved : null;
 
-  let exercises = state.workouts[day] ? sanitizeWorkout(state.workouts[day]) : null;
-  if (!exercises) {
-    // The routine was deleted or renamed: rebuild from the draft or the log.
-    const names = resume ? Object.keys(resume.ex) : existing ? existing.exercises.map((e) => e.name) : [];
+  const routine = state.workouts[day] ? sanitizeWorkout(state.workouts[day]) : null;
+  // What the routine says about an exercise, or a sensible guess if it is not in it.
+  const meta = (name, target = '') => routine?.find((e) => e.name === name) ||
+    { name, cat: CATALOG.find((c) => c.name === name)?.cat || 'other', sets: 1, target, rest: REST_DEFAULTS[name] ?? DEFAULT_REST, note: '', ...(looksUnilateral(name) ? { unilateral: true, sides: 'both' } : {}) };
+  let exercises;
+  if (existing) {
+    // Editing: exactly what was logged, in that order (the routine may have changed since).
+    exercises = existing.exercises.map((e) => ({ ...meta(e.name, e.target), target: e.target || meta(e.name).target, sets: Math.max(1, e.sets.length) }));
+  } else if (routine) {
+    exercises = routine;
+  } else {
+    // The routine was deleted or renamed: rebuild from the draft.
+    const names = resume ? Object.keys(resume.ex) : [];
     if (!names.length) {
       if (activeHere) setActive(null);
       toast('This workout no longer exists.');
       return;
     }
-    exercises = names.map((name) => ({ name, cat: 'other', sets: Math.max(1, (resume?.ex[name] || existing?.exercises.find((e) => e.name === name)?.sets || []).length), target: '', rest: 90, note: '' }));
+    exercises = names.map((name) => ({ ...meta(name), sets: Math.max(1, (resume.ex[name] || []).length) }));
   }
   const started = !!(activeHere && activeHere.key === sessionRef);
   s = {
@@ -115,6 +144,8 @@ export function openSession(day, date = ymd(), { key = null, fresh = false } = {
     started,
     startedAt: started ? activeHere.startedAt : (resume && Date.now() - (resume.active || 0) < DRAFT_STALE_MS ? resume.startedAt || 0 : 0),
     retro: date < today || !!existing,
+    // Decided once: only a new workout started today updates "last used" (also after midnight).
+    updatesLastUsed: !existing && date === today,
     doneAt: {}, anyAt: 0, selected: null, wasWaiting: false, prs: {},
   };
   returnFocus = document.activeElement;
@@ -132,11 +163,11 @@ export function openSession(day, date = ymd(), { key = null, fresh = false } = {
   emit('gym:active-changed');
 }
 
-/** Only a new workout logged today updates the "last used" values. */
-const updatesLastUsed = () => !!s && !s.existing && s.date === ymd();
+const updatesLastUsed = () => !!s && s.updatesLastUsed;
 
 function rowsFor(e, i, resume) {
-  const lastUsed = state.lastUsed[e.name]?.sets || [];
+  // Edits never get pre-filled values: only what was logged (or drafted) is shown.
+  const lastUsed = s.existing ? [] : state.lastUsed[e.name]?.sets || [];
   const drafted = resume?.ex[e.name];
   const logged = s.existing?.exercises.find((x) => x.name === e.name)?.sets;
   const source = drafted || logged || null;
@@ -369,14 +400,19 @@ async function finish() {
   const id = s.existing?.id || (s.key.startsWith(NEW) && s.key !== NEW + 'legacy' ? s.key.slice(NEW.length) : newSessionId());
   const record = { id, day: s.day, exercises: entry, time: new Date().toISOString() };
   if (duration) record.duration = duration;
-  let list = state.logs[s.date] || [];
-  if (s.existing) {
-    const oldKey = sessionKey(s.date, s.existing);
-    list = list.filter((x) => sessionKey(s.date, x) !== oldKey);
-    // Sessions saved before ids existed are keyed by their time, which changes now.
-    if (oldKey !== record.id) markSessionsDeleted([oldKey]);
-  }
+  const previous = state.logs[s.date];
+  let list = previous || [];
+  const oldKey = s.existing ? sessionKey(s.date, s.existing) : null;
+  if (oldKey) list = list.filter((x) => sessionKey(s.date, x) !== oldKey);
   state.logs[s.date] = [...list, record];
+  if (!saveLogs()) {
+    // Nothing was stored (phone storage full): keep the draft and the running timer.
+    state.logs[s.date] = previous;
+    toast('This phone’s storage is full, so the workout was not saved. Your sets are kept: free up space or make a backup, then try again.', { tone: 'error', ms: 9000 });
+    return;
+  }
+  // Sessions saved before ids existed are keyed by their time, which changes now.
+  if (oldKey && oldKey !== record.id) markSessionsDeleted([oldKey]);
   if (updatesLastUsed()) {
     all.forEach(({ e, sets }) => {
       const filled = trimSets(sets);
@@ -384,7 +420,6 @@ async function finish() {
     });
     saveLastUsed();
   }
-  saveLogs();
   writeDraft(s.draftId, null);
   const active = getActive();
   if (active && active.key === s.key && active.date === s.date) setActive(null);
@@ -438,7 +473,7 @@ export function initSession() {
     const card = btn.closest('.ex-card'), ex = s.exercises[+card.dataset.index], body = card.querySelector('tbody');
     const n = body.rows.length;
     const add = ex.unilateral ? 2 : 1;
-    for (let k = 0; k < add; k++) body.insertAdjacentHTML('beforeend', String(setRow(ex, n + k, '', '', false)));
+    for (let k = 0; k < add; k++) appendContent(body, setRow(ex, n + k, '', '', false));
     updateProgress(); saveDraft(); autosave(card);
   });
   on(list, 'click', '[data-remove]', (e, btn) => {
@@ -446,8 +481,23 @@ export function initSession() {
     const card = btn.closest('.ex-card'), ex = s.exercises[+card.dataset.index], body = card.querySelector('tbody');
     const step = ex.unilateral ? 2 : 1;
     if (body.rows.length <= step) return;
-    for (let k = 0; k < step; k++) body.deleteRow(-1);
+    const removed = [...body.rows].slice(-step);
+    const values = removed.map((tr) => ({ w: tr.querySelector('.w').value, r: tr.querySelector('.r').value, done: tr.querySelector('.d').checked }));
+    removed.forEach((tr) => tr.remove());
     updateProgress(); saveDraft(); autosave(card);
+    // A filled set can be brought back.
+    if (values.some((v) => v.w || v.r || v.done)) {
+      toast('Set removed.', {
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            if (!s || !card.isConnected) return;
+            values.forEach((v) => appendContent(body, setRow(ex, body.rows.length, v.w, v.r, v.done)));
+            updateProgress(); saveDraft(); autosave(card);
+          },
+        },
+      });
+    }
   });
   list.addEventListener('input', (e) => {
     if (!s) return;
@@ -487,7 +537,7 @@ export function initSession() {
         if (!wasComplete && card.classList.contains('complete')) {
           card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
           const next = card.nextElementSibling;
-          if (next && next.classList.contains('ex-card')) setTimeout(() => next.scrollIntoView({ behavior: 'smooth', block: 'start' }), 450);
+          if (next && next.classList.contains('ex-card')) setTimeout(() => next.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' }), 450);
         }
         renderRest();
       }

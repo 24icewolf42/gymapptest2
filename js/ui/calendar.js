@@ -1,7 +1,8 @@
 // Calendar: every month from the first log to six months ahead, with streak.
-import { $, html, render, on, toast } from '../core/dom.js';
+import { $, html, render, on, toast, reducedMotion } from '../core/dom.js';
 import { ymd, parseYmd, fmtLong, mondayIndex, MONTHS, DOW_LETTER, fmtDuration, fmtClock } from '../core/dates.js';
-import { state, setBypass, deleteSession } from '../state.js';
+import { state, setBypass, deleteSession, restoreSession } from '../state.js';
+import { account } from '../cloud/sync.js';
 import { streak, sessionKey } from '../domain/logs.js';
 import { categoryLabel } from '../domain/catalog.js';
 import { displaySets } from '../domain/plan.js';
@@ -26,12 +27,14 @@ function monthGrid(y, m, today, dates) {
     const tag = logged ? (logs.length > 1 ? logs.length + '× ' : '') + (secs ? shortTime(secs) : short(logs[0].day)) : bypass ? 'Bypass' : planned ? short(planned) : '';
     const cls = ['cal-cell', planned ? 'planned' : 'rest', logged ? 'logged' : '', bypass ? 'bypass' : '', ds === today ? 'today' : '', ds > today ? 'future' : '', dates.has(ds) ? 'has-date' : ''].filter(Boolean).join(' ');
     const label = fmtLong(ds) + ': ' + (logged ? 'trained ' + logs.map((s) => s.day).join(', ') : bypass ? 'bypass day' : planned || 'rest day') + (dates.has(ds) ? ', gym date' : '');
-    cells.push(html`<button type="button" class="${cls}" data-day="${ds}" aria-label="${label}"><span class="cal-num">${d}</span><span class="cal-tag">${tag}</span></button>`);
+    // One tab stop per month (today, else the 1st); arrow keys move between days.
+    const stop = ds === today || (d === 1 && !(today.startsWith(ds.slice(0, 7))));
+    cells.push(html`<button type="button" class="${cls}" data-day="${ds}" tabindex="${stop ? '0' : '-1'}"><span class="sr-only">${label}</span><span class="cal-num" aria-hidden="true">${d}</span><span class="cal-tag" aria-hidden="true">${tag}</span></button>`);
   }
   return html`<section class="cal-month" data-month="${y}-${m}">
     <header class="cal-month-head"><h2>${MONTHS[m]} ${y}</h2><small>${count ? count + (count === 1 ? ' workout · ' : ' workouts · ') + fmtDuration(seconds) : ''}</small></header>
     <div class="cal-dow" aria-hidden="true">${DOW_LETTER.map((l) => html`<span>${l}</span>`)}</div>
-    <div class="cal-grid">${cells}</div></section>`;
+    <div class="cal-grid" data-grid role="group" aria-label="${MONTHS[m]} ${y}, use the arrow keys to move between days">${cells}</div></section>`;
 }
 
 function shortTime(sec) {
@@ -63,7 +66,7 @@ export function renderCalendar() {
 function scrollToThisMonth(smooth) {
   const now = new Date();
   const el = document.querySelector(`[data-month="${now.getFullYear()}-${now.getMonth()}"]`);
-  if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 12, behavior: smooth ? 'smooth' : 'auto' });
+  if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 12, behavior: smooth && !reducedMotion() ? 'smooth' : 'auto' });
 }
 
 /** Lets the user choose any routine to log on a date. Resolves with its name or null. */
@@ -105,9 +108,9 @@ export async function openDay(ds) {
     if (!action) return;
     if (action.edit) openSession(action.name, ds, { key: action.edit });
     if (action.add) { const n = await pickWorkout(ds); if (n) openSession(n, ds, { fresh: true }); }
-    if (action.del && await confirmDialog(`The ${action.name} workout on ${fmtLong(ds)} will be deleted from all your devices.`, { title: 'Delete this workout?', ok: 'Delete', danger: true })) {
-      deleteSession(ds, action.del);
-      toast('Workout deleted.');
+    if (action.del && await confirmDialog(`The ${action.name} workout on ${fmtLong(ds)} will be deleted${account.user ? ' from all your devices' : ''}.`, { title: 'Delete this workout?', ok: 'Delete', danger: true })) {
+      const removed = deleteSession(ds, action.del);
+      toast('Workout deleted.', { action: removed ? { label: 'Undo', onClick: () => restoreSession(ds, removed) } : null });
     }
     return;
   }
@@ -125,8 +128,8 @@ export async function openDay(ds) {
     body: html`<div class="list">${list.map((e) => html`<div class="row"><div class="row-main"><b>${e.name}</b><small>${categoryLabel(e.cat)}</small></div><span class="row-end muted">${displaySets(e)} sets${e.unilateral ? ' · L/R' : ''}</span></div>`)}</div>
       <p class="hint">A bypass day keeps your streak when you could not train, for example when you were ill.</p>`,
     actions: [
-      { label: isBypass ? 'Remove bypass' : 'Mark as bypass day', tone: 'ghost', value: 'bypass' },
       ...(ds <= today ? [{ label: 'Log ' + planned, tone: 'primary', value: 'start' }] : []),
+      { label: isBypass ? 'Remove bypass' : 'Mark as bypass day', tone: 'ghost', value: 'bypass' },
     ],
   });
   if (action === 'start') openSession(planned, ds);

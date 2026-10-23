@@ -3,7 +3,7 @@ import { html, raw } from '../core/dom.js';
 import { parseYmd, fmtShort } from '../core/dates.js';
 
 /** points: [{ date: 'YYYY-MM-DD', w: number }], oldest first. */
-export function lineChart(points, { unit = 'kg', markBest = false, label = 'History' } = {}) {
+export function lineChart(points, { unit = 'kg', best = null, label = 'History' } = {}) {
   if (!points.length) return '';
   const W = 320, H = 132, L = 36, R = 14, T = 16, B = 24;
   const ws = points.map((p) => p.w);
@@ -24,16 +24,14 @@ export function lineChart(points, { unit = 'kg', markBest = false, label = 'Hist
   const line = points.map((p, i) => f(X(ts[i])) + ',' + f(Y(p.w))).join(' ');
   const area = `${f(X(ts[0]))},${H - B} ${line} ${f(X(ts[ts.length - 1]))},${H - B}`;
   const dots = points.map((p, i) => `<circle class="g-dot" cx="${f(X(ts[i]))}" cy="${f(Y(p.w))}" r="2.6"/>`).join('');
-  let best = '';
-  if (markBest) {
-    let bi = 0;
-    ws.forEach((w, i) => { if (w >= ws[bi]) bi = i; });
-    best = `<circle class="g-best" cx="${f(X(ts[bi]))}" cy="${f(Y(ws[bi]))}" r="6"/>`;
-  }
+  let ring = '';
+  // Ring the all-time best, if it is within the points shown.
+  const bi = best == null ? -1 : ws.lastIndexOf(best);
+  if (bi >= 0) ring = `<circle class="g-best" cx="${f(X(ts[bi]))}" cy="${f(Y(ws[bi]))}" r="6"/>`;
   const last = points.length - 1;
   const labels = `<text class="g-tick" x="${L}" y="${H - 6}">${fmtShort(points[0].date)}</text>` +
     (points.length > 1 ? `<text class="g-tick" x="${W - R}" y="${H - 6}" text-anchor="end">${fmtShort(points[last].date)}</text>` : '') +
     `<text class="g-value" x="${f(Math.min(X(ts[last]), W - R))}" y="${f(Y(ws[last]) - 8)}" text-anchor="end">${ws[last]} ${unit}</text>`;
   // Every value interpolated above is a number or a formatted date, never user text.
-  return html`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${label}">${raw(grid)}<polygon class="g-area" points="${area}"/><polyline class="g-line" points="${line}"/>${raw(dots + best + labels)}</svg>`;
+  return html`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${label}">${raw(grid)}<polygon class="g-area" points="${area}"/><polyline class="g-line" points="${line}"/>${raw(dots + ring + labels)}</svg>`;
 }

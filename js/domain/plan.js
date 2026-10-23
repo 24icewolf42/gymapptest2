@@ -1,5 +1,5 @@
 // Workout routines and the weekly schedule. Pure functions, no DOM or storage.
-import { looksUnilateral } from './catalog.js';
+import { UNILATERAL_PATTERN } from './catalog.js';
 
 export const MAX_SETS = 20;
 
@@ -72,7 +72,8 @@ export function sanitizeWorkout(list) {
 }
 
 export function sanitizeWorkoutName(name) {
-  const n = text(name, 40);
+  // "|" separates parts of draft keys, so it is not allowed in names.
+  const n = text(typeof name === 'string' ? name.replace(/\|/g, '/') : name, 40);
   return n === '__proto__' ? '' : n;
 }
 
@@ -108,7 +109,9 @@ export function sanitizeSchedule(schedule, workouts) {
 export function upgradeExercises(workouts) {
   let changed = false;
   Object.values(workouts).forEach((list) => list.forEach((e) => {
-    if (e.unilateral === undefined && (UNILATERAL_DEFAULTS.includes(e.name) || looksUnilateral(e.name))) {
+    // Only the original list and clear single-arm/leg names: existing entries of
+    // other movements keep the set count the user chose.
+    if (e.unilateral === undefined && (UNILATERAL_DEFAULTS.includes(e.name) || UNILATERAL_PATTERN.test(e.name))) {
       e.unilateral = true;
       e.sides = 'both';
       if (e.sets % 2) e.sets += 1;
@@ -191,9 +194,9 @@ export function mergePlans(remote, local, base = null) {
   const rTimes = remote.itemUpdatedAt || {}, lTimes = local.itemUpdatedAt || {};
   const pick = (group, key, rv, lv) => {
     const rh = hashOf(rv), lh = hashOf(lv);
-    if (rh === lh) return { value: lv, time: Math.max(Number(rTimes[group]?.[key]) || 0, Number(lTimes[group]?.[key]) || 0) };
     const rt = Number(group === 'restImage' ? rTimes.restImage : rTimes[group]?.[key]) || 0;
     const lt = Number(group === 'restImage' ? lTimes.restImage : lTimes[group]?.[key]) || 0;
+    if (rh === lh) return { value: lv, time: Math.max(rt, lt) };
     const b = base ? (group === 'restImage' ? base.restImage : base[group]?.[key]) : undefined;
     let takeLocal;
     if (b !== undefined) {

@@ -1,7 +1,7 @@
 // App start-up: load data, wire pages and events, then connect the cloud.
 import { $, html, render, on, toast, enableArrowKeys } from './core/dom.js';
 import { listen } from './core/store.js';
-import { registerPage, initNav, go, refresh, currentPage } from './core/router.js';
+import { registerPage, initNav, go, refresh, currentPage, TABS } from './core/router.js';
 import { loadState } from './state.js';
 import { initAccount, onAccountSwitch } from './cloud/sync.js';
 import { renderToday, initToday } from './ui/today.js';
@@ -19,8 +19,8 @@ import { fmtClock } from './core/dates.js';
 loadState();
 
 // Bottom navigation
-const NAV = [['today', 'Today'], ['plan', 'Plan'], ['calendar', 'Calendar'], ['stats', 'Stats'], ['crew', 'Crew']];
-render($('bottomNav'), html`${NAV.map(([id, label]) => html`<button type="button" class="nav-btn${id === 'today' ? ' active' : ''}" data-page="${id}"${id === 'today' ? ' aria-current="page"' : ''}>${navIcons[id]}<span>${label}</span>${id === 'crew' ? html`<span class="badge" hidden></span>` : ''}</button>`)}`);
+const NAV_LABELS = { today: 'Today', plan: 'Plan', calendar: 'Calendar', stats: 'Stats', crew: 'Crew' };
+render($('bottomNav'), html`${TABS.map((id) => html`<button type="button" class="nav-btn${id === 'today' ? ' active' : ''}" data-page="${id}"${id === 'today' ? html` aria-current="page"` : ''}>${navIcons[id]}<span>${NAV_LABELS[id]}</span>${id === 'crew' ? html`<span class="badge" hidden></span>` : ''}</button>`)}`);
 
 registerPage('today', { render: renderToday });
 registerPage('plan', { render: renderPlan, leave: leavePlan });
@@ -59,13 +59,33 @@ function paintActive() {
   clearInterval(activeTimer);
   if (!show) return;
   // render() patches in place, so only the clock text changes each second.
-  const tick = () => render(activeBar, html`<button type="button" class="active-btn" aria-label="Open the running workout, ${a.day}"><span><small>Workout running</small><b>${a.day}</b></span><b class="clock" aria-hidden="true">${fmtClock((Date.now() - a.startedAt) / 1000)}</b></button>`);
+  const tick = () => {
+    // The running state expires after 12 hours; stop showing it then.
+    if (!getActive()) { paintActive(); return; }
+    render(activeBar, html`<button type="button" class="active-btn" aria-label="Open the running workout, ${a.day}"><span><small>Workout running</small><b>${a.day}</b></span><b class="clock" aria-hidden="true">${fmtClock((Date.now() - a.startedAt) / 1000)}</b></button>`);
+  };
   tick();
   activeTimer = setInterval(tick, 1000);
 }
 activeBar.addEventListener('click', () => { const a = getActive(); if (a) openSession(a.day, a.date, a.key ? { key: a.key } : {}); });
 listen('gym:active-changed', () => { paintActive(); if (currentPage() === 'today') refresh('today'); });
 paintActive();
+
+// Another tab or window of the app changed the data: load it, so neither copy
+// overwrites the other. During a workout this waits until the workout is closed.
+let staleFromOtherTab = false;
+window.addEventListener('storage', (e) => {
+  if (e.key !== null && !e.key.startsWith('gym')) return;
+  staleFromOtherTab = true;
+  if (!isOpen()) reloadFromStorage();
+});
+listen('gym:active-changed', () => { if (staleFromOtherTab && !isOpen()) reloadFromStorage(); });
+function reloadFromStorage() {
+  staleFromOtherTab = false;
+  loadState();
+  paintActive();
+  refresh();
+}
 
 // A different account signing in on this phone must not absorb the previous person's data.
 onAccountSwitch(() => openSheet({

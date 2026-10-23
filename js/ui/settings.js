@@ -1,5 +1,5 @@
 // Settings: account, privacy, training options, rest-day image, backup, about.
-import { $, html, render, on, toast } from '../core/dom.js';
+import { $, html, render, on, toast, busyAttr } from '../core/dom.js';
 import { listen, readText, KEYS } from '../core/store.js';
 import { pushLayer, go, currentPage } from '../core/router.js';
 import { state, saveSettings, restImage, setRestImage, loadState } from '../state.js';
@@ -14,13 +14,17 @@ import { openSheet, confirmDialog, promptDialog } from './sheet.js';
 import { icons } from './icons.js';
 import { APP_VERSION } from '../version.js';
 
-export const MIN_AGE = 14;
+const MIN_AGE = 14;
 
 let authMode = 'signin';
 let previousPage = 'today';
 let closeLayer = null;
 let busy = false;
-let blocks = null; // [{ blocked_id, username }] once loaded
+let blocks = null; // [{ blocked_id, username }] once loaded, or { error }
+let blocksFor = null;
+let signingOut = false;
+let authError = ''; // kept in state so a background re-render does not wipe it
+let deleting = false;
 
 export function openSettings() {
   if (currentPage() === 'settings') return;
@@ -44,14 +48,16 @@ const PRIVACY = html`
   <h3>What friends see</h3>
   <ul class="plain">
     <li>Only people whose friend request you accepted. Nobody can browse the list of users.</li>
-    <li>Your username, and gym dates you share with them.</li>
-    <li>Stats, only if you share them: workouts, total kg × reps, training time and streak.</li>
+    <li>Your username.</li>
+    <li>Gym dates you post for them, your replies to their gym dates, and when you check in at the gym.</li>
+    <li>Stats, only if you share them: number of workouts, total kg × reps, training time, current and best streak, and how many routines and exercises your plan has.</li>
+    <li>Routines you choose to share (they can copy them).</li>
     <li>Your latest weight, only if you turn that on. Never your weight history.</li>
   </ul>
   <h3>Your choices</h3>
   <ul class="plain">
     <li>Remove or block friends at any time.</li>
-    <li>Delete your account in Settings: everything stored for it in the cloud is deleted.</li>
+    <li>Delete your account in Settings: your account, everything stored for it and the sign-in records with your email address are deleted.</li>
   </ul>
   <p class="sheet-text">You need to be ${MIN_AGE} or older to create an account, or have a parent's or guardian's permission.</p>`;
 
@@ -65,18 +71,20 @@ function accountCard() {
     const signup = authMode === 'signup';
     return html`<form class="card auth" id="authForm" novalidate>
       <div class="segmented small" role="tablist" aria-label="Account">
-        <button type="button" role="tab" aria-selected="${!signup ? 'true' : 'false'}" data-auth-mode="signin">Sign in</button>
-        <button type="button" role="tab" aria-selected="${signup ? 'true' : 'false'}" data-auth-mode="signup">Create account</button>
+        <button type="button" role="tab" id="auth-tab-signin" aria-controls="authPanel" aria-selected="${!signup ? 'true' : 'false'}" tabindex="${!signup ? '0' : '-1'}" data-auth-mode="signin">Sign in</button>
+        <button type="button" role="tab" id="auth-tab-signup" aria-controls="authPanel" aria-selected="${signup ? 'true' : 'false'}" tabindex="${signup ? '0' : '-1'}" data-auth-mode="signup">Create account</button>
       </div>
-      <p class="muted small">${signup ? 'Back up your workouts, use several devices, add friends and plan gym dates together.' : 'Welcome back. Your workouts on this phone stay here either way.'}</p>
-      <label class="field"><span>Email</span><input class="input" name="email" type="email" autocomplete="email" required></label>
-      <label class="field"><span>Password</span><input class="input" name="password" type="password" minlength="8" autocomplete="${signup ? 'new-password' : 'current-password'}" required placeholder="At least 8 characters"></label>
-      ${signup ? html`<div class="field"><label for="authUsername">Username</label><div class="input-row"><span class="input-prefix" aria-hidden="true">@</span><input class="input" id="authUsername" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20" placeholder="3–20 letters, numbers or _"></div></div>
+      <div id="authPanel" role="tabpanel" aria-labelledby="auth-tab-${authMode}">
+      <p class="muted small">${signup ? 'Back up your workouts, use several devices, add friends and plan gym dates together.' : 'Welcome back. Signing in syncs the workouts on this phone with your account.'}</p>
+      <label class="field"><span>Email</span><input class="input" name="email" type="email" autocomplete="email" inputmode="email" required></label>
+      <label class="field"><span>Password</span><input class="input" name="password" type="password" minlength="8" autocomplete="${signup ? 'new-password' : 'current-password'}" ${signup ? html` placeholder="At least 8 characters"` : ''} required></label>
+      ${signup ? html`<div class="field"><label for="authUsername">Username</label><div class="input-row"><span class="input-prefix" aria-hidden="true">@</span><input class="input" id="authUsername" name="username" autocomplete="nickname" autocapitalize="none" spellcheck="false" maxlength="20" placeholder="3–20 letters, numbers or _"></div></div>
         <p class="hint">Friends find you by your exact username. Don’t use your real full name.</p>
         <label class="check-row consent"><input type="checkbox" name="consent"> <span>I am ${MIN_AGE} or older, or a parent or guardian agreed, and I have read the <button type="button" class="link-btn inline" data-privacy>privacy notice</button>.</span></label>` : ''}
-      <p class="form-error" aria-live="polite"></p>
-      <button class="btn btn-primary btn-block" type="submit"${busy ? ' disabled' : ''}>${signup ? 'Create account' : 'Sign in'}</button>
+      <p class="form-error" aria-live="polite">${authError}</p>
+      <button class="btn btn-primary btn-block" type="submit"${busyAttr(busy)}>${busy ? 'Please wait…' : signup ? 'Create account' : 'Sign in'}</button>
       ${signup ? '' : html`<button type="button" class="link-btn" data-forgot>Forgot password?</button>`}
+      </div>
     </form>`;
   }
   const p = account.profile;
@@ -86,7 +94,7 @@ function accountCard() {
     <p class="status ${account.statusTone}" role="status">${account.status}</p>
     <div class="btn-row">
       <button type="button" class="btn btn-soft" data-sync>Sync now</button>
-      <button type="button" class="btn btn-ghost" data-signout>Sign out</button>
+      <button type="button" class="btn btn-ghost" data-signout${busyAttr(signingOut)}>${signingOut ? 'Syncing…' : 'Sign out'}</button>
     </div>
   </section>
   <section class="card">
@@ -95,7 +103,7 @@ function accountCard() {
       <span><b>Show my weight to friends</b><small>Friends see only your latest weigh-in, never the full history.</small></span></label>
     <p class="muted small">Friends see your username, gym dates you share with them, and stats or routines you choose to share. Your workout history syncs only to your own account. <button type="button" class="link-btn inline" data-privacy>Read the privacy notice</button></p>
     <h3 class="sub">Blocked people</h3>
-    ${blocks == null ? html`<p class="muted small">Loading…</p>` : blocks.length ? html`<div class="list">${blocks.map((b) => html`
+    ${blocks == null ? html`<p class="muted small">Loading…</p>` : blocks.error ? html`<p class="notice error">${blocks.error} <button type="button" class="link-btn inline" data-retry-blocks>Try again</button></p>` : blocks.length ? html`<div class="list">${blocks.map((b) => html`
       <div class="row" data-key="block-${b.blocked_id}"><div class="row-main"><b>@${b.username}</b></div>
         <button type="button" class="btn btn-ghost btn-sm" data-unblock="${b.blocked_id}" aria-label="Unblock ${b.username}">Unblock</button></div>`)}</div>`
       : html`<p class="muted small">Nobody. You can block someone from the Crew tab.</p>`}
@@ -136,14 +144,19 @@ function dangerCard() {
   if (!account.user) return '';
   return html`<section class="card danger-zone">
     <h2>Delete account</h2>
-    <p class="muted small">Deletes your account, friends, gym dates and everything synced to the cloud.</p>
-    <button type="button" class="btn btn-danger" data-delete-account>Delete my account</button>
+    <p class="muted small">Deletes your account, friends, gym dates, everything synced to the cloud and the sign-in records with your email address.</p>
+    <button type="button" class="btn btn-danger" data-delete-account${busyAttr(deleting)}>${deleting ? 'Deleting…' : 'Delete my account'}</button>
   </section>`;
+}
+
+function setAuthError(message) {
+  authError = message;
+  renderSettings();
 }
 
 export function renderSettings() {
   render($('page-settings'), html`
-    <header class="top editor-top" data-view="settings-${account.user ? 'in' : authMode}">
+    <header class="top editor-top" data-view="settings-${account.user ? 'in' : 'out'}">
       <button type="button" class="icon-btn" data-close-settings aria-label="Back">${icons.back}</button>
       <div class="grow"><p class="eyebrow">Tracker v${APP_VERSION}</p><h1 class="h1-sm">Settings</h1></div></header>
     ${accountCard()}
@@ -155,8 +168,11 @@ export function renderSettings() {
 
 async function refreshBlocks() {
   if (!account.user || !account.ready) { blocks = null; return; }
+  const forUser = account.user.id;
   const r = await loadBlocks();
-  blocks = r.error ? [] : r.data;
+  if (account.user?.id !== forUser) return; // signed out or switched meanwhile
+  blocks = r.error ? { error: r.error } : r.data;
+  blocksFor = forUser;
   if (currentPage() === 'settings') renderSettings();
 }
 
@@ -218,15 +234,15 @@ async function restoreFrom(text) {
 async function forgotPassword() {
   const email = await promptDialog({ title: 'Reset password', label: 'Your account email', type: 'email', value: $('authForm')?.email.value || '', ok: 'Send email', maxLength: 120 });
   if (!email) return;
-  const sent = await resetPassword(email);
-  if (sent) { toast(sent, { tone: 'error' }); return; }
+  const failed = await resetPassword(email);
+  if (failed) { toast(failed, { tone: 'error' }); return; }
   // The email has a link (opens the web app) and, if the project's email
   // template includes it, a code that works right here, e.g. in the Android app.
   const code = await promptDialog({
     title: 'Check your email',
     label: 'Code from the email',
     hint: 'Or tap the link in the email instead. It opens Tracker in your browser.',
-    ok: 'Continue', maxLength: 10, type: 'text',
+    ok: 'Continue', maxLength: 10, type: 'text', input: { inputmode: 'numeric', autocomplete: 'one-time-code' },
     validate: (v) => (/^\d{6,10}$/.test(v) ? '' : 'Enter the code from the email.'),
   });
   if (!code) return;
@@ -239,22 +255,25 @@ export function initSettings() {
   const page = $('page-settings');
   on(page, 'click', '[data-close-settings]', closeSettings);
   on(page, 'click', '[data-privacy]', (e) => { e.preventDefault(); showPrivacy(); });
-  on(page, 'click', '[data-auth-mode]', (e, b) => { authMode = b.dataset.authMode; renderSettings(); });
+  on(page, 'click', '[data-auth-mode]', (e, b) => { authMode = b.dataset.authMode; authError = ''; renderSettings(); $('auth-tab-' + authMode)?.focus({ preventScroll: true }); });
+  on(page, 'click', '[data-retry-blocks]', () => { blocks = null; renderSettings(); refreshBlocks(); });
   on(page, 'submit', '#authForm', async (e) => {
     e.preventDefault();
-    const f = e.target, err = f.querySelector('.form-error');
+    const f = e.target;
+    authError = '';
     const email = f.email.value.trim(), password = f.password.value;
     const signup = authMode === 'signup';
     const username = signup ? f.username.value.trim().toLowerCase() : '';
-    if (!/^\S+@\S+\.\S+$/.test(email)) { err.textContent = 'Enter a valid email address.'; return; }
-    if (password.length < 8) { err.textContent = 'Use a password with at least 8 characters.'; return; }
-    if (signup && !/^[a-z0-9_]{3,20}$/.test(username)) { err.textContent = 'Usernames have 3–20 letters, numbers or _.'; return; }
-    if (signup && !f.consent.checked) { err.textContent = `Please confirm you are ${MIN_AGE} or older, or have a parent's permission.`; f.consent.focus(); return; }
-    busy = true; f.querySelector('[type=submit]').disabled = true;
+    if (!/^\S+@\S+\.\S+$/.test(email)) { setAuthError('Enter a valid email address.'); return; }
+    if (password.length < 8) { setAuthError('Use a password with at least 8 characters.'); return; }
+    if (signup && !/^[a-z0-9_]{3,20}$/.test(username)) { setAuthError('Usernames have 3–20 letters, numbers or _.'); return; }
+    if (signup && !f.consent.checked) { setAuthError(`Please confirm you are ${MIN_AGE} or older, or have a parent's permission.`); f.consent.focus(); return; }
+    if (busy) return;
+    busy = true; renderSettings();
     const r = signup ? await signUp(email, password, username) : await signIn(email, password);
     busy = false;
     if (r === 'confirm-email') { toast('Account created. Check your email to confirm it, then sign in.', { ms: 6000 }); authMode = 'signin'; renderSettings(); return; }
-    if (r) { err.textContent = r; f.querySelector('[type=submit]').disabled = false; return; }
+    if (r) { setAuthError(r); return; }
     toast(signup ? 'Welcome! Your account is ready.' : 'Signed in. Syncing your workouts…');
     renderSettings();
   });
@@ -265,16 +284,15 @@ export function initSettings() {
       title: 'Sign out?',
       body: html`<p class="sheet-text">If someone else uses this phone, remove your workouts from it. They stay in your account.</p>`,
       actions: [
-        { label: 'Cancel', value: null, tone: 'ghost' },
         { label: 'Sign out, keep data here', value: 'keep', tone: 'secondary' },
         { label: 'Sign out and remove my data', value: 'remove', tone: 'danger' },
+        { label: 'Cancel', value: null, tone: 'ghost' },
       ],
     });
-    if (!choice) return;
-    const btn = page.querySelector('[data-signout]');
-    if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
+    if (!choice || signingOut) return;
+    signingOut = true; renderSettings();
     const r = await signOut({ removeLocalData: choice === 'remove' });
-    if (btn && document.contains(btn)) { btn.disabled = false; btn.textContent = 'Sign out'; }
+    signingOut = false; renderSettings();
     if (r === 'not-synced') {
       const force = await confirmDialog('Some workouts on this phone have not reached your account yet (no connection?). If you remove the data now, they are lost.', { title: 'Not synced yet', ok: 'Remove anyway', cancel: 'Keep my data', danger: true });
       if (!force) return;
@@ -324,7 +342,7 @@ export function initSettings() {
     const choice = await openSheet({
       title: 'Restore a backup',
       body: html`<label class="field"><span>Paste backup text</span><textarea class="input" name="paste" rows="4" placeholder="{&quot;app&quot;:&quot;tracker&quot;…"></textarea></label>`,
-      actions: [{ label: 'Choose file', value: 'file', tone: 'ghost' }, { label: 'Restore pasted text', tone: 'primary', onClick: (finish) => finish({ text: document.querySelector('.sheet textarea[name=paste]').value }) }],
+      actions: [{ label: 'Restore pasted text', tone: 'primary', onClick: (finish, sheet) => finish({ text: sheet.querySelector('textarea[name=paste]').value }) }, { label: 'Choose file', value: 'file', tone: 'ghost' }],
     });
     if (choice === 'file') $('restoreFile').click();
     else if (choice && 'text' in choice) restoreFrom(choice.text);
@@ -342,30 +360,47 @@ export function initSettings() {
         <label class="check-row"><input type="checkbox" name="wipe" checked> <span>Also remove my workouts from this phone</span></label>
         <p class="form-error" aria-live="polite"></p>`,
       actions: [
-        { label: 'Cancel', value: null, tone: 'ghost' },
         {
           label: 'Delete forever', tone: 'danger', submit: true,
-          onClick: (finish) => {
-            const sheet = document.querySelector('.sheet-backdrop:last-child .sheet');
+          onClick: (finish, sheet) => {
             if (sheet.querySelector('[name=confirm]').value !== 'DELETE') { sheet.querySelector('.form-error').textContent = 'Type DELETE in capital letters.'; return; }
             finish({ wipe: sheet.querySelector('[name=wipe]').checked });
           },
         },
+        { label: 'Cancel', value: null, tone: 'ghost' },
       ],
     });
-    if (!result) return;
+    if (!result || deleting) return;
+    deleting = true; renderSettings();
     const r = await deleteAccount({ removeLocalData: result.wipe });
+    deleting = false; renderSettings();
     toast(r || 'Your account was deleted.', { tone: r ? 'error' : 'default' });
   });
   on(page, 'click', '[data-check-update]', () => window.dispatchEvent(new CustomEvent('gym:check-update', { detail: { manual: true } })));
 
   listen('gym:account', () => {
+    if (!account.user || (blocksFor && blocksFor !== account.user.id)) { blocks = null; blocksFor = null; }
     if (account.user && account.ready && blocks == null) refreshBlocks();
-    if (!account.user) blocks = null;
     if (currentPage() === 'settings') renderSettings();
   });
+  listen('gym:username-taken', async (e) => {
+    const name = await promptDialog({
+      title: 'Choose another username',
+      label: 'Username',
+      hint: `@${e.detail.wanted} was already taken, so your account got @${e.detail.given} for now. Friends find you by this exact name.`,
+      maxLength: 20, ok: 'Save', input: { autocomplete: 'nickname', autocapitalize: 'none' },
+      validate: (v) => (/^[a-z0-9_]{3,20}$/.test(v.toLowerCase()) ? '' : 'Use 3–20 letters, numbers or _.'),
+    });
+    if (!name) return;
+    const r = await changeUsername(name);
+    toast(r || 'Username saved.', { tone: r ? 'error' : 'default' });
+  });
+  let askingPassword = false;
   listen('gym:password-recovery', async () => {
-    const pw = await promptDialog({ title: 'Choose a new password', label: 'New password', type: 'password', maxLength: 72, ok: 'Save password', validate: (v) => (v.length >= 8 ? '' : 'Use at least 8 characters.') });
+    if (askingPassword) return;
+    askingPassword = true;
+    const pw = await promptDialog({ title: 'Choose a new password', label: 'New password', type: 'password', maxLength: 72, ok: 'Save password', input: { autocomplete: 'new-password' }, validate: (v) => (v.length >= 8 ? '' : 'Use at least 8 characters.') });
+    askingPassword = false;
     if (!pw) return;
     const r = await updatePassword(pw);
     toast(r || 'Password changed.', { tone: r ? 'error' : 'default' });

@@ -2,7 +2,7 @@
 // reads the cloud copy and merges, so two devices can't silently wipe each other.
 import { supabase, SITE_URL, errorText, isMissingSchema } from './client.js';
 import {
-  state, localPlan, applyPlan, planBase, setPlanBase, saveLogs, saveLastUsed, saveWeights, saveSync, saveBypass, saveTombstones,
+  state, localPlan, applyPlan, planBase, setPlanBase, setPlanTombstones, saveLogs, saveLastUsed, saveWeights, saveSync, saveBypass, saveTombstones,
   hasLocalData, clearLocalData,
 } from '../state.js';
 import { mergePlans, planHashes, stableStringify } from '../domain/plan.js';
@@ -40,7 +40,8 @@ export function initAccount() {
   });
   listen('gym:plan-changed', () => queue('plan'));
   listen('gym:logs-changed', () => queue('data'));
-  listen('gym:progress-changed', () => queue('data'));
+  // Last-used values change on every keystroke during a workout: upload them calmly.
+  listen('gym:progress-changed', () => queue('data', 10000));
   listen('gym:weight-changed', () => queue('weights'));
   window.addEventListener('online', () => { if (account.user && account.ready) syncAll(); });
   document.addEventListener('visibilitychange', () => {
@@ -94,6 +95,11 @@ async function startSession(user) {
       writeText(KEYS.switchBackup, backup);
     }
     resetAccountBookkeeping();
+    if (choice === 'merge') {
+      // The other account's deletions and edit times must not act on this account's plan.
+      setPlanTombstones([], []);
+      write(KEYS.planTimes, {});
+    }
   } else if (owner && owner !== user.id) {
     resetAccountBookkeeping();
   }
@@ -119,6 +125,11 @@ async function loadProfile() {
   }
   account.profile = r.data || null;
   if (r.error) setStatus('Could not load your profile: ' + errorText(r.error), 'error');
+  // The requested username was taken at sign-up, so the account got a random one.
+  const wanted = String(account.user.user_metadata?.username || '').toLowerCase();
+  if (account.profile && wanted && account.profile.username !== wanted && /^user_[0-9a-f]{8}$/.test(account.profile.username)) {
+    emit('gym:username-taken', { wanted, given: account.profile.username });
+  }
 }
 
 // ---------- per-area sync with read-merge-write ----------
@@ -145,10 +156,13 @@ function run(area) {
   return running[area];
 }
 
-function queue(area) {
+function queue(area, delay = 800) {
   if (!account.user || !account.ready) return;
-  clearTimeout(timers[area]);
-  timers[area] = setTimeout(() => run(area), 800);
+  const due = Date.now() + delay;
+  // A sooner request (e.g. a saved workout) wins over a later one.
+  if (timers[area] && timers[area].due <= due) return;
+  clearTimeout(timers[area]?.id);
+  timers[area] = { due, id: setTimeout(() => { timers[area] = null; run(area); }, delay) };
 }
 
 // Postgres reorders JSON keys, so compare with sorted keys.
@@ -193,7 +207,8 @@ const SYNC = {
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const r = await supabase.from('workout_plans').select('plan,updated_at').eq('user_id', uid).maybeSingle();
       if (r.error) throw r.error;
-      const merged = mergePlans(r.data?.plan, localPlan(), planBase());
+      // No cloud plan (first sync, or the row was removed): there is no common base.
+      const merged = mergePlans(r.data?.plan, localPlan(), r.data ? planBase() : null);
       const local = localPlan();
       if (!same(merged.workouts, local.workouts) || !same(merged.schedule, local.schedule) || merged.restImage !== local.restImage) applyPlan(merged);
       const done = r.data && same(r.data.plan, merged);
@@ -263,7 +278,9 @@ const SYNC = {
       .filter((x) => remote.get(x.date) !== x.weight || (withStamp && x.updatedAt && x.updatedAt > (stamps.get(x.date) || 0)))
       .map((x) => ({ user_id: uid, log_date: x.date, weight_kg: x.weight, ...(withStamp ? { updated_at: new Date(x.updatedAt || Date.now()).toISOString() } : {}) }));
     if (changed.length) {
-      const up = await supabase.from('body_weight_logs').upsert(changed, { onConflict: 'user_id,log_date' });
+      // Server time decides for entries made here; older databases get a plain upsert.
+      let up = await supabase.rpc('save_my_weights', { entries: changed.map(({ log_date, weight_kg }) => ({ log_date, weight_kg })) });
+      if (isMissingSchema(up.error)) up = await supabase.from('body_weight_logs').upsert(changed, { onConflict: 'user_id,log_date' });
       if (up.error) throw up.error;
     }
     state.sync.syncedWeightDates = merged.map((x) => x.date);
@@ -292,7 +309,7 @@ export async function signIn(email, password) {
 
 export async function signUp(email, password, username) {
   // The age/permission confirmation is recorded with the account.
-  const data = { username, age_confirmed: true, age_confirmed_at: new Date().toISOString() };
+  const data = { username, age_confirmed: 'true' };
   const r = await supabase.auth.signUp({ email, password, options: { data, emailRedirectTo: SITE_URL } });
   if (r.error) return errorText(r.error);
   return r.data.session ? '' : 'confirm-email';
@@ -306,9 +323,8 @@ export async function resetPassword(email) {
 /** Signs in with the code from a password-reset email; PASSWORD_RECOVERY then asks for a new password. */
 export async function verifyRecoveryCode(email, token) {
   const r = await supabase.auth.verifyOtp({ email, token, type: 'recovery' });
-  if (r.error) return errorText(r.error, 'That code did not work. Request a new email and try again.');
-  emit('gym:password-recovery');
-  return '';
+  // Success fires PASSWORD_RECOVERY through onAuthStateChange, which asks for the new password.
+  return r.error ? errorText(r.error, 'That code did not work. Request a new email and try again.') : '';
 }
 
 export async function updatePassword(password) {

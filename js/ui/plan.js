@@ -8,6 +8,7 @@ import { searchCatalog, categoryLabel, CATEGORIES, CATALOG, GROUP_FILTERS, looks
 import { account } from '../cloud/sync.js';
 import { shareWorkout } from '../cloud/social.js';
 import { openSheet, confirmDialog, promptDialog } from './sheet.js';
+import { renameRunningWorkout } from './session.js';
 import { icons } from './icons.js';
 
 let editing = null; // routine name open in the editor
@@ -40,7 +41,7 @@ function weekView() {
 }
 
 function exerciseRow(e, i, count) {
-  return html`<li class="ex-edit" data-i="${i}">
+  return html`<li class="ex-edit" data-ex="${e.name}" data-key="ex-${e.name}">
     <div class="ex-edit-head">
       <div class="row-main"><b>${e.name}</b><small>${categoryLabel(e.cat)}</small></div>
       <button type="button" class="icon-btn sm" data-move="-1" aria-label="Move ${e.name} up"${i === 0 ? ' disabled' : ''}>${icons.up}</button>
@@ -117,6 +118,13 @@ function closeEditor() {
 
 function list() { return state.workouts[editing]; }
 
+/** The exercise a control belongs to, found by name (positions can change under a sync). */
+function exerciseOf(el) {
+  const l = list();
+  const name = el.closest('[data-ex]')?.dataset.ex;
+  return l && name ? { l, i: l.findIndex((x) => x.name === name), name } : { l: null, i: -1, name };
+}
+
 function nameError(v, current) {
   const n = sanitizeWorkoutName(v);
   if (!n) return 'Give it a name.';
@@ -166,6 +174,7 @@ export function initPlan() {
     const { deleted, restored } = planTombstones();
     setPlanTombstones([...new Set([...deleted, from])].filter((n) => n !== name), [...new Set([...restored.filter((n) => n !== from), ...(deleted.includes(name) ? [name] : [])])]);
     editing = name;
+    renameRunningWorkout(from, name);
     savePlan();
     toast('Renamed. Past logs keep the old name.');
   });
@@ -183,27 +192,35 @@ export function initPlan() {
     toast(r.error || 'Shared with your friends.', { tone: r.error ? 'error' : 'default' });
   });
   on(page, 'click', '[data-move]', (e, b) => {
-    const i = +b.closest('[data-i]').dataset.i, j = i + +b.dataset.move, l = list();
-    if (j < 0 || j >= l.length) return;
+    const { l, i, name } = exerciseOf(b), j = i + +b.dataset.move;
+    if (!l || i < 0 || j < 0 || j >= l.length) return;
     [l[i], l[j]] = [l[j], l[i]];
     savePlan();
+    // Follow the exercise: focus its move button in the new position (or the other one at an end).
+    const row = page.querySelector(`[data-ex="${CSS.escape(name)}"]`);
+    const again = row?.querySelector(`[data-move="${b.dataset.move}"]:not([disabled])`) || row?.querySelector('[data-move]:not([disabled])');
+    again?.focus({ preventScroll: true });
   });
   on(page, 'click', '[data-remove]', (e, b) => {
-    const i = +b.closest('[data-i]').dataset.i, name = editing;
-    const [removed] = list().splice(i, 1);
+    const { l, i } = exerciseOf(b), routine = editing;
+    if (!l || i < 0) return;
+    const [removed] = l.splice(i, 1);
     savePlan();
     toast(removed.name + ' removed.', {
-      action: { label: 'Undo', onClick: () => { const l = state.workouts[name]; if (!l) return; l.splice(Math.min(i, l.length), 0, removed); savePlan(); } },
+      action: { label: 'Undo', onClick: () => { const r = state.workouts[routine]; if (!r || r.some((x) => x.name === removed.name)) return; r.splice(Math.min(i, r.length), 0, removed); savePlan(); } },
     });
   });
   on(page, 'click', '[data-sets]', (e, b) => {
-    const ex = list()[+b.closest('[data-i]').dataset.i];
-    const step = ex.unilateral ? 2 : 1;
+    const { l, i } = exerciseOf(b);
+    if (!l || i < 0) return;
+    const ex = l[i], step = ex.unilateral ? 2 : 1;
     ex.sets = Math.max(step, Math.min(MAX_SETS * step, ex.sets + +b.dataset.sets * step));
     savePlan();
   });
   on(page, 'change', '[data-field]', (e, input) => {
-    const ex = list()[+input.closest('[data-i]').dataset.i];
+    const { l, i } = exerciseOf(input);
+    if (!l || i < 0) return;
+    const ex = l[i];
     const field = input.dataset.field;
     if (field === 'unilateral') {
       // Keep the number of sets per side when switching.

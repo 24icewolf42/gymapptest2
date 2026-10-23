@@ -1,6 +1,6 @@
 // Platform glue: Android back button, APK self-update, the web update check,
 // the "get the app" banner and the offline service worker.
-import { $, html, render, toast } from './core/dom.js';
+import { $, html, render, toast, scriptURL } from './core/dom.js';
 import { openSheet } from './ui/sheet.js';
 import { handleNativeBack } from './core/router.js';
 import { APP_VERSION } from './version.js';
@@ -66,9 +66,9 @@ function installUpdate() {
         // The release key changed: Android only allows this as a fresh install.
         openSheet({
           title: 'One-time reinstall needed',
-          body: html`<p class="sheet-text">This update is signed with a new, private key, so Android can't install it over the old app.</p>
+          body: html`<p class="sheet-text">This update is signed with a new, private key. Newer phones move to it automatically, but this phone (Android 8 or older) can't install it over the old app.</p>
             <ol class="plain"><li>Settings → Backup → Save file (or sign in, so your data is in your account).</li><li>Uninstall Tracker.</li><li>Install the new version from the link below, then restore or sign in.</li></ol>`,
-          actions: [{ label: 'Later', value: null, tone: 'ghost' }, { label: 'Open download page', value: 'open', tone: 'primary' }],
+          actions: [{ label: 'Open download page', value: 'open', tone: 'primary' }, { label: 'Later', value: null, tone: 'ghost' }],
         }).then((v) => { if (v) window.open(APK_URL, '_blank'); });
         return;
       }
@@ -137,7 +137,7 @@ export function initNative() {
   if (!native && 'serviceWorker' in navigator && location.protocol === 'https:') {
     // The first install takes control without a reload; only an update the user
     // asked for (applyWebUpdate) reloads the page.
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register(scriptURL('sw.js')).catch(() => {});
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (updateRequested) location.reload(); });
   }
 }

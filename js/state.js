@@ -3,7 +3,7 @@
 import { KEYS, read, write, readText, writeText, remove, emit } from './core/store.js';
 import { ymd } from './core/dates.js';
 import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule, planHashes } from './domain/plan.js';
-import { sanitizeLogs, upgradeLastUsed, sessionKey, mergeProgress, normalizeBypass, activeBypass, streak, bestStreak } from './domain/logs.js';
+import { sanitizeLogs, upgradeLastUsed, sessionKey, newSessionId, mergeProgress, normalizeBypass, activeBypass, streak, bestStreak } from './domain/logs.js';
 import { sanitizeWeights, upsertWeight } from './domain/weights.js';
 
 // weightStep 0 = keep exactly what was typed. Older versions always rounded to
@@ -149,18 +149,31 @@ export function createWorkout(name, exercises = []) {
   savePlan();
 }
 
+/** Saves history; returns false if the phone's storage is full (nothing was saved). */
 export function saveLogs({ silent = false } = {}) {
-  write(KEYS.logs, state.logs);
+  const ok = write(KEYS.logs, state.logs);
   emit('gym:logs-updated');
-  if (!silent) emit('gym:logs-changed');
+  if (ok && !silent) emit('gym:logs-changed');
+  return ok;
 }
 
-/** Deletes one logged session everywhere (the key is recorded so other devices drop it too). */
+/**
+ * Deletes one logged session everywhere (the key is recorded so other devices
+ * drop it too). Returns the removed session, for Undo.
+ */
 export function deleteSession(date, key) {
+  const removed = (state.logs[date] || []).find((s) => sessionKey(date, s) === key) || null;
   const list = (state.logs[date] || []).filter((s) => sessionKey(date, s) !== key);
   if (list.length) state.logs[date] = list;
   else delete state.logs[date];
   markSessionsDeleted([key]);
+  saveLogs();
+  return removed;
+}
+
+/** Undo of a deletion: the session comes back under a new id, since the old one stays deleted. */
+export function restoreSession(date, session) {
+  state.logs[date] = [...(state.logs[date] || []), { ...session, id: newSessionId() }];
   saveLogs();
 }
 

@@ -192,7 +192,8 @@ export function leaderboardStats(logs) {
  */
 export function streak(logs, bypass, schedule, today = new Date()) {
   let count = 0;
-  for (let i = 0; i < 400; i++) {
+  // Scan until the streak breaks (ten years at most), like bestStreak.
+  for (let i = 0; i < 3660; i++) {
     const d = addDays(today, -i);
     if (!schedule[mondayIndex(d.getDay())]) continue;
     const ds = ymd(d);

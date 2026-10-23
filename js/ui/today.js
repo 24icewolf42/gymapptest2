@@ -1,7 +1,7 @@
 // Today: this week, today's workout, gym dates and what is coming up.
 import { $, html, render, on } from '../core/dom.js';
 import { ymd, fmtLong, fmtShort, mondayIndex, addDays, startOfWeek, DOW, DOW_LETTER, MONTHS, fmtClock } from '../core/dates.js';
-import { go } from '../core/router.js';
+import { go, refresh } from '../core/router.js';
 import { state, restImage } from '../state.js';
 import { workoutSummary, estimateMinutes } from '../domain/plan.js';
 import { streak } from '../domain/logs.js';
@@ -45,7 +45,8 @@ function hero() {
       ${loggedOn(today) ? '' : html`<button type="button" class="btn btn-soft btn-sm" data-log-any>Train anyway</button>`}</section>`;
   }
   const list = state.workouts[name] || [];
-  const session = (state.logs[today] || []).find((s) => s.day === name);
+  // The latest session of today's workout (the one "View or edit" opens).
+  const session = (state.logs[today] || []).filter((s) => s.day === name).pop();
   const active = getActive();
   const running = active && active.day === name && active.date === today;
   if (session) {
@@ -54,14 +55,14 @@ function hero() {
       <p class="eyebrow">${icons.check} Done today</p>
       <h2 class="hero-title">${name}</h2>
       <p class="hero-meta">${[session.duration ? fmtClock(session.duration) : '', session.exercises.length + ' exercises', sets + ' sets'].filter(Boolean).join(' · ')}</p>
-      <button type="button" class="btn btn-soft" data-start="${name}" data-date="${today}">View or edit</button></section>`;
+      <button type="button" class="btn btn-soft" data-start="${name}" data-key="hero-action">View or edit</button></section>`;
   }
   return html`<section class="card hero-card">
     <p class="eyebrow">Today’s workout</p>
     <h2 class="hero-title">${name}</h2>
     <p class="hero-meta">${workoutSummary(list)} · ~${estimateMinutes(list)} min</p>
     ${list.length ? html`<ul class="tags">${list.slice(0, 5).map((e) => html`<li>${e.name}</li>`)}${list.length > 5 ? html`<li>+${list.length - 5}</li>` : ''}</ul>` : html`<p class="muted">This routine has no exercises yet.</p>`}
-    <button type="button" class="btn btn-primary btn-lg" data-start="${name}" data-date="${today}" id="startToday"${list.length ? '' : ' disabled'}>${running ? 'Resume workout' : 'Start workout'}</button></section>`;
+    <button type="button" class="btn btn-primary btn-lg" data-start="${name}" data-key="hero-action" id="startToday"${list.length ? '' : ' disabled'}>${running ? 'Resume workout' : 'Start workout'}</button></section>`;
 }
 
 function upcoming() {
@@ -95,7 +96,8 @@ export function renderToday() {
 
 export function initToday() {
   const page = $('page-today');
-  on(page, 'click', '[data-start]', (e, b) => openSession(b.dataset.start, b.dataset.date));
+  // The date is read when tapped, so a page left open overnight logs to the right day.
+  on(page, 'click', '[data-start]', (e, b) => openSession(b.dataset.start, ymd()));
   // Upcoming days can be previewed (and marked as bypass) but not logged in advance.
   on(page, 'click', '[data-preview]', (e, b) => openDay(b.dataset.preview));
   on(page, 'click', '[data-go]', (e, b) => go(b.dataset.go));
@@ -105,4 +107,18 @@ export function initToday() {
     const name = await pickWorkout(ymd());
     if (name) openSession(name, ymd(), { fresh: true });
   });
+  // Redraw when the app comes back and at midnight, so "today" is never stale.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshToday(); });
+  scheduleMidnight();
+}
+
+let shownDay = ymd();
+function refreshToday() {
+  if (ymd() !== shownDay) { shownDay = ymd(); renderToday(); refresh(); }
+}
+
+function scheduleMidnight() {
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
+  setTimeout(() => { refreshToday(); scheduleMidnight(); }, next - now);
 }
