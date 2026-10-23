@@ -470,6 +470,10 @@
       <div id="statsBody"></div>
     </div>
     
+    <div class="page" id="page-social">
+      <header class="page-head"><h1>Friends</h1></header>
+      <div id="socialRoot" class="panel"></div>
+    </div>
     <div class="bottom-nav" id="bottomNav">
       <button class="nav-btn active" data-page="today">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
@@ -482,6 +486,10 @@
       <button class="nav-btn" data-page="stats">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
         <span>Stats</span>
+      </button>
+      <button class="nav-btn" data-page="social" aria-label="Friends">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM20 8v6M23 11h-6"/></svg>
+        <span>Friends</span>
       </button>
     </div>
     
@@ -523,7 +531,7 @@
     
     <script>
     // ---------- APP VERSION / AUTO UPDATE ----------
-    const APP_VERSION = "2.3.0";
+    const APP_VERSION = "2.5.0";
     document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
     
     function checkForUpdate() {
@@ -636,6 +644,7 @@
         { name: "Standing Calf Raises", target: "10–15", sets: 2, rest: 60, cat: "calves", note: "Full stretch at the bottom, pause and squeeze at the top of each rep." }
       ]
     };
+    window.WORKOUTS = WORKOUTS;
     
     const CATEGORY_META = {
       chest:      { color: "#ffffff", label: "Chest" },
@@ -2026,4 +2035,7 @@
   renderToday();
 })();
 </script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./cloud-config.js"></script>
+<script src="./cloud.js"></script>
     </html>
