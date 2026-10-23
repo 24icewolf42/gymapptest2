@@ -12,8 +12,12 @@ create table if not exists public.gym_dates (
   note text check (note is null or char_length(note) <= 200),
   invite_only boolean not null default false,
   cancelled_at timestamptz,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- Bumped whenever a reply or invite changes, so live updates can be sent
+  -- through this table alone (see the realtime note at the end).
+  activity_at timestamptz not null default now()
 );
+alter table public.gym_dates add column if not exists activity_at timestamptz not null default now();
 create index if not exists gym_dates_starts_at_idx on public.gym_dates (starts_at);
 create index if not exists gym_dates_host_idx on public.gym_dates (host_id);
 
@@ -37,14 +41,22 @@ create index if not exists gym_date_rsvps_user_idx on public.gym_date_rsvps (use
 alter table public.gym_dates enable row level security;
 alter table public.gym_date_invites enable row level security;
 alter table public.gym_date_rsvps enable row level security;
-grant select, insert, update, delete on public.gym_dates to authenticated;
+-- Least privilege: nothing for anon; only the verbs and columns the app needs.
+-- Hosts cancel dates rather than deleting them.
+revoke all on public.gym_dates, public.gym_date_invites, public.gym_date_rsvps from anon, authenticated;
+grant select, insert on public.gym_dates to authenticated;
+grant update (starts_at, duration_min, gym, workout, note, invite_only, cancelled_at) on public.gym_dates to authenticated;
 grant select, insert, delete on public.gym_date_invites to authenticated;
-grant select, insert, update, delete on public.gym_date_rsvps to authenticated;
+grant select, insert, delete on public.gym_date_rsvps to authenticated;
+-- date_id and user_id are listed only so upserts work; the trigger below
+-- refuses any change to them.
+grant update (date_id, user_id, status, checked_in_at) on public.gym_date_rsvps to authenticated;
 
 -- Policies on these tables reference each other, so visibility is decided by
 -- security-definer helpers that read the tables directly (no policy recursion).
--- Each helper answers only for the signed-in user.
-create or replace function public.gym_date_visible(d uuid)
+-- Each answers only for the signed-in user, and they live in the unexposed
+-- private schema so they cannot be called through the API.
+create or replace function private.gym_date_visible(d uuid)
 returns boolean
 language sql
 stable
@@ -68,7 +80,7 @@ as $$
   );
 $$;
 
-create or replace function public.gym_date_is_host(d uuid)
+create or replace function private.gym_date_is_host(d uuid)
 returns boolean
 language sql
 stable
@@ -78,76 +90,77 @@ as $$
   select exists (select 1 from public.gym_dates g where g.id = d and g.host_id = auth.uid());
 $$;
 
--- Open for replies until the session ends, unless the host cancelled it.
-create or replace function public.gym_date_open(d uuid)
+-- Visible to the caller, not cancelled and not over yet.
+create or replace function private.gym_date_open(d uuid)
 returns boolean
 language sql
 stable
 security definer
 set search_path = ''
 as $$
-  select exists (
+  select private.gym_date_visible(d) and exists (
     select 1 from public.gym_dates g
     where g.id = d and g.cancelled_at is null
       and g.starts_at + make_interval(mins => g.duration_min) > now()
   );
 $$;
 
-revoke all on function public.gym_date_visible(uuid) from public, anon;
-revoke all on function public.gym_date_is_host(uuid) from public, anon;
-revoke all on function public.gym_date_open(uuid) from public, anon;
-grant execute on function public.gym_date_visible(uuid) to authenticated;
-grant execute on function public.gym_date_is_host(uuid) to authenticated;
-grant execute on function public.gym_date_open(uuid) to authenticated;
+revoke all on function private.gym_date_visible(uuid) from public, anon;
+revoke all on function private.gym_date_is_host(uuid) from public, anon;
+revoke all on function private.gym_date_open(uuid) from public, anon;
+grant execute on function private.gym_date_visible(uuid) to authenticated;
+grant execute on function private.gym_date_is_host(uuid) to authenticated;
+grant execute on function private.gym_date_open(uuid) to authenticated;
 
 drop policy if exists "Host and invited friends read gym dates" on public.gym_dates;
 create policy "Host and invited friends read gym dates" on public.gym_dates
-  for select to authenticated using (host_id = auth.uid() or public.gym_date_visible(id));
+  for select to authenticated using (host_id = (select auth.uid()) or private.gym_date_visible(id));
 drop policy if exists "Users host their own gym dates" on public.gym_dates;
 create policy "Users host their own gym dates" on public.gym_dates
-  for insert to authenticated with check (host_id = auth.uid());
+  for insert to authenticated with check (host_id = (select auth.uid()));
 drop policy if exists "Hosts edit their gym dates" on public.gym_dates;
 create policy "Hosts edit their gym dates" on public.gym_dates
-  for update to authenticated using (host_id = auth.uid()) with check (host_id = auth.uid());
+  for update to authenticated using (host_id = (select auth.uid())) with check (host_id = (select auth.uid()));
 drop policy if exists "Hosts delete their gym dates" on public.gym_dates;
-create policy "Hosts delete their gym dates" on public.gym_dates
-  for delete to authenticated using (host_id = auth.uid());
 
 drop policy if exists "Host and invitee read invites" on public.gym_date_invites;
 create policy "Host and invitee read invites" on public.gym_date_invites
-  for select to authenticated using (user_id = auth.uid() or public.gym_date_is_host(date_id));
+  for select to authenticated using (user_id = (select auth.uid()) or private.gym_date_is_host(date_id));
 drop policy if exists "Hosts invite their friends" on public.gym_date_invites;
 create policy "Hosts invite their friends" on public.gym_date_invites
-  for insert to authenticated with check (public.gym_date_is_host(date_id) and public.is_friend(user_id));
+  for insert to authenticated with check (private.gym_date_is_host(date_id) and private.is_friend(user_id));
 drop policy if exists "Host or invitee remove invites" on public.gym_date_invites;
 create policy "Host or invitee remove invites" on public.gym_date_invites
-  for delete to authenticated using (user_id = auth.uid() or public.gym_date_is_host(date_id));
+  for delete to authenticated using (user_id = (select auth.uid()) or private.gym_date_is_host(date_id));
 
 -- You see your own reply, every reply to dates you host, and replies from your own
 -- friends. A friend-of-a-friend's reply stays hidden; it only shows up in the counts.
 drop policy if exists "Friends read replies" on public.gym_date_rsvps;
 create policy "Friends read replies" on public.gym_date_rsvps
   for select to authenticated using (
-    user_id = auth.uid()
-    or public.gym_date_is_host(date_id)
-    or (public.gym_date_visible(date_id) and public.is_friend(user_id))
+    user_id = (select auth.uid())
+    or private.gym_date_is_host(date_id)
+    or (private.gym_date_visible(date_id) and private.is_friend(user_id))
   );
 drop policy if exists "Users reply to open dates they can see" on public.gym_date_rsvps;
 create policy "Users reply to open dates they can see" on public.gym_date_rsvps
-  for insert to authenticated with check (
-    user_id = auth.uid() and public.gym_date_visible(date_id) and public.gym_date_open(date_id)
-  );
+  for insert to authenticated with check (user_id = (select auth.uid()) and private.gym_date_open(date_id));
 drop policy if exists "Users change their reply while open" on public.gym_date_rsvps;
 create policy "Users change their reply while open" on public.gym_date_rsvps
-  for update to authenticated using (user_id = auth.uid())
-  with check (user_id = auth.uid() and public.gym_date_visible(date_id) and public.gym_date_open(date_id));
+  for update to authenticated using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()) and private.gym_date_open(date_id));
 drop policy if exists "Users remove their reply" on public.gym_date_rsvps;
 create policy "Users remove their reply" on public.gym_date_rsvps
-  for delete to authenticated using (user_id = auth.uid());
+  for delete to authenticated using (user_id = (select auth.uid()));
+
+-- Earlier drafts of this migration put the helpers in public.
+drop function if exists public.gym_date_visible(uuid);
+drop function if exists public.gym_date_is_host(uuid);
+drop function if exists public.gym_date_open(uuid);
 
 -- New dates must start between 15 minutes ago and 60 days ahead; the host is
 -- always "going". Server time decides, so a wrong phone clock can't break it.
-create or replace function public.gym_dates_before_write()
+create or replace function private.gym_dates_before_write()
 returns trigger
 language plpgsql
 set search_path = ''
@@ -162,15 +175,17 @@ begin
     new.created_at := now();
     new.cancelled_at := null;
   end if;
+  new.activity_at := now();
   new.gym := btrim(new.gym);
   return new;
 end;
 $$;
+revoke all on function private.gym_dates_before_write() from public, anon, authenticated;
 drop trigger if exists gym_dates_before_write on public.gym_dates;
 create trigger gym_dates_before_write before insert or update on public.gym_dates
-  for each row execute function public.gym_dates_before_write();
+  for each row execute function private.gym_dates_before_write();
 
-create or replace function public.gym_dates_add_host()
+create or replace function private.gym_dates_add_host()
 returns trigger
 language plpgsql
 security definer
@@ -183,14 +198,14 @@ begin
   return new;
 end;
 $$;
-revoke all on function public.gym_dates_add_host() from public, anon, authenticated;
+revoke all on function private.gym_dates_add_host() from public, anon, authenticated;
 drop trigger if exists gym_dates_add_host on public.gym_dates;
 create trigger gym_dates_add_host after insert on public.gym_dates
-  for each row execute function public.gym_dates_add_host();
+  for each row execute function private.gym_dates_add_host();
 
--- Check-in uses server time and only works from 30 minutes before the start
--- until the end; saying "no" clears it.
-create or replace function public.gym_date_rsvps_before_write()
+-- Replies cannot move to another date; check-in uses server time and only works
+-- from 30 minutes before the start until the end; saying "no" clears it.
+create or replace function private.gym_date_rsvps_before_write()
 returns trigger
 language plpgsql
 security definer
@@ -199,6 +214,9 @@ as $$
 declare
   g public.gym_dates;
 begin
+  if tg_op = 'UPDATE' and (new.date_id <> old.date_id or new.user_id <> old.user_id) then
+    raise exception 'A reply belongs to one date' using errcode = '42501';
+  end if;
   new.updated_at := now();
   if new.status = 'no' then
     new.checked_in_at := null;
@@ -216,10 +234,36 @@ begin
   return new;
 end;
 $$;
-revoke all on function public.gym_date_rsvps_before_write() from public, anon, authenticated;
+revoke all on function private.gym_date_rsvps_before_write() from public, anon, authenticated;
 drop trigger if exists gym_date_rsvps_before_write on public.gym_date_rsvps;
 create trigger gym_date_rsvps_before_write before insert or update on public.gym_date_rsvps
-  for each row execute function public.gym_date_rsvps_before_write();
+  for each row execute function private.gym_date_rsvps_before_write();
+
+-- Any reply or invite change touches its date, which is what live updates watch.
+create or replace function private.gym_date_touch()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.gym_dates set activity_at = now()
+  where id = case when tg_op = 'DELETE' then old.date_id else new.date_id end;
+  return null;
+end;
+$$;
+revoke all on function private.gym_date_touch() from public, anon, authenticated;
+drop trigger if exists gym_date_rsvps_touch on public.gym_date_rsvps;
+create trigger gym_date_rsvps_touch after insert or update or delete on public.gym_date_rsvps
+  for each row execute function private.gym_date_touch();
+drop trigger if exists gym_date_invites_touch on public.gym_date_invites;
+create trigger gym_date_invites_touch after insert or update or delete on public.gym_date_invites
+  for each row execute function private.gym_date_touch();
+
+-- Earlier drafts kept the trigger functions in public.
+drop function if exists public.gym_dates_before_write();
+drop function if exists public.gym_dates_add_host();
+drop function if exists public.gym_date_rsvps_before_write();
 
 -- Reply counts for dates the caller can see, including friends-of-friends they
 -- cannot read individually.
@@ -235,25 +279,36 @@ as $$
          count(*) filter (where r.status = 'maybe')::integer,
          count(*) filter (where r.checked_in_at is not null)::integer
   from public.gym_date_rsvps r
-  where r.date_id = any (ids) and public.gym_date_visible(r.date_id)
+  where r.date_id = any (ids) and private.gym_date_visible(r.date_id)
   group by r.date_id;
 $$;
 revoke all on function public.gym_date_counts(uuid[]) from public, anon;
 grant execute on function public.gym_date_counts(uuid[]) to authenticated;
 
--- Live updates in the app. Realtime still applies the policies above.
+-- Live updates. Realtime filters inserts and updates by these policies, but it
+-- sends every DELETE to every subscriber with the row's primary key. So only
+-- gym_dates is published: its key is a random id, rows are never deleted by
+-- the app (dates are cancelled), and reply/invite changes arrive as updates of
+-- activity_at. The reply and invite tables must stay unpublished, because their
+-- keys reveal who replied to which date.
 do $$
 declare t text;
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    foreach t in array array['gym_dates', 'gym_date_rsvps', 'gym_date_invites'] loop
-      if not exists (
+    foreach t in array array['gym_date_rsvps', 'gym_date_invites'] loop
+      if exists (
         select 1 from pg_publication_tables
         where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
       ) then
-        execute format('alter publication supabase_realtime add table public.%I', t);
+        execute format('alter publication supabase_realtime drop table public.%I', t);
       end if;
     end loop;
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'gym_dates'
+    ) then
+      alter publication supabase_realtime add table public.gym_dates;
+    end if;
   end if;
 end;
 $$;

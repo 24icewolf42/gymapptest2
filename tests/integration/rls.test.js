@@ -96,6 +96,7 @@ describe('friend data', () => {
   it('shows friends a summary, with weight only when shared', async () => {
     let rows = (await a.client.rpc('friend_summaries')).data;
     let friend = rows.find((r) => r.user_id === b.id);
+    // b published stats (leaderboard row) but has no synced history, so the row's numbers are used.
     expect(friend).toMatchObject({ username: b.username, workouts_count: 12, routines: 2, exercises: 3, weight_kg: null });
     await b.client.from('profiles').update({ share_weight: true }).eq('id', b.id);
     rows = (await a.client.rpc('friend_summaries')).data;
@@ -220,5 +221,98 @@ describe('account deletion', () => {
     expect((await admin.from('profiles').select('id').eq('id', u.id)).data).toEqual([]);
     expect((await admin.from('body_weight_logs').select('user_id').eq('user_id', u.id)).data).toEqual([]);
     expect((await admin.auth.admin.getUserById(u.id)).data.user).toBeNull();
+  });
+});
+
+describe('hardening', () => {
+  it('ignores a client-supplied created_at, so the daily request limit holds', async () => {
+    const spammer = await makeUser(uniqueName('spam'));
+    const targets = await Promise.all(Array.from({ length: 21 }, (_, i) => makeUser(uniqueName('t' + i))));
+    const past = '2000-01-01T00:00:00Z';
+    const first = await spammer.client.from('friend_requests')
+      .insert(targets.slice(0, 20).map((t) => ({ requester_id: spammer.id, target_id: t.id, status: 'pending', created_at: past }))).select('created_at');
+    expect(first.error).toBeNull();
+    expect(first.data.every((r) => r.created_at > '2020')).toBe(true);
+    const over = await spammer.client.from('friend_requests').insert({ requester_id: spammer.id, target_id: targets[20].id, status: 'pending', created_at: past });
+    expect(over.error && over.error.code).toBe('54000');
+  });
+
+  it('lets people block: it ends the friendship, stops requests and hides the blocker', async () => {
+    const a = await makeUser(uniqueName('a'));
+    const b = await makeUser(uniqueName('b'));
+    await befriend(a, b);
+    const blk = await a.client.from('friend_blocks').insert({ blocker_id: a.id, blocked_id: b.id });
+    expect(blk.error).toBeNull();
+    expect((await adminClient().from('friend_requests').select('id').or(`requester_id.eq.${a.id},target_id.eq.${a.id}`)).data).toEqual([]);
+    const again = await b.client.from('friend_requests').insert({ requester_id: b.id, target_id: a.id, status: 'pending' });
+    expect(again.error).not.toBeNull();
+    const back = await a.client.from('friend_requests').insert({ requester_id: a.id, target_id: b.id, status: 'pending' });
+    expect(back.error).not.toBeNull();
+    expect((await b.client.rpc('find_profile', { name: a.username })).data).toEqual([]);
+    expect((await a.client.rpc('my_blocks')).data.map((x) => x.username)).toEqual([b.username]);
+    expect((await b.client.from('friend_blocks').select('*')).data).toEqual([]);
+    await a.client.from('friend_blocks').delete().eq('blocked_id', b.id);
+    expect((await b.client.rpc('find_profile', { name: a.username })).data).toHaveLength(1);
+  });
+
+  it('rate-limits username lookups', async () => {
+    const u = await makeUser(uniqueName('look'));
+    for (let i = 0; i < 30; i++) {
+      const r = await u.client.rpc('find_profile', { name: 'nobody_' + i });
+      expect(r.error).toBeNull();
+    }
+    const over = await u.client.rpc('find_profile', { name: 'nobody_x' });
+    expect(over.error && over.error.code).toBe('54000');
+  });
+
+  it('does not publish reply or invite rows to realtime, and gives anon nothing', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const q = (sql) => execFileSync('docker', ['exec', '-i', 'supabase_db_gymapptest2', 'psql', '-U', 'postgres', '-d', 'postgres', '-At', '-c', sql], { encoding: 'utf8' }).trim();
+    expect(q("select string_agg(tablename, ',' order by tablename) from pg_publication_tables where pubname = 'supabase_realtime' and tablename like 'gym_%'")).toBe('gym_dates');
+    expect(q("select count(*) from information_schema.role_table_grants where grantee = 'anon' and table_name in ('gym_dates','gym_date_rsvps','gym_date_invites','friend_blocks')")).toBe('0');
+  });
+
+  it('keeps visibility helpers out of the API', async () => {
+    const u = await makeUser(uniqueName('rpc'));
+    const r = await u.client.rpc('gym_date_open', { d: '00000000-0000-0000-0000-000000000000' });
+    expect(r.error && r.error.code).toBe('PGRST202');
+  });
+
+  it('computes published totals from synced history instead of trusting the row', async () => {
+    const a = await makeUser(uniqueName('a'));
+    const b = await makeUser(uniqueName('b'));
+    await befriend(a, b);
+    await b.client.from('workout_plans').insert({ user_id: b.id, plan: { workouts: { Push: [{ name: 'Bench' }] } } });
+    // Not published: no stats and no plan counts.
+    let row = (await a.client.rpc('friend_summaries')).data.find((r) => r.user_id === b.id);
+    expect(row).toMatchObject({ workouts_count: null, routines: null, exercises: null });
+    await b.client.from('workout_data').upsert({ user_id: b.id, logs: { '2026-01-01': [{ day: 'Push', duration: 600, exercises: [{ name: 'Bench', sets: [{ w: '50', r: '10' }, { w: 'x', r: '5' }] }] }] }, progress: {} });
+    await b.client.from('leaderboard_stats').insert({ user_id: b.id, workouts_count: 999999, volume_kg_reps: 999999999 });
+    row = (await a.client.rpc('friend_summaries')).data.find((r) => r.user_id === b.id);
+    expect(row).toMatchObject({ workouts_count: 1, volume_kg_reps: 500, total_seconds: 600, routines: 1, exercises: 1 });
+  });
+
+  it('keeps a deleted weigh-in deleted when an older copy is uploaded again', async () => {
+    const u = await makeUser(uniqueName('w'));
+    const old = '2026-01-01T10:00:00Z';
+    await u.client.from('body_weight_logs').upsert({ user_id: u.id, log_date: '2026-01-02', weight_kg: 70, updated_at: old });
+    await u.client.from('body_weight_logs').delete().eq('user_id', u.id).eq('log_date', '2026-01-02');
+    await u.client.from('body_weight_logs').upsert({ user_id: u.id, log_date: '2026-01-02', weight_kg: 70, updated_at: old }, { onConflict: 'user_id,log_date' });
+    expect((await u.client.from('body_weight_logs').select('weight_kg').eq('log_date', '2026-01-02')).data).toEqual([]);
+    await u.client.from('body_weight_logs').upsert({ user_id: u.id, log_date: '2026-01-02', weight_kg: 71, updated_at: new Date(Date.now() + 1000).toISOString() }, { onConflict: 'user_id,log_date' });
+    expect((await u.client.from('body_weight_logs').select('weight_kg').eq('log_date', '2026-01-02')).data).toEqual([{ weight_kg: 71 }]);
+  });
+
+  it('does not let a reply move to another date or a host delete a date', async () => {
+    const host = await makeUser(uniqueName('h'));
+    const fr = await makeUser(uniqueName('f'));
+    await befriend(host, fr);
+    const mk = (mins) => host.client.from('gym_dates').insert({ host_id: host.id, starts_at: new Date(Date.now() + mins * 60000).toISOString(), gym: 'G' }).select('id').single();
+    const now = (await mk(0)).data, later = (await mk(3 * 24 * 60)).data;
+    await fr.client.from('gym_date_rsvps').upsert({ date_id: now.id, user_id: fr.id, status: 'going', checked_in_at: new Date().toISOString() });
+    const moved = await fr.client.from('gym_date_rsvps').update({ date_id: later.id }).eq('date_id', now.id).eq('user_id', fr.id);
+    expect(moved.error).not.toBeNull();
+    const del = await host.client.from('gym_dates').delete().eq('id', now.id).select('id');
+    expect(del.error || del.data.length === 0).toBeTruthy();
   });
 });

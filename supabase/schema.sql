@@ -301,8 +301,14 @@ alter table public.workout_data
 
 -- ===== 20261024000000_friendships.sql =====
 -- Closes a hole that let anyone forge an accepted friendship, lets people decline
--- requests and unfriend, and allows only one request per pair.
+-- requests, unfriend and block, and allows only one request per pair.
 -- Safe to run more than once.
+
+-- Helpers used by policies live in a schema the REST API does not expose, so
+-- they cannot be called directly to probe other people's data.
+create schema if not exists private;
+revoke all on schema private from public, anon;
+grant usage on schema private to authenticated;
 
 -- A request sent both ways (A->B and B->A) left two rows for one friendship.
 -- Keep the accepted row, or the older one when both have the same status.
@@ -316,43 +322,112 @@ where f.id <> g.id
     (f.status = g.status and (f.created_at, f.id) > (g.created_at, g.id))
   );
 
+create unique index if not exists friend_requests_pair_key
+  on public.friend_requests (least(requester_id, target_id), greatest(requester_id, target_id));
+
 -- Only the status column may change. The update policy alone let the recipient
 -- rewrite requester_id and so "accept" a friendship with anyone.
+revoke all on public.friend_requests from anon;
 revoke update on public.friend_requests from authenticated;
 grant update (status) on public.friend_requests to authenticated;
 
-create or replace function public.friend_requests_guard()
+-- Blocking: the blocked person can no longer send requests or find the blocker.
+create table if not exists public.friend_blocks (
+  blocker_id uuid not null references public.profiles(id) on delete cascade,
+  blocked_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (blocker_id, blocked_id),
+  check (blocker_id <> blocked_id)
+);
+alter table public.friend_blocks enable row level security;
+revoke all on public.friend_blocks from anon, authenticated;
+grant select, insert, delete on public.friend_blocks to authenticated;
+
+drop policy if exists "Users see their blocks" on public.friend_blocks;
+create policy "Users see their blocks" on public.friend_blocks
+  for select to authenticated using (blocker_id = (select auth.uid()));
+drop policy if exists "Users block others" on public.friend_blocks;
+create policy "Users block others" on public.friend_blocks
+  for insert to authenticated with check (blocker_id = (select auth.uid()));
+drop policy if exists "Users unblock others" on public.friend_blocks;
+create policy "Users unblock others" on public.friend_blocks
+  for delete to authenticated using (blocker_id = (select auth.uid()));
+
+-- True when either person blocked the other (the blocked side cannot read the row).
+create or replace function private.blocked_between(a uuid, b uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.friend_blocks k
+    where (k.blocker_id = a and k.blocked_id = b) or (k.blocker_id = b and k.blocked_id = a)
+  );
+$$;
+revoke all on function private.blocked_between(uuid, uuid) from public, anon;
+grant execute on function private.blocked_between(uuid, uuid) to authenticated;
+
+-- Blocking ends any friendship or pending request between the two.
+create or replace function private.friend_blocks_after_insert()
 returns trigger
 language plpgsql
+security definer
 set search_path = ''
 as $$
 begin
-  if tg_op = 'UPDATE' and (new.requester_id <> old.requester_id or new.target_id <> old.target_id or new.created_at <> old.created_at) then
-    raise exception 'Only the request status can change' using errcode = '42501';
+  delete from public.friend_requests
+  where (requester_id = new.blocker_id and target_id = new.blocked_id)
+     or (requester_id = new.blocked_id and target_id = new.blocker_id);
+  return new;
+end;
+$$;
+revoke all on function private.friend_blocks_after_insert() from public, anon, authenticated;
+drop trigger if exists friend_blocks_after_insert on public.friend_blocks;
+create trigger friend_blocks_after_insert after insert on public.friend_blocks
+  for each row execute function private.friend_blocks_after_insert();
+
+-- New requests: server time, at most 20 a day, never to or from someone blocked.
+create or replace function private.friend_requests_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if tg_op = 'UPDATE' then
+    if new.requester_id <> old.requester_id or new.target_id <> old.target_id or new.created_at <> old.created_at then
+      raise exception 'Only the request status can change' using errcode = '42501';
+    end if;
+    return new;
   end if;
-  if tg_op = 'INSERT' and (
+  new.created_at := now();
+  if private.blocked_between(new.requester_id, new.target_id) then
+    raise exception 'This person cannot be added' using errcode = '42501';
+  end if;
+  if (
     select count(*) from public.friend_requests
-    where requester_id = new.requester_id and status = 'pending' and created_at > now() - interval '1 day'
+    where requester_id = new.requester_id and created_at > now() - interval '1 day'
   ) >= 20 then
-    raise exception 'Too many friend requests today' using errcode = '54000';
+    raise exception 'Too many friend requests today. Try again tomorrow.' using errcode = '54000';
   end if;
   return new;
 end;
 $$;
+revoke all on function private.friend_requests_guard() from public, anon, authenticated;
 drop trigger if exists friend_requests_guard on public.friend_requests;
+drop function if exists public.friend_requests_guard();
 create trigger friend_requests_guard before insert or update on public.friend_requests
-  for each row execute function public.friend_requests_guard();
-
-create unique index if not exists friend_requests_pair_key
-  on public.friend_requests (least(requester_id, target_id), greatest(requester_id, target_id));
+  for each row execute function private.friend_requests_guard();
 
 -- Either person can withdraw: cancel an outgoing request, decline an incoming one, or unfriend.
 drop policy if exists "Participants remove friend requests" on public.friend_requests;
 create policy "Participants remove friend requests" on public.friend_requests
-  for delete to authenticated using (requester_id = auth.uid() or target_id = auth.uid());
+  for delete to authenticated using (requester_id = (select auth.uid()) or target_id = (select auth.uid()));
 
 -- True when the signed-in user and `other` are accepted friends.
-create or replace function public.is_friend(other uuid)
+create or replace function private.is_friend(other uuid)
 returns boolean
 language sql
 stable
@@ -362,48 +437,92 @@ as $$
   select exists (
     select 1 from public.friend_requests f
     where f.status = 'accepted'
-      and ((f.requester_id = auth.uid() and f.target_id = other)
-        or (f.target_id = auth.uid() and f.requester_id = other))
+      and ((f.requester_id = (select auth.uid()) and f.target_id = other)
+        or (f.target_id = (select auth.uid()) and f.requester_id = other))
   );
 $$;
-revoke all on function public.is_friend(uuid) from public, anon;
-grant execute on function public.is_friend(uuid) to authenticated;
+revoke all on function private.is_friend(uuid) from public, anon;
+grant execute on function private.is_friend(uuid) to authenticated;
+drop function if exists public.is_friend(uuid);
 
 -- ===== 20261024000001_privacy.sql =====
 -- Privacy for a young user base:
---   * usernames can no longer be listed; adding a friend needs the exact name
---   * friends see a summary (latest weight, plan counts), not full histories,
---     and weight is shared only if the user turns it on
+--   * usernames can no longer be listed; adding a friend needs the exact name,
+--     and lookups are rate-limited
+--   * friends see a summary, not full histories; weight is shared only if the
+--     user turns it on, stats only if they publish them
+--   * leaderboard totals are computed from synced history, not taken on trust
+--   * a deleted weigh-in stays deleted even if an older app version re-uploads it
 --   * profiles are created on sign-up, so a taken username can't break sync
 --   * users can delete their own account and all its data
--- Requires 20261024000000_friendships.sql. Safe to run more than once.
+-- Requires 20261024000000_friendships.sql and the 2026-10-23 workout-sync
+-- migrations. Safe to run more than once.
 
 alter table public.profiles add column if not exists share_weight boolean not null default false;
 
--- Profiles: yourself, your friends, and anyone with a pending request to or from you.
+-- Profiles: yourself, and anyone you are friends with or have a pending request with.
 drop policy if exists "Authenticated users can find usernames" on public.profiles;
 drop policy if exists "Users read related profiles" on public.profiles;
 create policy "Users read related profiles" on public.profiles
   for select to authenticated using (
-    id = auth.uid() or exists (
+    id = (select auth.uid()) or exists (
       select 1 from public.friend_requests f
-      where (f.requester_id = auth.uid() and f.target_id = profiles.id)
-         or (f.target_id = auth.uid() and f.requester_id = profiles.id)
+      where (f.requester_id = (select auth.uid()) and f.target_id = profiles.id)
+         or (f.target_id = (select auth.uid()) and f.requester_id = profiles.id)
     )
   );
 
--- Exact-match lookup for "add friend". Returns nothing for unknown names.
-create or replace function public.find_profile(name text)
+-- Exact-match lookup for "add friend": 30 lookups an hour, nothing for unknown
+-- names or for people who blocked you.
+create table if not exists private.profile_lookups (
+  user_id uuid not null,
+  looked_up_at timestamptz not null default now()
+);
+create index if not exists profile_lookups_user_idx on private.profile_lookups (user_id, looked_up_at);
+
+drop function if exists public.find_profile(text);
+create function public.find_profile(name text)
 returns table (id uuid, username text)
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then
+    return;
+  end if;
+  delete from private.profile_lookups where looked_up_at < now() - interval '1 day';
+  if (select count(*) from private.profile_lookups l where l.user_id = me and l.looked_up_at > now() - interval '1 hour') >= 30 then
+    raise exception 'Too many searches. Try again in an hour.' using errcode = '54000';
+  end if;
+  insert into private.profile_lookups (user_id) values (me);
+  return query
+    select p.id, p.username from public.profiles p
+    where p.username = lower(btrim(name))
+      and not exists (select 1 from public.friend_blocks k where k.blocker_id = p.id and k.blocked_id = me);
+end;
+$$;
+revoke all on function public.find_profile(text) from public, anon;
+grant execute on function public.find_profile(text) to authenticated;
+
+-- Usernames of the people you blocked (you cannot read their profiles any more).
+create or replace function public.my_blocks()
+returns table (blocked_id uuid, username text, created_at timestamptz)
 language sql
 stable
 security definer
 set search_path = ''
 as $$
-  select p.id, p.username from public.profiles p where p.username = lower(btrim(name)) and auth.uid() is not null;
+  select k.blocked_id, p.username, k.created_at
+  from public.friend_blocks k join public.profiles p on p.id = k.blocked_id
+  where k.blocker_id = auth.uid()
+  order by k.created_at desc;
 $$;
-revoke all on function public.find_profile(text) from public, anon;
-grant execute on function public.find_profile(text) to authenticated;
+revoke all on function public.my_blocks() from public, anon;
+grant execute on function public.my_blocks() to authenticated;
 
 -- Create the profile when the account is created. A taken or invalid username
 -- gets a random one, which the user can change in Settings.
@@ -432,14 +551,100 @@ create trigger on_auth_user_created after insert on auth.users
 drop policy if exists "Owners and accepted friends read body weight" on public.body_weight_logs;
 drop policy if exists "Users read their own body weight" on public.body_weight_logs;
 create policy "Users read their own body weight" on public.body_weight_logs
-  for select to authenticated using (user_id = auth.uid());
+  for select to authenticated using (user_id = (select auth.uid()));
 drop policy if exists "Owners and accepted friends read workout plans" on public.workout_plans;
 drop policy if exists "Users read their own workout plan" on public.workout_plans;
 create policy "Users read their own workout plan" on public.workout_plans
-  for select to authenticated using (user_id = auth.uid());
+  for select to authenticated using (user_id = (select auth.uid()));
 
--- What friends see about each other. Needs the stats columns from
--- 20261023000003_complete_workout_sync.sql.
+-- Deleted weigh-ins: a later write with an older timestamp (an old app
+-- version re-uploading its copy) is ignored. A newer entry for the day wins.
+create table if not exists private.body_weight_tombstones (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  log_date date not null,
+  deleted_at timestamptz not null default now(),
+  primary key (user_id, log_date)
+);
+
+create or replace function private.body_weight_after_delete()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  -- Account deletion cascades here too; skip when the profile is gone.
+  if exists (select 1 from public.profiles where id = old.user_id) then
+    insert into private.body_weight_tombstones (user_id, log_date, deleted_at)
+    values (old.user_id, old.log_date, now())
+    on conflict (user_id, log_date) do update set deleted_at = excluded.deleted_at;
+  end if;
+  return old;
+end;
+$$;
+
+create or replace function private.body_weight_before_write()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  gone timestamptz;
+begin
+  select t.deleted_at into gone from private.body_weight_tombstones t
+  where t.user_id = new.user_id and t.log_date = new.log_date;
+  if gone is not null then
+    if coalesce(new.updated_at, now()) <= gone then
+      return null;
+    end if;
+    delete from private.body_weight_tombstones where user_id = new.user_id and log_date = new.log_date;
+  end if;
+  return new;
+end;
+$$;
+revoke all on function private.body_weight_after_delete() from public, anon, authenticated;
+revoke all on function private.body_weight_before_write() from public, anon, authenticated;
+drop trigger if exists body_weight_after_delete on public.body_weight_logs;
+create trigger body_weight_after_delete after delete on public.body_weight_logs
+  for each row execute function private.body_weight_after_delete();
+drop trigger if exists body_weight_before_write on public.body_weight_logs;
+create trigger body_weight_before_write before insert or update on public.body_weight_logs
+  for each row execute function private.body_weight_before_write();
+
+-- Totals from a synced history (sessions, seconds, kg x reps). Values that are
+-- not plain numbers count as zero.
+create or replace function private.workout_totals(logs jsonb)
+returns table (workouts integer, seconds bigint, volume bigint)
+language sql
+immutable
+set search_path = ''
+as $$
+  with sessions as (
+    select s.value as s
+    from jsonb_each(case when jsonb_typeof(logs) = 'object' then logs else '{}'::jsonb end) d
+    cross join lateral jsonb_array_elements(case when jsonb_typeof(d.value) = 'array' then d.value else '[]'::jsonb end) s
+    where jsonb_typeof(s.value) = 'object'
+  ), sets as (
+    select x.value as x
+    from sessions
+    cross join lateral jsonb_array_elements(case when jsonb_typeof(sessions.s -> 'exercises') = 'array' then sessions.s -> 'exercises' else '[]'::jsonb end) e
+    cross join lateral jsonb_array_elements(case when jsonb_typeof(e.value -> 'sets') = 'array' then e.value -> 'sets' else '[]'::jsonb end) x
+    where jsonb_typeof(x.value) = 'object'
+  )
+  select
+    (select count(*) from sessions)::integer,
+    (select coalesce(sum(case when (s ->> 'duration') ~ '^\d{1,7}(\.\d+)?$' then (s ->> 'duration')::numeric else 0 end), 0) from sessions)::bigint,
+    (select coalesce(sum(
+      (case when (x ->> 'w') ~ '^\d{1,4}(\.\d+)?$' then (x ->> 'w')::numeric else 0 end) *
+      (case when (x ->> 'r') ~ '^\d{1,4}(\.\d+)?$' then (x ->> 'r')::numeric else 0 end)), 0) from sets)::bigint;
+$$;
+revoke all on function private.workout_totals(jsonb) from public, anon, authenticated;
+
+-- What friends see about each other. Stats and plan counts only for people who
+-- published them (a leaderboard row); totals come from their synced history
+-- when there is one. Streaks are reported by the app, since they depend on the
+-- weekly plan.
 drop function if exists public.friend_summaries();
 create function public.friend_summaries()
 returns table (
@@ -459,16 +664,25 @@ as $$
     from public.friend_requests f
     where f.status = 'accepted' and (f.requester_id = auth.uid() or f.target_id = auth.uid())
   )
-  select p.id, p.username, s.workouts_count, s.volume_kg_reps, s.total_seconds, s.current_streak, s.best_streak,
+  select p.id, p.username,
+         case when s.user_id is not null then coalesce(t.workouts, s.workouts_count) end,
+         case when s.user_id is not null then coalesce(t.volume, s.volume_kg_reps) end,
+         case when s.user_id is not null then coalesce(t.seconds, s.total_seconds) end,
+         s.current_streak,
+         s.best_streak,
          case when p.share_weight or p.id = auth.uid() then w.weight_kg end,
          case when p.share_weight or p.id = auth.uid() then w.log_date end,
-         coalesce((select count(*) from jsonb_object_keys(coalesce(wp.plan -> 'workouts', '{}'::jsonb))), 0)::integer,
-         coalesce((select sum(jsonb_array_length(v)) from jsonb_each(coalesce(wp.plan -> 'workouts', '{}'::jsonb)) as e(k, v)
-                   where jsonb_typeof(v) = 'array'), 0)::integer
+         case when s.user_id is not null or p.id = auth.uid() then
+           coalesce((select count(*) from jsonb_object_keys(case when jsonb_typeof(wp.plan -> 'workouts') = 'object' then wp.plan -> 'workouts' else '{}'::jsonb end)), 0)::integer end,
+         case when s.user_id is not null or p.id = auth.uid() then
+           coalesce((select sum(jsonb_array_length(v)) from jsonb_each(case when jsonb_typeof(wp.plan -> 'workouts') = 'object' then wp.plan -> 'workouts' else '{}'::jsonb end) as e(k, v)
+                     where jsonb_typeof(v) = 'array'), 0)::integer end
   from people x
   join public.profiles p on p.id = x.id
   left join public.leaderboard_stats s on s.user_id = p.id
   left join public.workout_plans wp on wp.user_id = p.id
+  left join public.workout_data wd on wd.user_id = p.id and s.user_id is not null
+  left join lateral private.workout_totals(wd.logs) t on wd.user_id is not null
   left join lateral (
     select b.weight_kg, b.log_date from public.body_weight_logs b
     where b.user_id = p.id order by b.log_date desc limit 1
@@ -521,8 +735,12 @@ create table if not exists public.gym_dates (
   note text check (note is null or char_length(note) <= 200),
   invite_only boolean not null default false,
   cancelled_at timestamptz,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- Bumped whenever a reply or invite changes, so live updates can be sent
+  -- through this table alone (see the realtime note at the end).
+  activity_at timestamptz not null default now()
 );
+alter table public.gym_dates add column if not exists activity_at timestamptz not null default now();
 create index if not exists gym_dates_starts_at_idx on public.gym_dates (starts_at);
 create index if not exists gym_dates_host_idx on public.gym_dates (host_id);
 
@@ -546,14 +764,22 @@ create index if not exists gym_date_rsvps_user_idx on public.gym_date_rsvps (use
 alter table public.gym_dates enable row level security;
 alter table public.gym_date_invites enable row level security;
 alter table public.gym_date_rsvps enable row level security;
-grant select, insert, update, delete on public.gym_dates to authenticated;
+-- Least privilege: nothing for anon; only the verbs and columns the app needs.
+-- Hosts cancel dates rather than deleting them.
+revoke all on public.gym_dates, public.gym_date_invites, public.gym_date_rsvps from anon, authenticated;
+grant select, insert on public.gym_dates to authenticated;
+grant update (starts_at, duration_min, gym, workout, note, invite_only, cancelled_at) on public.gym_dates to authenticated;
 grant select, insert, delete on public.gym_date_invites to authenticated;
-grant select, insert, update, delete on public.gym_date_rsvps to authenticated;
+grant select, insert, delete on public.gym_date_rsvps to authenticated;
+-- date_id and user_id are listed only so upserts work; the trigger below
+-- refuses any change to them.
+grant update (date_id, user_id, status, checked_in_at) on public.gym_date_rsvps to authenticated;
 
 -- Policies on these tables reference each other, so visibility is decided by
 -- security-definer helpers that read the tables directly (no policy recursion).
--- Each helper answers only for the signed-in user.
-create or replace function public.gym_date_visible(d uuid)
+-- Each answers only for the signed-in user, and they live in the unexposed
+-- private schema so they cannot be called through the API.
+create or replace function private.gym_date_visible(d uuid)
 returns boolean
 language sql
 stable
@@ -577,7 +803,7 @@ as $$
   );
 $$;
 
-create or replace function public.gym_date_is_host(d uuid)
+create or replace function private.gym_date_is_host(d uuid)
 returns boolean
 language sql
 stable
@@ -587,76 +813,77 @@ as $$
   select exists (select 1 from public.gym_dates g where g.id = d and g.host_id = auth.uid());
 $$;
 
--- Open for replies until the session ends, unless the host cancelled it.
-create or replace function public.gym_date_open(d uuid)
+-- Visible to the caller, not cancelled and not over yet.
+create or replace function private.gym_date_open(d uuid)
 returns boolean
 language sql
 stable
 security definer
 set search_path = ''
 as $$
-  select exists (
+  select private.gym_date_visible(d) and exists (
     select 1 from public.gym_dates g
     where g.id = d and g.cancelled_at is null
       and g.starts_at + make_interval(mins => g.duration_min) > now()
   );
 $$;
 
-revoke all on function public.gym_date_visible(uuid) from public, anon;
-revoke all on function public.gym_date_is_host(uuid) from public, anon;
-revoke all on function public.gym_date_open(uuid) from public, anon;
-grant execute on function public.gym_date_visible(uuid) to authenticated;
-grant execute on function public.gym_date_is_host(uuid) to authenticated;
-grant execute on function public.gym_date_open(uuid) to authenticated;
+revoke all on function private.gym_date_visible(uuid) from public, anon;
+revoke all on function private.gym_date_is_host(uuid) from public, anon;
+revoke all on function private.gym_date_open(uuid) from public, anon;
+grant execute on function private.gym_date_visible(uuid) to authenticated;
+grant execute on function private.gym_date_is_host(uuid) to authenticated;
+grant execute on function private.gym_date_open(uuid) to authenticated;
 
 drop policy if exists "Host and invited friends read gym dates" on public.gym_dates;
 create policy "Host and invited friends read gym dates" on public.gym_dates
-  for select to authenticated using (host_id = auth.uid() or public.gym_date_visible(id));
+  for select to authenticated using (host_id = (select auth.uid()) or private.gym_date_visible(id));
 drop policy if exists "Users host their own gym dates" on public.gym_dates;
 create policy "Users host their own gym dates" on public.gym_dates
-  for insert to authenticated with check (host_id = auth.uid());
+  for insert to authenticated with check (host_id = (select auth.uid()));
 drop policy if exists "Hosts edit their gym dates" on public.gym_dates;
 create policy "Hosts edit their gym dates" on public.gym_dates
-  for update to authenticated using (host_id = auth.uid()) with check (host_id = auth.uid());
+  for update to authenticated using (host_id = (select auth.uid())) with check (host_id = (select auth.uid()));
 drop policy if exists "Hosts delete their gym dates" on public.gym_dates;
-create policy "Hosts delete their gym dates" on public.gym_dates
-  for delete to authenticated using (host_id = auth.uid());
 
 drop policy if exists "Host and invitee read invites" on public.gym_date_invites;
 create policy "Host and invitee read invites" on public.gym_date_invites
-  for select to authenticated using (user_id = auth.uid() or public.gym_date_is_host(date_id));
+  for select to authenticated using (user_id = (select auth.uid()) or private.gym_date_is_host(date_id));
 drop policy if exists "Hosts invite their friends" on public.gym_date_invites;
 create policy "Hosts invite their friends" on public.gym_date_invites
-  for insert to authenticated with check (public.gym_date_is_host(date_id) and public.is_friend(user_id));
+  for insert to authenticated with check (private.gym_date_is_host(date_id) and private.is_friend(user_id));
 drop policy if exists "Host or invitee remove invites" on public.gym_date_invites;
 create policy "Host or invitee remove invites" on public.gym_date_invites
-  for delete to authenticated using (user_id = auth.uid() or public.gym_date_is_host(date_id));
+  for delete to authenticated using (user_id = (select auth.uid()) or private.gym_date_is_host(date_id));
 
 -- You see your own reply, every reply to dates you host, and replies from your own
 -- friends. A friend-of-a-friend's reply stays hidden; it only shows up in the counts.
 drop policy if exists "Friends read replies" on public.gym_date_rsvps;
 create policy "Friends read replies" on public.gym_date_rsvps
   for select to authenticated using (
-    user_id = auth.uid()
-    or public.gym_date_is_host(date_id)
-    or (public.gym_date_visible(date_id) and public.is_friend(user_id))
+    user_id = (select auth.uid())
+    or private.gym_date_is_host(date_id)
+    or (private.gym_date_visible(date_id) and private.is_friend(user_id))
   );
 drop policy if exists "Users reply to open dates they can see" on public.gym_date_rsvps;
 create policy "Users reply to open dates they can see" on public.gym_date_rsvps
-  for insert to authenticated with check (
-    user_id = auth.uid() and public.gym_date_visible(date_id) and public.gym_date_open(date_id)
-  );
+  for insert to authenticated with check (user_id = (select auth.uid()) and private.gym_date_open(date_id));
 drop policy if exists "Users change their reply while open" on public.gym_date_rsvps;
 create policy "Users change their reply while open" on public.gym_date_rsvps
-  for update to authenticated using (user_id = auth.uid())
-  with check (user_id = auth.uid() and public.gym_date_visible(date_id) and public.gym_date_open(date_id));
+  for update to authenticated using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()) and private.gym_date_open(date_id));
 drop policy if exists "Users remove their reply" on public.gym_date_rsvps;
 create policy "Users remove their reply" on public.gym_date_rsvps
-  for delete to authenticated using (user_id = auth.uid());
+  for delete to authenticated using (user_id = (select auth.uid()));
+
+-- Earlier drafts of this migration put the helpers in public.
+drop function if exists public.gym_date_visible(uuid);
+drop function if exists public.gym_date_is_host(uuid);
+drop function if exists public.gym_date_open(uuid);
 
 -- New dates must start between 15 minutes ago and 60 days ahead; the host is
 -- always "going". Server time decides, so a wrong phone clock can't break it.
-create or replace function public.gym_dates_before_write()
+create or replace function private.gym_dates_before_write()
 returns trigger
 language plpgsql
 set search_path = ''
@@ -671,15 +898,17 @@ begin
     new.created_at := now();
     new.cancelled_at := null;
   end if;
+  new.activity_at := now();
   new.gym := btrim(new.gym);
   return new;
 end;
 $$;
+revoke all on function private.gym_dates_before_write() from public, anon, authenticated;
 drop trigger if exists gym_dates_before_write on public.gym_dates;
 create trigger gym_dates_before_write before insert or update on public.gym_dates
-  for each row execute function public.gym_dates_before_write();
+  for each row execute function private.gym_dates_before_write();
 
-create or replace function public.gym_dates_add_host()
+create or replace function private.gym_dates_add_host()
 returns trigger
 language plpgsql
 security definer
@@ -692,14 +921,14 @@ begin
   return new;
 end;
 $$;
-revoke all on function public.gym_dates_add_host() from public, anon, authenticated;
+revoke all on function private.gym_dates_add_host() from public, anon, authenticated;
 drop trigger if exists gym_dates_add_host on public.gym_dates;
 create trigger gym_dates_add_host after insert on public.gym_dates
-  for each row execute function public.gym_dates_add_host();
+  for each row execute function private.gym_dates_add_host();
 
--- Check-in uses server time and only works from 30 minutes before the start
--- until the end; saying "no" clears it.
-create or replace function public.gym_date_rsvps_before_write()
+-- Replies cannot move to another date; check-in uses server time and only works
+-- from 30 minutes before the start until the end; saying "no" clears it.
+create or replace function private.gym_date_rsvps_before_write()
 returns trigger
 language plpgsql
 security definer
@@ -708,6 +937,9 @@ as $$
 declare
   g public.gym_dates;
 begin
+  if tg_op = 'UPDATE' and (new.date_id <> old.date_id or new.user_id <> old.user_id) then
+    raise exception 'A reply belongs to one date' using errcode = '42501';
+  end if;
   new.updated_at := now();
   if new.status = 'no' then
     new.checked_in_at := null;
@@ -725,10 +957,36 @@ begin
   return new;
 end;
 $$;
-revoke all on function public.gym_date_rsvps_before_write() from public, anon, authenticated;
+revoke all on function private.gym_date_rsvps_before_write() from public, anon, authenticated;
 drop trigger if exists gym_date_rsvps_before_write on public.gym_date_rsvps;
 create trigger gym_date_rsvps_before_write before insert or update on public.gym_date_rsvps
-  for each row execute function public.gym_date_rsvps_before_write();
+  for each row execute function private.gym_date_rsvps_before_write();
+
+-- Any reply or invite change touches its date, which is what live updates watch.
+create or replace function private.gym_date_touch()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.gym_dates set activity_at = now()
+  where id = case when tg_op = 'DELETE' then old.date_id else new.date_id end;
+  return null;
+end;
+$$;
+revoke all on function private.gym_date_touch() from public, anon, authenticated;
+drop trigger if exists gym_date_rsvps_touch on public.gym_date_rsvps;
+create trigger gym_date_rsvps_touch after insert or update or delete on public.gym_date_rsvps
+  for each row execute function private.gym_date_touch();
+drop trigger if exists gym_date_invites_touch on public.gym_date_invites;
+create trigger gym_date_invites_touch after insert or update or delete on public.gym_date_invites
+  for each row execute function private.gym_date_touch();
+
+-- Earlier drafts kept the trigger functions in public.
+drop function if exists public.gym_dates_before_write();
+drop function if exists public.gym_dates_add_host();
+drop function if exists public.gym_date_rsvps_before_write();
 
 -- Reply counts for dates the caller can see, including friends-of-friends they
 -- cannot read individually.
@@ -744,25 +1002,36 @@ as $$
          count(*) filter (where r.status = 'maybe')::integer,
          count(*) filter (where r.checked_in_at is not null)::integer
   from public.gym_date_rsvps r
-  where r.date_id = any (ids) and public.gym_date_visible(r.date_id)
+  where r.date_id = any (ids) and private.gym_date_visible(r.date_id)
   group by r.date_id;
 $$;
 revoke all on function public.gym_date_counts(uuid[]) from public, anon;
 grant execute on function public.gym_date_counts(uuid[]) to authenticated;
 
--- Live updates in the app. Realtime still applies the policies above.
+-- Live updates. Realtime filters inserts and updates by these policies, but it
+-- sends every DELETE to every subscriber with the row's primary key. So only
+-- gym_dates is published: its key is a random id, rows are never deleted by
+-- the app (dates are cancelled), and reply/invite changes arrive as updates of
+-- activity_at. The reply and invite tables must stay unpublished, because their
+-- keys reveal who replied to which date.
 do $$
 declare t text;
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    foreach t in array array['gym_dates', 'gym_date_rsvps', 'gym_date_invites'] loop
-      if not exists (
+    foreach t in array array['gym_date_rsvps', 'gym_date_invites'] loop
+      if exists (
         select 1 from pg_publication_tables
         where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
       ) then
-        execute format('alter publication supabase_realtime add table public.%I', t);
+        execute format('alter publication supabase_realtime drop table public.%I', t);
       end if;
     end loop;
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'gym_dates'
+    ) then
+      alter publication supabase_realtime add table public.gym_dates;
+    end if;
   end if;
 end;
 $$;
