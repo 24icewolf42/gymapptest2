@@ -66,10 +66,13 @@ drop policy if exists "Users read their own workout plan" on public.workout_plan
 create policy "Users read their own workout plan" on public.workout_plans
   for select to authenticated using (user_id = auth.uid());
 
--- What friends see about each other.
-create or replace function public.friend_summaries()
+-- What friends see about each other. Needs the stats columns from
+-- 20261023000003_complete_workout_sync.sql.
+drop function if exists public.friend_summaries();
+create function public.friend_summaries()
 returns table (
   user_id uuid, username text, workouts_count integer, volume_kg_reps bigint,
+  total_seconds bigint, current_streak integer, best_streak integer,
   weight_kg numeric, weight_date date, routines integer, exercises integer
 )
 language sql
@@ -84,7 +87,7 @@ as $$
     from public.friend_requests f
     where f.status = 'accepted' and (f.requester_id = auth.uid() or f.target_id = auth.uid())
   )
-  select p.id, p.username, s.workouts_count, s.volume_kg_reps,
+  select p.id, p.username, s.workouts_count, s.volume_kg_reps, s.total_seconds, s.current_streak, s.best_streak,
          case when p.share_weight or p.id = auth.uid() then w.weight_kg end,
          case when p.share_weight or p.id = auth.uid() then w.log_date end,
          coalesce((select count(*) from jsonb_object_keys(coalesce(wp.plan -> 'workouts', '{}'::jsonb))), 0)::integer,
