@@ -523,7 +523,7 @@
 
 <script>
 // ---------- APP VERSION / AUTO UPDATE ----------
-const APP_VERSION = "2.1.0";
+const APP_VERSION = "2.2.0";
 document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
 
 function checkForUpdate() {
@@ -1349,344 +1349,50 @@ window.addEventListener('load', () => {
   }, 400);
 });
 </script>
-  <!-- ===== v1.5 update: clean workout screen, autosave, smart rest timer ===== -->
+<!-- ===== Tracker add-ons (v1.5 to v2.1 merged into one block) ===== -->
 <style>
-  .exercise-target, .exercise-note, #saveTemplateBtn { display: none !important; }
-  #restBar { display: none; align-items: center; gap: 12px; padding: 10px 14px; background: var(--surface-2); border-top: 1px solid var(--border-light); }
-  #restBar.on { display: flex; }
-  #restBar.ready { border-top-color: var(--accent); }
-  .rb-main { flex: 1; min-width: 0; }
-  .rb-ex { font-weight: 800; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .rb-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-  .rb-time { font-family: var(--display); font-weight: 800; font-size: 28px; font-variant-numeric: tabular-nums; color: var(--text); }
-  #restBar.ready .rb-time { color: var(--accent); }
-  #rbSkip { background: transparent; border: 1px solid var(--border-light); color: var(--text-muted); border-radius: 10px; padding: 8px 12px; font-size: 12px; font-weight: 600; }
-  .ex-saved { align-self: center; font-size: 11px; font-weight: 600; color: var(--text-muted); opacity: 0; transition: opacity 0.2s ease; }
-  .ex-saved.show { opacity: 1; }
-</style>
-<script>
-(function () {
-  var REST = {
-    "Smith Machine Incline Bench Press": 180, "Chest Press Machine": 150, "Shoulder Press Machine": 150,
-    "Single-Arm Cable Lateral Raises": 90, "Single-Arm Tricep Pushdowns": 90, "Abdominal Crunch Machine": 90,
-    "T-Bar Row": 180, "Assisted Pull-Ups": 180, "Seated Cable Row": 150, "Reverse Chest Fly Machine": 90,
-    "Preacher Curls": 90, "Reverse Cable Bicep Curls": 60, "Meow Curls": 60,
-    "Leg Press": 180, "Seated Leg Curl": 120, "Leg Extensions": 120,
-    "Hip Abduction Machine": 75, "Hip Adduction Machine": 75, "Standing Calf Raises": 60
-  };
-  Object.keys(WORKOUTS).forEach(function (d) {
-    WORKOUTS[d].forEach(function (e) { if (REST[e.name]) e.rest = REST[e.name]; });
-  });
-
-  var SWITCH_GAP = 30;
-  var GROUP = { forearms: 'biceps' };
-  function grp(c) { return GROUP[c] || c; }
-
-  var doneAt = {}, anyAt = 0, sel = null, wasWaiting = false, timer = null;
-
-  var tb = document.getElementById('saveTemplateBtn');
-  if (tb) tb.remove();
-
-  var bar = document.createElement('div');
-  bar.id = 'restBar';
-  bar.innerHTML = '<div class="rb-main"><div class="rb-ex" id="rbEx"></div><div class="rb-sub" id="rbSub"></div></div><div class="rb-time" id="rbTime"></div><button id="rbSkip">Skip</button>';
-  document.getElementById('sessionModal').insertBefore(bar, document.getElementById('saveBar'));
-
-  function meta(name) {
-    var l = WORKOUTS[currentSessionDay] || [];
-    for (var i = 0; i < l.length; i++) if (l[i].name === name) return l[i];
-    return null;
-  }
-  function fmt(s) { return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
-  function calc(ex) {
-    var now = Date.now(), g = doneAt[grp(ex.cat)];
-    var same = g ? Math.max(0, ex.rest - (now - g) / 1000) : 0;
-    var sw = anyAt ? Math.max(0, SWITCH_GAP - (now - anyAt) / 1000) : 0;
-    return { same: same, sw: sw, rem: Math.ceil(Math.max(same, sw)) };
-  }
-  function renderBar() {
-    var ex = sel && meta(sel);
-    var open = document.getElementById('sessionModal').style.display !== 'none';
-    if (!ex || !open) { bar.classList.remove('on'); return; }
-    var c = calc(ex), ready = c.rem <= 0;
-    bar.classList.add('on');
-    bar.classList.toggle('ready', ready);
-    document.getElementById('rbEx').textContent = ex.name;
-    document.getElementById('rbTime').textContent = ready ? 'GO' : fmt(c.rem);
-    document.getElementById('rbSub').textContent = ready ? 'Rested, you are good to go'
-      : (c.same >= c.sw ? 'Same muscle, full ' + fmt(ex.rest) + ' rest' : 'Different muscle, short break');
-    if (wasWaiting && ready && navigator.vibrate) { try { navigator.vibrate([200, 100, 200]); } catch (e) {} }
-    wasWaiting = !ready;
-  }
-
-  function pick(card) {
-    if (!card) return;
-    var n = card.dataset.exName, ex = meta(n);
-    if (!ex) return;
-    if (n !== sel) { sel = n; wasWaiting = calc(ex).rem > 0; }
-    renderBar();
-  }
-
-  function flash(card) {
-    var t = card.querySelector('.ex-saved');
-    if (!t) {
-      t = document.createElement('span');
-      t.className = 'ex-saved';
-      t.textContent = 'Saved ✓';
-      card.querySelector('.exercise-head').insertBefore(t, card.querySelector('.ex-count'));
-    }
-    t.classList.add('show');
-    clearTimeout(t._t);
-    t._t = setTimeout(function () { t.classList.remove('show'); }, 1200);
-  }
-  function autosave(card) {
-    if (!currentSessionDay) return;
-    var all = collectSets(card).map(function (s) { return { w: s.w, r: s.r }; });
-    while (all.length && all[all.length - 1].w === '' && all[all.length - 1].r === '') all.pop();
-    var key = currentSessionDay + '||' + card.dataset.exName;
-    if (all.length) lastUsed[key] = { sets: all }; else delete lastUsed[key];
-    saveLastUsed(lastUsed);
-    flash(card);
-  }
-
-  var box = document.getElementById('sessionExercises');
-  box.addEventListener('focusin', function (e) { pick(e.target.closest('.exercise-card')); });
-  box.addEventListener('click', function (e) {
-    var card = e.target.closest('.exercise-card');
-    pick(card);
-    if (card && (e.target.closest('.add-set') || e.target.closest('.remove-set'))) autosave(card);
-  });
-  box.addEventListener('input', function (e) {
-    var card = e.target.closest('.exercise-card');
-    if (card) autosave(card);
-  });
-  box.addEventListener('change', function (e) {
-    var card = e.target.closest('.exercise-card');
-    if (!card) return;
-    if (e.target.classList.contains('d-input') && e.target.checked) {
-      var ex = meta(card.dataset.exName);
-      if (ex) {
-        doneAt[grp(ex.cat)] = Date.now();
-        anyAt = Date.now();
-        sel = ex.name;
-        wasWaiting = true;
-        renderBar();
-      }
-    }
-    autosave(card);
-  });
-
-  document.getElementById('rbSkip').onclick = function () {
-    var ex = sel && meta(sel);
-    if (!ex) return;
-    doneAt[grp(ex.cat)] = 0;
-    anyAt = 0;
-    renderBar();
-  };
-
-  var _start = startSession;
-  startSession = function (d, ds) {
-    doneAt = {}; anyAt = 0; sel = null; wasWaiting = false;
-    _start(d, ds);
-    renderBar();
-    clearInterval(timer);
-    timer = setInterval(renderBar, 1000);
-  };
-  var _close = closeSessionModal;
-  closeSessionModal = function (p) {
-    clearInterval(timer);
-    sel = null;
-    bar.classList.remove('on');
-    _close(p);
-  };
-})();
-</script>
-</body>
-  <!-- ===== v1.6 update: start/finish, background workout, Push rename, scrolling calendar, total time ===== -->
-<style>
+  .exercise-target, .exercise-note, #saveTemplateBtn, .hero-done { display: none !important; }
   #prevMonth, #nextMonth, #page-calendar > .cal-dow { display: none; }
+
+  /* calendar */
   .cal-month { margin-bottom: 26px; }
   .cal-month-head { display: flex; justify-content: space-between; align-items: baseline; margin: 6px 2px 10px; font-family: var(--display); font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; font-size: 14px; color: var(--accent); }
   .cal-month-head span { font-family: var(--font); font-weight: 600; text-transform: none; letter-spacing: 0; font-size: 12px; color: var(--text-muted); }
   .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; text-align: center; }
+  .cal-cell.bypass { background: transparent; border: 1.5px dashed var(--accent); color: var(--accent); }
+  .cal-cell.bypass .cal-tag { color: var(--accent); }
+  #calStreak { text-align: center; font-size: 12px; font-weight: 600; color: var(--text-muted); margin: -8px 0 14px; }
+
+  /* today */
+  .hero-actions { display: flex; gap: 10px; }
+  .hero-actions button { flex: 1; }
+  .pv-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid var(--border); }
+  .pv-row b { display: block; font-size: 15px; font-weight: 800; }
+  .pv-row small { font-size: 12px; color: var(--text-muted); }
+  .pv-row span { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+  #daList { margin-top: 16px; }
+  .up-month { padding: 20px 2px 8px; font-family: var(--display); font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; font-size: 12px; color: var(--accent); border-bottom: 1px solid var(--border); }
   #activeBar { display: none; position: fixed; left: 14px; right: 14px; bottom: calc(78px + env(safe-area-inset-bottom)); z-index: 16; align-items: center; justify-content: space-between; background: var(--accent); color: #000; padding: 12px 16px; border-radius: var(--radius-md); font-weight: 800; font-size: 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); cursor: pointer; }
   #activeBar.on { display: flex; }
   #activeBar b { font-family: var(--display); font-variant-numeric: tabular-nums; font-size: 18px; }
-</style>
-<script>
-(function () {
-  var AKEY = 'gymActive';
 
-  // ---- 1. "Push + Abs" becomes "Push" (old logs and saved weights are moved over) ----
-  var OLD = 'Push + Abs', NEW = 'Push';
-  if (WORKOUTS[OLD]) { WORKOUTS[NEW] = WORKOUTS[OLD]; delete WORKOUTS[OLD]; }
-  Object.keys(SCHEDULE).forEach(function (k) { if (SCHEDULE[k] === OLD) SCHEDULE[k] = NEW; });
-  var ch = false;
-  Object.keys(logs).forEach(function (d) { logs[d].forEach(function (s) { if (s.day === OLD) { s.day = NEW; ch = true; } }); });
-  if (ch) saveLogs(logs);
-  var mv = false;
-  Object.keys(lastUsed).forEach(function (k) {
-    if (k.indexOf(OLD + '||') === 0) { lastUsed[NEW + k.slice(OLD.length)] = lastUsed[k]; delete lastUsed[k]; mv = true; }
-  });
-  if (mv) saveLastUsed(lastUsed);
-  var dr = readDraft();
-  if (dr && dr.day === OLD) { dr.day = NEW; try { localStorage.setItem(DRAFT_KEY, JSON.stringify(dr)); } catch (e) {} }
-
-  function fmtDur(sec) {
-    var h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
-    return h > 0 ? h + 'h ' + m + 'm' : m + 'm';
-  }
-
-  // ---- 2. Start / Finish with confirmation; workout keeps running in the background ----
-  function getActive() {
-    try {
-      var a = JSON.parse(localStorage.getItem(AKEY) || 'null');
-      if (a && Date.now() - a.startedAt > 12 * 3600 * 1000) { localStorage.removeItem(AKEY); return null; }
-      return a;
-    } catch (e) { return null; }
-  }
-  function setActive(a) {
-    try { if (a) localStorage.setItem(AKEY, JSON.stringify(a)); else localStorage.removeItem(AKEY); } catch (e) {}
-  }
-  var btn = document.getElementById('saveSession');
-  var origFinish = btn.onclick;
-  var started = false;
-  function paint() {
-    btn.textContent = started ? 'Finish workout' : 'Start workout';
-    document.querySelector('#sessionModal .clock-label').textContent = started ? 'In gym' : 'Not started';
-  }
-
-  var _start2 = startSession;
-  startSession = function (d, ds) {
-    _start2(d, ds);
-    var a = getActive();
-    if (a && a.day === currentSessionDay && a.date === currentSessionDate) {
-      started = true;
-      sessionStartedAt = a.startedAt;
-      tickSessionClock();
-    } else {
-      started = false;
-      stopSessionClock();
-      document.getElementById('sessionClock').textContent = '0:00';
-    }
-    paint();
-    refreshBar();
-  };
-
-  btn.onclick = function () {
-    if (!started) {
-      started = true;
-      sessionStartedAt = Date.now();
-      setActive({ day: currentSessionDay, date: currentSessionDate, startedAt: sessionStartedAt });
-      stopSessionClock();
-      tickSessionClock();
-      sessionClockId = setInterval(tickSessionClock, 1000);
-      paint();
-      showToast('Workout started');
-      return;
-    }
-    if (!confirm('Finish this workout and save it?')) return;
-    var d = currentSessionDate, before = JSON.stringify(logs[d] || null);
-    origFinish.call(btn);
-    if (JSON.stringify(logs[d] || null) !== before) { setActive(null); started = false; refreshBar(); }
-  };
-
-  // bar shown while a workout is running and you left the workout screen
-  var ab = document.createElement('div');
-  ab.id = 'activeBar';
-  ab.innerHTML = '<span>Workout running</span><b id="abTime">0:00</b>';
-  document.body.appendChild(ab);
-  ab.onclick = function () { var a = getActive(); if (a) startSession(a.day, a.date); };
-  function refreshBar() {
-    var a = getActive(), open = document.getElementById('sessionModal').style.display === 'flex';
-    if (a && !open) {
-      ab.classList.add('on');
-      document.getElementById('abTime').textContent = formatClock((Date.now() - a.startedAt) / 1000);
-    } else ab.classList.remove('on');
-  }
-  setInterval(refreshBar, 1000);
-  refreshBar();
-
-  // ---- 3. Calendar: every month in one scrolling list, newest at the bottom ----
-  var MN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  function mkCell(y, m, d) {
-    var ds = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
-    var sch = SCHEDULE[mondayIndex(new Date(y, m, d).getDay())];
-    var isL = !!(logs[ds] && logs[ds].length);
-    var c = document.createElement('div');
-    c.className = 'cal-cell' + (sch ? ' workout' : ' rest') + (isL ? ' logged' : '') + (ds === todayStr() ? ' today' : '');
-    c.innerHTML = '<span>' + d + '</span><span class="cal-tag">' + (sch ? (sch === 'Full Body' ? 'Full' : sch) : 'Rest') + '</span>';
-    c.onclick = function () { if (isL) showDayLogs(ds, sch); else if (sch) startSession(sch, ds); };
-    return c;
-  }
-  renderCalendar = function () {
-    var el = document.getElementById('calendar');
-    el.style.display = 'block';
-    el.innerHTML = '';
-    document.getElementById('calTitle').textContent = 'Calendar';
-    var keys = Object.keys(logs).filter(function (k) { return logs[k] && logs[k].length; }).sort();
-    var now = new Date(), s = keys.length ? parseDateStr(keys[0]) : now;
-    var y = s.getFullYear(), m = s.getMonth(), cur = null;
-    while (true) {
-      var days = new Date(y, m + 1, 0).getDate(), first = mondayIndex(new Date(y, m, 1).getDay());
-      var n = 0, sec = 0;
-      for (var d = 1; d <= days; d++) {
-        var ds = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
-        if (logs[ds]) logs[ds].forEach(function (x) { n++; sec += x.duration || 0; });
-      }
-      var wrap = document.createElement('div');
-      wrap.className = 'cal-month';
-      wrap.innerHTML = '<div class="cal-month-head">' + MN[m] + ' ' + y + '<span>' + (n ? n + ' workouts · ' + fmtDur(sec) : '–') + '</span></div>' +
-        '<div class="cal-dow"><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div><div>S</div></div>';
-      var grid = document.createElement('div');
-      grid.className = 'cal-grid';
-      for (var i = 0; i < first; i++) { var g = document.createElement('div'); g.className = 'cal-cell empty'; grid.appendChild(g); }
-      for (var k = 1; k <= days; k++) grid.appendChild(mkCell(y, m, k));
-      wrap.appendChild(grid);
-      el.appendChild(wrap);
-      if (y === now.getFullYear() && m === now.getMonth()) { cur = wrap; break; }
-      m++; if (m > 11) { m = 0; y++; }
-    }
-    if (cur) setTimeout(function () { cur.scrollIntoView(); }, 0);
-  };
-
-  // ---- 4. Stats: total time in the gym instead of the average ----
-  var _stats = renderStats;
-  renderStats = function () {
-    _stats();
-    var t = document.querySelectorAll('#statsSummary .stat-tile')[2];
-    if (!t) return;
-    var tot = 0;
-    Object.keys(logs).forEach(function (d) { logs[d].forEach(function (s) { tot += s.duration || 0; }); });
-    var num = t.querySelector('.stat-num');
-    num.textContent = fmtDur(tot);
-    num.style.fontSize = '22px';
-    t.querySelector('.stat-lbl').textContent = 'Total time';
-  };
-
-  renderToday();
-})();
-</script>
-  <!-- ===== v1.7 update: new look for the workout screen ===== -->
-<style>
-  /* header */
+  /* workout screen */
   .session-top { padding-bottom: 12px; background: rgba(0,0,0,0.6); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
   .session-heading .modal-title { font-size: 21px; letter-spacing: 0.1em; }
   #sessionClock { font-size: 26px; }
   .session-progress { height: 4px; background: var(--surface-3); }
   .session-progress > div { box-shadow: 0 0 14px rgba(241,238,230,0.5); }
   .session-scroll { padding: 18px 16px 28px; }
-
-  /* exercise cards */
   .exercise-card { padding: 18px 16px 14px; margin-bottom: 16px; border-radius: 20px; }
   .exercise-head { align-items: center; gap: 12px; margin-bottom: 4px; }
   .ex-cat { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
   .exercise-name { font-size: 19px; line-height: 1.2; }
   .ex-count { background: transparent; }
-
-  /* set rows */
+  .ex-saved { align-self: center; font-size: 11px; font-weight: 600; color: var(--text-muted); opacity: 0; transition: opacity 0.2s ease; }
+  .ex-saved.show { opacity: 1; }
   .sets-table { margin-top: 10px; border-collapse: separate; border-spacing: 0 6px; }
   .sets-table th { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim); padding: 0 0 2px; }
+  .sets-table th:first-child { width: 34px; }
   .sets-table td { padding: 0 3px; }
   .sets-table td:first-child { color: var(--text-dim); font-weight: 800; font-size: 15px; }
   .sets-table tr.set-done td:first-child { color: var(--accent); }
@@ -1697,69 +1403,201 @@ window.addEventListener('load', () => {
   .set-btns { margin-top: 8px; }
   .set-btns button { border: 0; background: var(--surface-2); border-radius: 12px; padding: 12px; font-size: 13px; color: var(--text-muted); }
   .set-btns button.remove { background: transparent; border: 1px solid var(--border); }
-
-  /* rest bar + bottom button */
-  #restBar { margin: 0 14px 8px; border: 1px solid var(--border-light); border-radius: 16px; padding: 10px 14px 10px 16px; }
+  #restBar { display: none; align-items: center; gap: 12px; margin: 0 14px 8px; padding: 10px 14px 10px 16px; background: var(--surface-2); border: 1px solid var(--border-light); border-radius: 16px; }
+  #restBar.on { display: flex; }
   #restBar.ready { border-color: var(--accent); }
-  .rb-time { font-size: 30px; }
+  .rb-main { flex: 1; min-width: 0; }
+  .rb-ex { font-weight: 800; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rb-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .rb-time { font-family: var(--display); font-weight: 800; font-size: 30px; font-variant-numeric: tabular-nums; }
+  #restBar.ready .rb-time { color: var(--accent); }
+  #rbSkip { background: transparent; border: 1px solid var(--border-light); color: var(--text-muted); border-radius: 10px; padding: 8px 12px; font-size: 12px; font-weight: 600; }
   .save-bar { background: rgba(0,0,0,0.7); padding-top: 10px; }
   .save-bar button { padding: 17px; border-radius: 14px; font-size: 16px; letter-spacing: 0.02em; }
-</style>
-<script>
-(function () {
-  // small muscle + rest label above each exercise name
-  var _s = startSession;
-  startSession = function (d, ds) {
-    _s(d, ds);
-    document.querySelectorAll('#sessionExercises .exercise-card').forEach(function (card) {
-      if (card.querySelector('.ex-cat')) return;
-      var ex = (WORKOUTS[currentSessionDay] || []).filter(function (e) { return e.name === card.dataset.exName; })[0];
-      if (!ex) return;
-      var lbl = (CATEGORY_META[ex.cat] || {}).label || ex.cat;
-      var t = document.createElement('div');
-      t.className = 'ex-cat';
-      t.textContent = lbl + ' · ' + Math.floor(ex.rest / 60) + ':' + String(ex.rest % 60).padStart(2, '0') + ' rest';
-      card.insertBefore(t, card.firstChild);
-    });
-  };
-})();
-</script>
-  <!-- ===== v1.8 big update: quality-of-life + safety ===== -->
-<style>
-  .wk-time { margin: -10px 0 22px; font-size: 12px; font-weight: 600; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+  /* stats */
+  .graph { margin: 2px 0 10px; }
+  .graph svg { width: 100%; height: auto; display: block; }
+  .graph .gl { stroke: var(--border); stroke-width: 1; }
+  .graph .gt { fill: var(--text-dim); font-size: 9px; font-family: var(--font); }
+  .graph .gv { fill: var(--accent); font-size: 10px; font-weight: 800; font-family: var(--font); }
+  .graph .gline { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .graph .gdot { fill: var(--accent); }
+  #bwToggle { background: none; border: 0; color: var(--text-muted); font-size: 12px; font-weight: 600; padding: 6px 0 2px; }
   #backupPanel .row { display: flex; gap: 10px; }
   #backupPanel .row button { flex: 1; }
 </style>
 <script>
 (function () {
-  function fmt(sec) {
-    var h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
-    return h > 0 ? h + 'h ' + m + 'm' : m + 'm';
-  }
-  var box = document.getElementById('sessionExercises');
-  var modal = document.getElementById('sessionModal');
+  var MN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var UNI = ['Single-Arm Cable Lateral Raises', 'Single-Arm Tricep Pushdowns', 'Reverse Chest Fly Machine']; // get left/right sets
+  var REST = {
+    "Smith Machine Incline Bench Press": 180, "Chest Press Machine": 150, "Shoulder Press Machine": 150,
+    "Single-Arm Cable Lateral Raises": 90, "Single-Arm Tricep Pushdowns": 90, "Abdominal Crunch Machine": 90,
+    "T-Bar Row": 180, "Assisted Pull-Ups": 180, "Seated Cable Row": 150, "Reverse Chest Fly Machine": 90,
+    "Preacher Curls": 90, "Reverse Cable Bicep Curls": 60, "Meow Curls": 60,
+    "Leg Press": 180, "Seated Leg Curl": 120, "Leg Extensions": 120,
+    "Hip Abduction Machine": 75, "Hip Adduction Machine": 75, "Standing Calf Raises": 60
+  };
+  var SWITCH_GAP = 30, GROUP = { forearms: 'biceps' };
+  var KEYS = ['gymLogs', 'gymLastUsed', 'bodyWeightLogs', 'gymBypass'];
 
-  // 1. Tap a kg/reps box and the whole number is selected, so you just type over it
-  box.addEventListener('focusin', function (e) {
-    if (e.target.matches && e.target.matches('input[type="number"]'))
-      setTimeout(function () { try { e.target.select(); } catch (x) {} }, 0);
-  });
-
-  // 2. Screen stays on while a workout is open
-  var wl = null;
-  function lock() {
+  function $(id) { return document.getElementById(id); }
+  function grp(c) { return GROUP[c] || c; }
+  function fmt(s) { return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+  function dur(sec) { var h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return h > 0 ? h + 'h ' + m + 'm' : m + 'm'; }
+  function ymd(y, m, d) { return y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0'); }
+  function getByp() { try { return JSON.parse(localStorage.getItem('gymBypass') || '{}'); } catch (e) { return {}; } }
+  function setByp(o) { try { localStorage.setItem('gymBypass', JSON.stringify(o)); } catch (e) {} }
+  function getActive() {
     try {
-      if (navigator.wakeLock && !wl) navigator.wakeLock.request('screen').then(function (s) {
-        wl = s; s.addEventListener('release', function () { wl = null; });
-      }).catch(function () {});
-    } catch (e) {}
+      var a = JSON.parse(localStorage.getItem('gymActive') || 'null');
+      if (a && Date.now() - a.startedAt > 12 * 3600 * 1000) { localStorage.removeItem('gymActive'); return null; }
+      return a;
+    } catch (e) { return null; }
   }
-  function unlock() { try { if (wl) { wl.release(); wl = null; } } catch (e) {} }
-  document.addEventListener('visibilitychange', function () {
-    if (!document.hidden && modal.style.display === 'flex') lock();
-  });
+  function setActive(a) { try { if (a) localStorage.setItem('gymActive', JSON.stringify(a)); else localStorage.removeItem('gymActive'); } catch (e) {} }
 
-  // 3. "New PR" toast when a ticked set beats your best weight for that exercise
+  // ================= data fixes =================
+  // "Push + Abs" -> "Push"
+  var OLD = 'Push + Abs', NEW = 'Push';
+  if (WORKOUTS[OLD]) { WORKOUTS[NEW] = WORKOUTS[OLD]; delete WORKOUTS[OLD]; }
+  Object.keys(SCHEDULE).forEach(function (k) { if (SCHEDULE[k] === OLD) SCHEDULE[k] = NEW; });
+  var ch = false;
+  Object.keys(logs).forEach(function (d) { logs[d].forEach(function (s) { if (s.day === OLD) { s.day = NEW; ch = true; } }); });
+  if (ch) saveLogs(logs);
+  var dr = readDraft();
+  if (dr && dr.day === OLD) { dr.day = NEW; try { localStorage.setItem(DRAFT_KEY, JSON.stringify(dr)); } catch (e) {} }
+  // rest times, left/right rows
+  Object.keys(WORKOUTS).forEach(function (d) {
+    WORKOUTS[d].forEach(function (e) {
+      if (REST[e.name]) e.rest = REST[e.name];
+      if (UNI.indexOf(e.name) >= 0) e.sets = 4;
+    });
+  });
+  var sidesFrom = localStorage.getItem('gymSidesFrom');
+  if (!sidesFrom) { sidesFrom = todayStr(); try { localStorage.setItem('gymSidesFrom', sidesFrom); } catch (e) {} }
+
+  // kg/reps are remembered per exercise, shared by every day
+  function bare(k) { var i = typeof k === 'string' ? k.indexOf('||') : -1; return i >= 0 ? k.slice(i + 2) : k; }
+  function trimmed(arr) {
+    var a = arr.map(function (x) { return { w: x.w, r: x.r }; });
+    while (a.length && a[a.length - 1].w === '' && a[a.length - 1].r === '') a.pop();
+    return a;
+  }
+  var hasOld = Object.keys(lastUsed).some(function (k) { return k.indexOf('||') >= 0; });
+  var base = {};
+  Object.keys(lastUsed).forEach(function (k) { base[bare(k)] = lastUsed[k]; });
+  if (hasOld) {
+    Object.keys(logs).sort().forEach(function (d) {
+      logs[d].forEach(function (s) {
+        (s.exercises || []).forEach(function (ex) { var a = trimmed(ex.sets || []); if (a.length) base[ex.name] = { sets: a }; });
+      });
+    });
+    var dd = readDraft();
+    if (dd && dd.ex) Object.keys(dd.ex).forEach(function (n) { var a = trimmed(dd.ex[n] || []); if (a.length) base[n] = { sets: a }; });
+  }
+  lastUsed = new Proxy(base, {
+    get: function (t, k) { return t[bare(k)]; },
+    set: function (t, k, v) { t[bare(k)] = v; return true; },
+    deleteProperty: function (t, k) { delete t[bare(k)]; return true; },
+    has: function (t, k) { return bare(k) in t; }
+  });
+  if (hasOld) saveLastUsed(lastUsed);
+
+  // ================= workout screen parts =================
+  var box = $('sessionExercises'), modal = $('sessionModal'), btn = $('saveSession');
+  if ($('saveTemplateBtn')) $('saveTemplateBtn').remove();
+
+  var bar = document.createElement('div');
+  bar.id = 'restBar';
+  bar.innerHTML = '<div class="rb-main"><div class="rb-ex" id="rbEx"></div><div class="rb-sub" id="rbSub"></div></div><div class="rb-time" id="rbTime"></div><button id="rbSkip">Skip</button>';
+  modal.insertBefore(bar, $('saveBar'));
+
+  function meta(name) {
+    var l = WORKOUTS[currentSessionDay] || [];
+    for (var i = 0; i < l.length; i++) if (l[i].name === name) return l[i];
+    return null;
+  }
+
+  // ---- smart rest timer ----
+  var doneAt = {}, anyAt = 0, sel = null, wasWaiting = false, timer = null;
+  function calc(ex) {
+    var now = Date.now(), g = doneAt[grp(ex.cat)];
+    var same = g ? Math.max(0, ex.rest - (now - g) / 1000) : 0;
+    var sw = anyAt ? Math.max(0, SWITCH_GAP - (now - anyAt) / 1000) : 0;
+    return { same: same, sw: sw, rem: Math.ceil(Math.max(same, sw)) };
+  }
+  function renderRest() {
+    var ex = sel && meta(sel);
+    if (!ex || modal.style.display === 'none') { bar.classList.remove('on'); return; }
+    var c = calc(ex), ready = c.rem <= 0;
+    bar.classList.add('on');
+    bar.classList.toggle('ready', ready);
+    $('rbEx').textContent = ex.name;
+    $('rbTime').textContent = ready ? 'GO' : fmt(c.rem);
+    $('rbSub').textContent = ready ? 'Rested, you are good to go' : (c.same >= c.sw ? 'Same muscle, full ' + fmt(ex.rest) + ' rest' : 'Different muscle, short break');
+    if (wasWaiting && ready && navigator.vibrate) { try { navigator.vibrate([200, 100, 200]); } catch (e) {} }
+    wasWaiting = !ready;
+  }
+  function pick(card) {
+    if (!card) return;
+    var n = card.dataset.exName, ex = meta(n);
+    if (!ex) return;
+    if (n !== sel) { sel = n; wasWaiting = calc(ex).rem > 0; }
+    renderRest();
+  }
+  $('rbSkip').onclick = function () {
+    var ex = sel && meta(sel);
+    if (!ex) return;
+    doneAt[grp(ex.cat)] = 0; anyAt = 0;
+    renderRest();
+  };
+
+  // beep at GO
+  var ac = null;
+  function audio() { try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); if (ac.state === 'suspended') ac.resume(); } catch (x) {} }
+  function beep() {
+    try {
+      audio();
+      var o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.value = 880; g.gain.value = 0.15;
+      o.connect(g); g.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + 0.25);
+    } catch (x) {}
+  }
+  var rbt = $('rbTime');
+  new MutationObserver(function () {
+    if (rbt.textContent === 'GO') { if (!rbt._go) { rbt._go = 1; beep(); } } else rbt._go = 0;
+  }).observe(rbt, { childList: true, characterData: true, subtree: true });
+
+  // ---- autosave per exercise ----
+  function flash(card) {
+    var t = card.querySelector('.ex-saved');
+    if (!t) {
+      t = document.createElement('span');
+      t.className = 'ex-saved'; t.textContent = 'Saved ✓';
+      card.querySelector('.exercise-head').insertBefore(t, card.querySelector('.ex-count'));
+    }
+    t.classList.add('show');
+    clearTimeout(t._t);
+    t._t = setTimeout(function () { t.classList.remove('show'); }, 1200);
+  }
+  function autosave(card) {
+    if (!currentSessionDay) return;
+    var all = trimmed(collectSets(card)), key = card.dataset.exName;
+    if (all.length) lastUsed[key] = { sets: all }; else delete lastUsed[key];
+    saveLastUsed(lastUsed);
+    flash(card);
+  }
+
+  // ---- left / right rows ----
+  function relabel(card) {
+    var rows = card.querySelectorAll('.sets-table tr');
+    for (var i = 1; i < rows.length; i++) rows[i].querySelector('td').textContent = ((i - 1) % 2 ? 'R' : 'L') + (Math.floor((i - 1) / 2) + 1);
+  }
+
+  // ---- new PR toast ----
   var prs = {};
   function best(name) {
     var b = 0;
@@ -1773,351 +1611,211 @@ window.addEventListener('load', () => {
     });
     return b;
   }
-  box.addEventListener('change', function (e) {
-    if (!e.target.classList.contains('d-input') || !e.target.checked) return;
-    var card = e.target.closest('.exercise-card'), name = card.dataset.exName;
-    var w = parseFloat(e.target.closest('tr').querySelector('.w-input').value) || 0;
-    if (!w) return;
-    if (prs[name] === undefined) prs[name] = best(name);
-    if (prs[name] > 0 && w > prs[name]) showToast('New PR · ' + name + ' · ' + w + ' kg');
-    if (w > prs[name]) prs[name] = w;
-  });
 
-  // 4. Beep when the rest timer reaches GO (plus the vibration you already have)
-  var ac = null;
-  function audio() {
+  // ---- screen stays on ----
+  var wl = null;
+  function lock() {
     try {
-      ac = ac || new (window.AudioContext || window.webkitAudioContext)();
-      if (ac.state === 'suspended') ac.resume();
-    } catch (x) {}
+      if (navigator.wakeLock && !wl) navigator.wakeLock.request('screen').then(function (s) {
+        wl = s; s.addEventListener('release', function () { wl = null; });
+      }).catch(function () {});
+    } catch (e) {}
   }
-  function beep() {
-    try {
-      audio();
-      var o = ac.createOscillator(), g = ac.createGain();
-      o.frequency.value = 880; g.gain.value = 0.15;
-      o.connect(g); g.connect(ac.destination);
-      o.start(); o.stop(ac.currentTime + 0.25);
-    } catch (x) {}
-  }
-  box.addEventListener('click', audio);
-  var rb = document.getElementById('rbTime');
-  if (rb) new MutationObserver(function () {
-    if (rb.textContent === 'GO') { if (!rb._go) { rb._go = 1; beep(); } } else rb._go = 0;
-  }).observe(rb, { childList: true, characterData: true, subtree: true });
+  function unlock() { try { if (wl) { wl.release(); wl = null; } } catch (e) {} }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && modal.style.display === 'flex') lock(); });
 
-  var _s = startSession;
-  startSession = function (d, ds) { prs = {}; _s(d, ds); lock(); };
-  var _c = closeSessionModal;
-  closeSessionModal = function (p) { unlock(); _c(p); };
-
-  // 5. Today: time spent in the gym this week
-  var _rt = renderToday;
-  renderToday = function () {
-    _rt();
-    var now = new Date(), n = 0, sec = 0;
-    var mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - mondayIndex(now.getDay()));
-    for (var i = 0; i < 7; i++) {
-      var ds = todayStr(new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + i));
-      (logs[ds] || []).forEach(function (s) { n++; sec += s.duration || 0; });
-    }
-    var el = document.getElementById('wkTime');
-    if (!el) {
-      el = document.createElement('div');
-      el.id = 'wkTime'; el.className = 'wk-time';
-      var ws = document.getElementById('weekStrip');
-      ws.parentNode.insertBefore(el, ws.nextSibling);
-    }
-    el.textContent = 'This week · ' + n + (n === 1 ? ' workout' : ' workouts') + ' · ' + fmt(sec) + ' in the gym';
-  };
-
-  // 6. Backup / restore (copy everything out, paste it back in)
-  var KEYS = ['gymLogs', 'gymLastUsed', 'bodyWeightLogs'];
-  var _rs = renderStats;
-  renderStats = function () {
-    _rs();
-    if (document.getElementById('backupPanel')) return;
-    var p = document.createElement('div');
-    p.id = 'backupPanel'; p.className = 'panel';
-    p.innerHTML = '<div class="panel-head"><div class="panel-title">Backup</div></div><div class="row"><button class="btn-secondary" id="bkCopy">Copy backup</button><button class="btn-secondary" id="bkRestore">Restore</button></div>';
-    document.getElementById('page-stats').appendChild(p);
-    document.getElementById('bkCopy').onclick = function () {
-      var o = {};
-      KEYS.forEach(function (k) { o[k] = localStorage.getItem(k); });
-      var data = JSON.stringify(o);
-      var done = function () { showToast('Backup copied. Paste it somewhere safe'); };
-      try { navigator.clipboard.writeText(data).then(done).catch(function () { prompt('Copy your backup:', data); }); }
-      catch (e) { prompt('Copy your backup:', data); }
-    };
-    document.getElementById('bkRestore').onclick = function () {
-      var txt = prompt('Paste your backup here:');
-      if (!txt) return;
-      try {
-        var o = JSON.parse(txt);
-        if (!o || typeof o !== 'object' || !('gymLogs' in o)) throw 0;
-        if (!confirm('Replace everything in the app with this backup?')) return;
-        KEYS.forEach(function (k) { if (o[k] != null) localStorage.setItem(k, o[k]); });
-        location.reload();
-      } catch (e) { showToast('That is not a valid backup'); }
-    };
-  };
-
-  renderToday();
-})();
-</script>
-  <!-- ===== v1.9 update: shared exercise memory, left/right sets, progress graphs ===== -->
-<style>
-  .sets-table th:first-child { width: 34px; }
-  .graph { margin: 2px 0 10px; }
-  .graph svg { width: 100%; height: auto; display: block; }
-  .graph .gl { stroke: var(--border); stroke-width: 1; }
-  .graph .gt { fill: var(--text-dim); font-size: 9px; font-family: var(--font); }
-  .graph .gv { fill: var(--accent); font-size: 10px; font-weight: 800; font-family: var(--font); }
-  .graph .gline { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-  .graph .gdot { fill: var(--accent); }
-</style>
-<script>
-(function () {
-  // ---- 1. kg/reps are remembered per EXERCISE (shared by every day) ----
-  function bare(k) { var i = typeof k === 'string' ? k.indexOf('||') : -1; return i >= 0 ? k.slice(i + 2) : k; }
-  var hasOld = Object.keys(lastUsed).some(function (k) { return k.indexOf('||') >= 0; });
-  var base = {};
-  Object.keys(lastUsed).forEach(function (k) { base[bare(k)] = lastUsed[k]; });
-  function trimmed(arr) {
-    var a = arr.map(function (x) { return { w: x.w, r: x.r }; });
-    while (a.length && a[a.length - 1].w === '' && a[a.length - 1].r === '') a.pop();
-    return a;
-  }
-  if (hasOld) {
-    // newest information wins: old saves, then finished workouts, then the workout you have open
-    Object.keys(logs).sort().forEach(function (d) {
-      logs[d].forEach(function (s) {
-        (s.exercises || []).forEach(function (ex) {
-          var a = trimmed(ex.sets || []);
-          if (a.length) base[ex.name] = { sets: a };
-        });
-      });
-    });
-    var dr = readDraft();
-    if (dr && dr.ex) Object.keys(dr.ex).forEach(function (n) {
-      var a = trimmed(dr.ex[n] || []);
-      if (a.length) base[n] = { sets: a };
-    });
-  }
-  lastUsed = new Proxy(base, {
-    get: function (t, k) { return t[bare(k)]; },
-    set: function (t, k, v) { t[bare(k)] = v; return true; },
-    deleteProperty: function (t, k) { delete t[bare(k)]; return true; },
-    has: function (t, k) { return bare(k) in t; }
+  // ---- events on the exercise list ----
+  box.addEventListener('focusin', function (e) {
+    if (e.target.matches && e.target.matches('input[type="number"]')) setTimeout(function () { try { e.target.select(); } catch (x) {} }, 0);
+    pick(e.target.closest('.exercise-card'));
   });
-  if (hasOld) saveLastUsed(lastUsed);
-
-  // ---- 2. Left / right sets for one-arm exercises and reverse flies ----
-  var UNI = ['Single-Arm Cable Lateral Raises', 'Single-Arm Tricep Pushdowns', 'Reverse Chest Fly Machine'];
-  Object.keys(WORKOUTS).forEach(function (d) {
-    WORKOUTS[d].forEach(function (e) { if (UNI.indexOf(e.name) >= 0) e.sets = 4; }); // 2 sets x (L + R)
-  });
-  var from = localStorage.getItem('gymSidesFrom');
-  if (!from) { from = todayStr(); try { localStorage.setItem('gymSidesFrom', from); } catch (e) {} }
-
-  function relabel(card) {
-    var rows = card.querySelectorAll('.sets-table tr');
-    for (var i = 1; i < rows.length; i++) {
-      var k = i - 1;
-      rows[i].querySelector('td').textContent = (k % 2 ? 'R' : 'L') + (Math.floor(k / 2) + 1);
-    }
-  }
-  var box = document.getElementById('sessionExercises');
   box.addEventListener('click', function (e) {
+    audio();
     var card = e.target.closest('.exercise-card');
-    if (!card || UNI.indexOf(card.dataset.exName) < 0) return;
+    if (!card) return;
+    pick(card);
     var isAdd = !!e.target.closest('.add-set'), isRem = !!e.target.closest('.remove-set');
     if (!isAdd && !isRem) return;
-    var count = card.querySelectorAll('.sets-table tr').length - 1;
-    if (count % 2) {                       // keep L and R in pairs
-      if (isAdd || count === 1) card.querySelector('.add-set').onclick();
-      else card.querySelector('.remove-set').onclick();
+    if (UNI.indexOf(card.dataset.exName) >= 0) {   // keep L and R in pairs
+      var n = card.querySelectorAll('.sets-table tr').length - 1;
+      if (n % 2) { if (isAdd || n === 1) card.querySelector('.add-set').onclick(); else card.querySelector('.remove-set').onclick(); }
+      relabel(card);
     }
-    relabel(card);
+    autosave(card);
   });
-  var _s = startSession;
+  box.addEventListener('input', function (e) { var card = e.target.closest('.exercise-card'); if (card) autosave(card); });
+  box.addEventListener('change', function (e) {
+    var card = e.target.closest('.exercise-card');
+    if (!card) return;
+    if (e.target.classList.contains('d-input') && e.target.checked) {
+      var name = card.dataset.exName, ex = meta(name);
+      if (ex) { doneAt[grp(ex.cat)] = Date.now(); anyAt = Date.now(); sel = name; wasWaiting = true; renderRest(); }
+      var w = parseFloat(e.target.closest('tr').querySelector('.w-input').value) || 0;
+      if (w) {
+        if (prs[name] === undefined) prs[name] = best(name);
+        if (prs[name] > 0 && w > prs[name]) showToast('New PR · ' + name + ' · ' + w + ' kg');
+        if (w > prs[name]) prs[name] = w;
+      }
+    }
+    autosave(card);
+  });
+
+  // ---- Start / Finish (with confirmation); the workout keeps running in the background ----
+  var origFinish = btn.onclick, started = false;
+  function paint() {
+    btn.textContent = started ? 'Finish workout' : 'Start workout';
+    document.querySelector('#sessionModal .clock-label').textContent = started ? 'In gym' : 'Not started';
+  }
+  btn.onclick = function () {
+    if (!started) {
+      started = true;
+      sessionStartedAt = Date.now();
+      setActive({ day: currentSessionDay, date: currentSessionDate, startedAt: sessionStartedAt });
+      stopSessionClock(); tickSessionClock();
+      sessionClockId = setInterval(tickSessionClock, 1000);
+      paint();
+      showToast('Workout started');
+      return;
+    }
+    if (!confirm('Finish this workout and save it?')) return;
+    var d = currentSessionDate, before = JSON.stringify(logs[d] || null);
+    origFinish.call(btn);
+    if (JSON.stringify(logs[d] || null) !== before) { setActive(null); started = false; refreshActive(); }
+  };
+
+  var ab = document.createElement('div');
+  ab.id = 'activeBar';
+  ab.innerHTML = '<span>Workout running</span><b id="abTime">0:00</b>';
+  document.body.appendChild(ab);
+  ab.onclick = function () { var a = getActive(); if (a) startSession(a.day, a.date); };
+  function refreshActive() {
+    var a = getActive();
+    if (a && modal.style.display !== 'flex') { ab.classList.add('on'); $('abTime').textContent = formatClock((Date.now() - a.startedAt) / 1000); }
+    else ab.classList.remove('on');
+  }
+  setInterval(refreshActive, 1000);
+
+  // ---- wrap opening / closing a workout ----
+  var _start = startSession;
   startSession = function (d, ds) {
-    _s(d, ds);
+    doneAt = {}; anyAt = 0; sel = null; wasWaiting = false; prs = {};
+    _start(d, ds);
+    var a = getActive();
+    if (a && a.day === currentSessionDay && a.date === currentSessionDate) { started = true; sessionStartedAt = a.startedAt; tickSessionClock(); }
+    else { started = false; stopSessionClock(); $('sessionClock').textContent = '0:00'; }
+    paint();
     document.querySelectorAll('#sessionExercises .exercise-card').forEach(function (card) {
-      if (UNI.indexOf(card.dataset.exName) >= 0) relabel(card);
+      var ex = meta(card.dataset.exName);
+      if (!ex || card.querySelector('.ex-cat')) return;
+      var t = document.createElement('div');
+      t.className = 'ex-cat';
+      t.textContent = ((CATEGORY_META[ex.cat] || {}).label || ex.cat) + ' · ' + fmt(ex.rest) + ' rest';
+      card.insertBefore(t, card.firstChild);
+      if (UNI.indexOf(ex.name) >= 0) relabel(card);
     });
+    renderRest();
+    clearInterval(timer);
+    timer = setInterval(renderRest, 1000);
+    lock();
+    refreshActive();
+  };
+  var _close = closeSessionModal;
+  closeSessionModal = function (p) {
+    clearInterval(timer);
+    sel = null;
+    bar.classList.remove('on');
+    unlock();
+    _close(p);
   };
   var _sd = showDayLogs;
   showDayLogs = function (ds, sch) {
     _sd(ds, sch);
-    if (ds < from) return;                 // older logs were not logged per side
+    if (ds < sidesFrom) return;   // older logs were not logged per side
     document.querySelectorAll('#overviewBody .log-ex').forEach(function (ex) {
       if (UNI.indexOf(ex.querySelector('.log-ex-name').textContent) < 0) return;
-      ex.querySelectorAll('.log-set').forEach(function (r, i) {
-        r.firstElementChild.textContent = (i % 2 ? 'R' : 'L') + (Math.floor(i / 2) + 1);
-      });
+      ex.querySelectorAll('.log-set').forEach(function (r, i) { r.firstElementChild.textContent = (i % 2 ? 'R' : 'L') + (Math.floor(i / 2) + 1); });
     });
   };
 
-  // ---- 3. Stats: one graph with every session instead of the history list ----
-  function points(name) {
-    var out = [];
-    Object.keys(logs).sort().forEach(function (d) {
-      logs[d].forEach(function (s) {
-        (s.exercises || []).forEach(function (ex) {
-          if (ex.name !== name) return;
-          var b = 0;
-          (ex.sets || []).forEach(function (x) { var w = parseFloat(x.w) || 0; if (w > b) b = w; });
-          if (b > 0) out.push({ t: parseDateStr(d).getTime(), w: b, d: d });
-        });
-      });
-    });
-    return out;
-  }
-  function graphSVG(p) {
-    var W = 320, H = 130, L = 34, R = 12, T = 12, B = 24;
-    var ws = p.map(function (q) { return q.w; });
-    var min = Math.min.apply(null, ws), max = Math.max.apply(null, ws);
-    if (min === max) { min -= 2; max += 2; }
-    var pad = (max - min) * 0.15; min = Math.max(0, min - pad); max += pad;
-    var t0 = p[0].t, span = (p[p.length - 1].t - t0) || 1;
-    function X(t) { return p.length === 1 ? (L + (W - L - R) / 2) : L + (t - t0) / span * (W - L - R); }
-    function Y(w) { return T + (1 - (w - min) / (max - min)) * (H - T - B); }
-    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" aria-hidden="true">';
-    for (var i = 0; i < 3; i++) {
-      var v = min + (max - min) * i / 2, y = Y(v);
-      s += '<line class="gl" x1="' + L + '" x2="' + (W - R) + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '"/>' +
-           '<text class="gt" x="' + (L - 5) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end">' + Math.round(v * 10) / 10 + '</text>';
-    }
-    s += '<polyline class="gline" points="' + p.map(function (q) { return X(q.t).toFixed(1) + ',' + Y(q.w).toFixed(1); }).join(' ') + '"/>';
-    p.forEach(function (q) { s += '<circle class="gdot" cx="' + X(q.t).toFixed(1) + '" cy="' + Y(q.w).toFixed(1) + '" r="2.6"/>'; });
-    var last = p[p.length - 1];
-    s += '<text class="gv" x="' + Math.min(X(last.t), W - R).toFixed(1) + '" y="' + (Y(last.w) - 7).toFixed(1) + '" text-anchor="end">' + last.w + ' kg</text>';
-    s += '<text class="gt" x="' + L + '" y="' + (H - 6) + '">' + fmtShort(p[0].d) + '</text>';
-    if (p.length > 1) s += '<text class="gt" x="' + (W - R) + '" y="' + (H - 6) + '" text-anchor="end">' + fmtShort(last.d) + '</text>';
-    return s + '</svg>';
-  }
-  var _rs = renderStats;
-  renderStats = function () {
-    _rs();
-    document.querySelectorAll('#statsBody .stat-card').forEach(function (card) {
-      var name = card.querySelector('.stat-card-name').textContent;
-      var p = points(name);
-      card.querySelectorAll('.stat-history-row, .spark').forEach(function (n) { n.remove(); });
-      if (!p.length) return;
-      var g = document.createElement('div');
-      g.className = 'graph';
-      g.innerHTML = graphSVG(p);
-      card.appendChild(g);
-    });
-  };
-})();
-</script>
-  <!-- ===== v2.0 update: bodyweight graph, months to scroll through, streak + bypass days ===== -->
-<style>
-  .graph { margin: 2px 0 10px; }
-  .graph svg { width: 100%; height: auto; display: block; }
-  .graph .gl { stroke: var(--border); stroke-width: 1; }
-  .graph .gt { fill: var(--text-dim); font-size: 9px; font-family: var(--font); }
-  .graph .gv { fill: var(--accent); font-size: 10px; font-weight: 800; font-family: var(--font); }
-  .graph .gline { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-  .graph .gdot { fill: var(--accent); }
-  #bwToggle { background: none; border: 0; color: var(--text-muted); font-size: 12px; font-weight: 600; padding: 6px 0 2px; }
-  .cal-cell.bypass { background: transparent; border: 1.5px dashed var(--accent); color: var(--accent); }
-  .cal-cell.bypass .cal-tag { color: var(--accent); }
-  #streakCard { display: flex; align-items: center; gap: 14px; margin: 0 0 22px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
-  .sk-num { font-family: var(--display); font-weight: 800; font-size: 34px; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; text-align: center; }
-  .sk-num small { display: block; font-family: var(--font); font-weight: 600; font-size: 11px; color: var(--text-muted); margin-top: 4px; }
-  .sk-mid { flex: 1; min-width: 0; }
-  .sk-mid b { display: block; font-size: 14px; }
-  .sk-mid small { font-size: 12px; color: var(--text-muted); }
-  #skBypass { flex-shrink: 0; background: transparent; border: 1px solid var(--border-light); color: var(--text); border-radius: 10px; padding: 10px 12px; font-size: 12px; font-weight: 600; }
-</style>
-<script>
-(function () {
-  // ---------- bypass storage + streak ----------
-  function getByp() { try { return JSON.parse(localStorage.getItem('gymBypass') || '{}'); } catch (e) { return {}; } }
-  function setByp(o) { try { localStorage.setItem('gymBypass', JSON.stringify(o)); } catch (e) {} }
-  function totalWorkouts() {
-    var n = 0;
-    Object.keys(logs).forEach(function (d) { n += (logs[d] || []).length; });
-    return n;
-  }
-  function bypassStats() {
-    var w = totalWorkouts(), earned = Math.floor(w / 4), used = Object.keys(getByp()).length;
-    return { left: Math.max(0, earned - used), toNext: 4 - (w % 4) };
-  }
+  // ================= tap a day: start it or mark it as a bypass day =================
   function streak() {
     var byp = getByp(), s = 0, now = new Date();
     for (var i = 0; i < 400; i++) {
       var dt = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-      if (!SCHEDULE[mondayIndex(dt.getDay())]) continue;      // rest days never break it
+      if (!SCHEDULE[mondayIndex(dt.getDay())]) continue;   // rest days never break it
       var ds = todayStr(dt);
       if ((logs[ds] && logs[ds].length) || byp[ds]) s++;
-      else if (i === 0) continue;                              // today is still open
+      else if (i === 0) continue;
       else break;
     }
     return s;
   }
-
-  // ---------- Today: streak card ----------
-  var _rt = renderToday;
-  renderToday = function () {
-    _rt();
-    var card = document.getElementById('streakCard');
-    if (!card) {
-      card = document.createElement('div');
-      card.id = 'streakCard';
-      var anchor = document.getElementById('wkTime') || document.getElementById('weekStrip');
-      anchor.parentNode.insertBefore(card, anchor.nextSibling);
-    }
-    var s = streak(), b = bypassStats(), today = todayStr(), byp = getByp();
-    var scheduled = !!SCHEDULE[mondayIndex(new Date().getDay())];
-    var done = !!(logs[today] && logs[today].length);
-    var btn = '';
-    if (scheduled && !done) btn = byp[today] ? '<button id="skBypass">Undo bypass</button>' : (b.left > 0 ? '<button id="skBypass">Use bypass</button>' : '');
-    card.innerHTML = '<div class="sk-num">' + s + '<small>streak</small></div>' +
-      '<div class="sk-mid"><b>' + b.left + (b.left === 1 ? ' bypass day' : ' bypass days') + '</b><small>' +
-      (byp[today] ? 'Today is bypassed' : b.toNext + (b.toNext === 1 ? ' workout' : ' workouts') + ' until the next one') + '</small></div>' + btn;
-    var el = document.getElementById('skBypass');
-    if (el) el.onclick = function () {
+  var da = document.createElement('div');
+  da.id = 'dayAct';
+  da.className = 'modal-overlay';
+  da.innerHTML = '<div class="modal-sheet sheet"><div class="modal-handle"></div>' +
+    '<div class="modal-header"><div><div id="daTitle" class="modal-title"></div><div id="daSub" class="modal-date"></div></div>' +
+    '<button id="daClose" class="btn-icon center-btn" aria-label="Close">×</button></div>' +
+    '<div class="sheet-actions"><button id="daStart" class="btn-primary"></button><button id="daByp" class="btn-secondary"></button></div><div id="daList"></div></div>';
+  document.body.appendChild(da);
+  function closeDa() { da.style.display = 'none'; }
+  da.addEventListener('click', function (e) { if (e.target === da) closeDa(); });
+  $('daClose').onclick = closeDa;
+  function openDa(ds, w, allowByp) {
+    var isB = !!getByp()[ds];
+    $('daTitle').textContent = fmtLong(ds);
+    $('daSub').textContent = w + (isB ? ' · bypass day' : '');
+    $('daList').innerHTML = (WORKOUTS[w] || []).map(function (e) {
+      var n = UNI.indexOf(e.name) >= 0 ? (e.sets / 2) + ' sets · L/R' : e.sets + ' sets';
+      return '<div class="pv-row"><div><b>' + e.name + '</b><small>' + ((CATEGORY_META[e.cat] || {}).label || e.cat) + '</small></div><span>' + n + '</span></div>';
+    }).join('');
+    $('daByp').style.display = allowByp ? '' : 'none';
+    $('daStart').textContent = 'Start ' + w;
+    $('daStart').onclick = function () { closeDa(); startSession(w, ds); };
+    $('daByp').textContent = isB ? 'Remove bypass day' : 'Mark as bypass day';
+    $('daByp').onclick = function () {
       var o = getByp();
-      if (o[today]) delete o[today];
-      else { if (!confirm('Use a bypass day for today? Your streak stays safe.')) return; o[today] = true; }
+      if (o[ds]) delete o[ds]; else o[ds] = true;
       setByp(o);
-      showToast(o[today] ? 'Bypass used. Streak is safe' : 'Bypass removed');
+      closeDa();
+      showToast(o[ds] ? 'Marked as bypass day' : 'Bypass removed');
+      if ($('page-calendar').classList.contains('active')) renderCalendar(true);
       renderToday();
     };
-  };
+    da.style.display = 'flex';
+  }
 
-  // ---------- Calendar: this month plus the next 11, one long scroll ----------
-  var MN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  function dur(sec) { var h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return h > 0 ? h + 'h ' + m + 'm' : m + 'm'; }
+  // ================= calendar: every month, 24 months ahead =================
   function mkCell(y, m, d, byp) {
-    var ds = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
-    var sch = SCHEDULE[mondayIndex(new Date(y, m, d).getDay())];
+    var ds = ymd(y, m, d), sch = SCHEDULE[mondayIndex(new Date(y, m, d).getDay())];
     var isL = !!(logs[ds] && logs[ds].length), isB = !!byp[ds] && !isL;
     var c = document.createElement('div');
     c.className = 'cal-cell' + (sch ? ' workout' : ' rest') + (isL ? ' logged' : '') + (isB ? ' bypass' : '') + (ds === todayStr() ? ' today' : '');
     c.innerHTML = '<span>' + d + '</span><span class="cal-tag">' + (isB ? 'Bypass' : sch ? (sch === 'Full Body' ? 'Full' : sch) : 'Rest') + '</span>';
-    c.onclick = function () { if (isL) showDayLogs(ds, sch); else if (sch) startSession(sch, ds); };
+    c.onclick = function () { if (isL) showDayLogs(ds, sch); else if (sch) openDa(ds, sch, true); };
     return c;
   }
-  renderCalendar = function () {
-    var el = document.getElementById('calendar'), byp = getByp();
+  renderCalendar = function (keep) {
+    var el = $('calendar'), byp = getByp(), y0 = window.pageYOffset;
     el.style.display = 'block';
     el.innerHTML = '';
-    document.getElementById('calTitle').textContent = 'Calendar';
+    $('calTitle').textContent = 'Calendar';
+    var cs = $('calStreak');
+    if (!cs) {
+      cs = document.createElement('div');
+      cs.id = 'calStreak';
+      var head = document.querySelector('#page-calendar .page-head');
+      head.parentNode.insertBefore(cs, head.nextSibling);
+    }
+    var st = streak();
+    cs.textContent = 'Streak · ' + st + (st === 1 ? ' training day' : ' training days');
     var keys = Object.keys(logs).filter(function (k) { return logs[k] && logs[k].length; }).sort();
     var now = new Date(), s = keys.length ? parseDateStr(keys[0]) : now;
     if (s > now) s = now;
-    var y = s.getFullYear(), m = s.getMonth(), endIdx = now.getFullYear() * 12 + now.getMonth() + 11, cur = null;
+    var y = s.getFullYear(), m = s.getMonth(), endIdx = now.getFullYear() * 12 + now.getMonth() + 24, cur = null;
     while (y * 12 + m <= endIdx) {
       var days = new Date(y, m + 1, 0).getDate(), first = mondayIndex(new Date(y, m, 1).getDay()), n = 0, sec = 0;
-      for (var d = 1; d <= days; d++) {
-        var ds = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
-        if (logs[ds]) logs[ds].forEach(function (x) { n++; sec += x.duration || 0; });
-      }
+      for (var d = 1; d <= days; d++) { var l = logs[ymd(y, m, d)]; if (l) l.forEach(function (x) { n++; sec += x.duration || 0; }); }
       var wrap = document.createElement('div');
       wrap.className = 'cal-month';
       wrap.innerHTML = '<div class="cal-month-head">' + MN[m] + ' ' + y + '<span>' + (n ? n + ' workouts · ' + dur(sec) : '–') + '</span></div>' +
@@ -2131,16 +1829,69 @@ window.addEventListener('load', () => {
       if (y === now.getFullYear() && m === now.getMonth()) cur = wrap;
       m++; if (m > 11) { m = 0; y++; }
     }
-    if (cur) setTimeout(function () { cur.scrollIntoView(); }, 0);
+    if (keep === true) window.scrollTo(0, y0);
+    else setTimeout(function () {
+      window.scrollTo(0, cur && cur !== el.firstChild ? cur.getBoundingClientRect().top + window.pageYOffset - 24 : 0);
+    }, 0);
   };
 
-  // ---------- Stats: bodyweight graph ----------
-  function bwSVG(p) {
+  // ================= Today: finished card + long Coming up list =================
+  function doneHero() {
+    var b = $('startTodayBtn');
+    if (!b) return;
+    var dStr = todayStr(), w = SCHEDULE[mondayIndex(new Date().getDay())];
+    var sess = (logs[dStr] || []).filter(function (s) { return s.day === w; })[0];
+    if (!sess) return;
+    var exs = sess.exercises || [], sets = 0;
+    exs.forEach(function (e) { sets += (e.sets || []).length; });
+    b.closest('.hero').querySelector('.hero-meta').textContent =
+      ['Workout complete', sess.duration ? Math.max(1, Math.round(sess.duration / 60)) + ' min' : '', exs.length + ' exercises', sets + ' sets'].filter(Boolean).join(' · ');
+    var row = document.createElement('div');
+    row.className = 'hero-actions';
+    row.innerHTML = '<button id="heroView" class="btn-primary">View workout</button><button id="heroAgain" class="btn-secondary">Log again</button>';
+    b.parentNode.replaceChild(row, b);
+    $('heroView').onclick = function () { showDayLogs(dStr, w); };
+    $('heroAgain').onclick = function () { startSession(w, dStr); };
+  }
+  function addRow(list, d, byp) {
+    var idx = mondayIndex(d.getDay()), w = SCHEDULE[idx], ds = todayStr(d), row = document.createElement('div');
+    var dayHtml = '<div class="up-day"><b>' + DOW_NAMES[idx].slice(0, 3) + '</b><span>' + fmtShort(ds) + '</span></div>';
+    if (w) {
+      var logged = !!(logs[ds] && logs[ds].some(function (s) { return s.day === w; })), isB = !!byp[ds] && !logged;
+      row.className = 'up-row tappable' + (logged ? ' logged' : '');
+      row.innerHTML = dayHtml + '<div class="up-name">' + w + '<small>' + (logged ? 'Logged ✓' : isB ? 'Bypass day' : workoutSummary(w)) + '</small></div><div class="up-chev">›</div>';
+      row.onclick = function () { if (logged) showDayLogs(ds, w); else openDa(ds, w, false); };
+    } else {
+      row.className = 'up-row rest';
+      row.innerHTML = dayHtml + '<div class="up-name">Rest</div><img class="up-thumb" src="rest.png" alt="">';
+    }
+    list.appendChild(row);
+  }
+  function upcoming() {
+    var list = $('upcomingList'), byp = getByp(), today = new Date(), lastM = today.getMonth();
+    list.innerHTML = '';
+    for (var i = 1; i <= 120; i++) {
+      var d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+      if (d.getMonth() !== lastM) {
+        lastM = d.getMonth();
+        var h = document.createElement('div');
+        h.className = 'up-month';
+        h.textContent = MN[lastM] + ' ' + d.getFullYear();
+        list.appendChild(h);
+      }
+      addRow(list, d, byp);
+    }
+  }
+  var _rt = renderToday;
+  renderToday = function () { _rt(); doneHero(); upcoming(); };
+
+  // ================= Stats: graphs, total time, backup =================
+  function graphSVG(p) {
     var W = 320, H = 130, L = 34, R = 12, T = 12, B = 24;
     var ws = p.map(function (q) { return q.w; });
     var min = Math.min.apply(null, ws), max = Math.max.apply(null, ws);
-    if (min === max) { min -= 1; max += 1; }
-    var pad = (max - min) * 0.2; min -= pad; max += pad;
+    if (min === max) { min -= 2; max += 2; }
+    var pad = (max - min) * 0.2; min = Math.max(0, min - pad); max += pad;
     var t0 = p[0].t, span = (p[p.length - 1].t - t0) || 1;
     function X(t) { return p.length === 1 ? (L + (W - L - R) / 2) : L + (t - t0) / span * (W - L - R); }
     function Y(w) { return T + (1 - (w - min) / (max - min)) * (H - T - B); }
@@ -2157,201 +1908,89 @@ window.addEventListener('load', () => {
     if (p.length > 1) s += '<text class="gt" x="' + (W - R) + '" y="' + (H - 6) + '" text-anchor="end">' + fmtShort(last.d) + '</text>';
     return s + '</svg>';
   }
+  function liftPoints(name) {
+    var out = [];
+    Object.keys(logs).sort().forEach(function (d) {
+      logs[d].forEach(function (s) {
+        (s.exercises || []).forEach(function (ex) {
+          if (ex.name !== name) return;
+          var b = 0;
+          (ex.sets || []).forEach(function (x) { var w = parseFloat(x.w) || 0; if (w > b) b = w; });
+          if (b > 0) out.push({ t: parseDateStr(d).getTime(), w: b, d: d });
+        });
+      });
+    });
+    return out;
+  }
+  var _rs = renderStats;
+  renderStats = function () {
+    window.scrollTo(0, 0);
+    _rs();
+    var t = document.querySelectorAll('#statsSummary .stat-tile')[2];
+    if (t) {
+      var tot = 0;
+      Object.keys(logs).forEach(function (d) { logs[d].forEach(function (s) { tot += s.duration || 0; }); });
+      var num = t.querySelector('.stat-num');
+      num.textContent = dur(tot);
+      num.style.fontSize = '22px';
+      t.querySelector('.stat-lbl').textContent = 'Total time';
+    }
+    document.querySelectorAll('#statsBody .stat-card').forEach(function (card) {
+      var p = liftPoints(card.querySelector('.stat-card-name').textContent);
+      card.querySelectorAll('.stat-history-row, .spark').forEach(function (n) { n.remove(); });
+      if (!p.length) return;
+      var g = document.createElement('div');
+      g.className = 'graph';
+      g.innerHTML = graphSVG(p);
+      card.appendChild(g);
+    });
+    if ($('backupPanel')) return;
+    var pn = document.createElement('div');
+    pn.id = 'backupPanel'; pn.className = 'panel';
+    pn.innerHTML = '<div class="panel-head"><div class="panel-title">Backup</div></div><div class="row"><button class="btn-secondary" id="bkCopy">Copy backup</button><button class="btn-secondary" id="bkRestore">Restore</button></div>';
+    $('page-stats').appendChild(pn);
+    $('bkCopy').onclick = function () {
+      var o = {};
+      KEYS.forEach(function (k) { o[k] = localStorage.getItem(k); });
+      var data = JSON.stringify(o);
+      try { navigator.clipboard.writeText(data).then(function () { showToast('Backup copied. Paste it somewhere safe'); }).catch(function () { prompt('Copy your backup:', data); }); }
+      catch (e) { prompt('Copy your backup:', data); }
+    };
+    $('bkRestore').onclick = function () {
+      var txt = prompt('Paste your backup here:');
+      if (!txt) return;
+      try {
+        var o = JSON.parse(txt);
+        if (!o || typeof o !== 'object' || !('gymLogs' in o)) throw 0;
+        if (!confirm('Replace everything in the app with this backup?')) return;
+        KEYS.forEach(function (k) { if (o[k] != null) localStorage.setItem(k, o[k]); });
+        location.reload();
+      } catch (e) { showToast('That is not a valid backup'); }
+    };
+  };
   var _bw = renderBodyWeightList;
   renderBodyWeightList = function () {
     _bw();
-    var list = document.getElementById('bodyWeightList');
-    var g = document.getElementById('bwGraph');
+    var list = $('bodyWeightList'), g = $('bwGraph');
     if (!g) {
       g = document.createElement('div');
       g.id = 'bwGraph'; g.className = 'graph';
-      var t = document.createElement('button');
-      t.id = 'bwToggle'; t.textContent = 'Show entries';
+      var tg = document.createElement('button');
+      tg.id = 'bwToggle'; tg.textContent = 'Show entries';
       list.style.display = 'none';
-      t.onclick = function () {
+      tg.onclick = function () {
         var open = list.style.display === 'none';
         list.style.display = open ? 'block' : 'none';
-        t.textContent = open ? 'Hide entries' : 'Show entries';
+        tg.textContent = open ? 'Hide entries' : 'Show entries';
       };
       list.parentNode.insertBefore(g, list);
-      list.parentNode.insertBefore(t, list);
+      list.parentNode.insertBefore(tg, list);
     }
     var p = loadBodyWeights().slice().sort(function (a, b) { return a.date.localeCompare(b.date); })
       .map(function (e) { return { t: parseDateStr(e.date).getTime(), w: parseFloat(e.weight) || 0, d: e.date }; })
       .filter(function (e) { return e.w > 0; });
-    g.innerHTML = p.length ? bwSVG(p) : '';
+    g.innerHTML = p.length ? graphSVG(p) : '';
   };
-
-  renderToday();
-})();
-</script>
-  <!-- ===== v2.1 update: tap a day to bypass it, cleaner Today screen, scroll further into the future ===== -->
-<style>
-  /* remove the clutter from Today (this week line, streak/bypass card, logged check) */
-  #wkTime, #streakCard, .hero-done { display: none !important; }
-  .hero-actions { display: flex; gap: 10px; }
-  .hero-actions button { flex: 1; }
-  .up-month { padding: 20px 2px 8px; font-family: var(--display); font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; font-size: 12px; color: var(--accent); border-bottom: 1px solid var(--border); }
-  .cal-cell.bypass { background: transparent; border: 1.5px dashed var(--accent); color: var(--accent); }
-  .cal-cell.bypass .cal-tag { color: var(--accent); }
-  #calStreak { text-align: center; font-size: 12px; font-weight: 600; color: var(--text-muted); margin: -8px 0 14px; }
-</style>
-<script>
-(function () {
-  var MN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  function getByp() { try { return JSON.parse(localStorage.getItem('gymBypass') || '{}'); } catch (e) { return {}; } }
-  function setByp(o) { try { localStorage.setItem('gymBypass', JSON.stringify(o)); } catch (e) {} }
-  function dur(sec) { var h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return h > 0 ? h + 'h ' + m + 'm' : m + 'm'; }
-
-  // streak = training days in a row that were logged or bypassed (rest days never break it)
-  function streak() {
-    var byp = getByp(), s = 0, now = new Date();
-    for (var i = 0; i < 400; i++) {
-      var dt = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-      if (!SCHEDULE[mondayIndex(dt.getDay())]) continue;
-      var ds = todayStr(dt);
-      if ((logs[ds] && logs[ds].length) || byp[ds]) s++;
-      else if (i === 0) continue;
-      else break;
-    }
-    return s;
-  }
-
-  // ---- little sheet: tap a day -> start the workout or mark it as a bypass day ----
-  var da = document.createElement('div');
-  da.id = 'dayAct';
-  da.className = 'modal-overlay';
-  da.innerHTML = '<div class="modal-sheet sheet"><div class="modal-handle"></div>' +
-    '<div class="modal-header"><div><div id="daTitle" class="modal-title"></div><div id="daSub" class="modal-date"></div></div>' +
-    '<button id="daClose" class="btn-icon center-btn" aria-label="Close">×</button></div>' +
-    '<div class="sheet-actions"><button id="daStart" class="btn-primary"></button><button id="daByp" class="btn-secondary"></button></div></div>';
-  document.body.appendChild(da);
-  function closeDa() { da.style.display = 'none'; }
-  da.addEventListener('click', function (e) { if (e.target === da) closeDa(); });
-  document.getElementById('daClose').onclick = closeDa;
-
-  function openDa(ds, w) {
-    var isB = !!getByp()[ds];
-    document.getElementById('daTitle').textContent = fmtLong(ds);
-    document.getElementById('daSub').textContent = w + (isB ? ' · bypass day' : '');
-    var s = document.getElementById('daStart');
-    s.textContent = 'Start ' + w;
-    s.onclick = function () { closeDa(); startSession(w, ds); };
-    var b = document.getElementById('daByp');
-    b.textContent = isB ? 'Remove bypass day' : 'Mark as bypass day';
-    b.onclick = function () {
-      var o = getByp();
-      if (o[ds]) delete o[ds]; else o[ds] = true;
-      setByp(o);
-      closeDa();
-      showToast(o[ds] ? 'Marked as bypass day' : 'Bypass removed');
-      if (document.getElementById('page-calendar').classList.contains('active')) renderCalendar(true);
-      renderToday();
-    };
-    da.style.display = 'flex';
-  }
-
-  // ---- Calendar: 24 months ahead, tap a day for the sheet ----
-  function mkCell(y, m, d, byp) {
-    var ds = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
-    var sch = SCHEDULE[mondayIndex(new Date(y, m, d).getDay())];
-    var isL = !!(logs[ds] && logs[ds].length), isB = !!byp[ds] && !isL;
-    var c = document.createElement('div');
-    c.className = 'cal-cell' + (sch ? ' workout' : ' rest') + (isL ? ' logged' : '') + (isB ? ' bypass' : '') + (ds === todayStr() ? ' today' : '');
-    c.innerHTML = '<span>' + d + '</span><span class="cal-tag">' + (isB ? 'Bypass' : sch ? (sch === 'Full Body' ? 'Full' : sch) : 'Rest') + '</span>';
-    c.onclick = function () { if (isL) showDayLogs(ds, sch); else if (sch) openDa(ds, sch); };
-    return c;
-  }
-  renderCalendar = function (keep) {
-    var el = document.getElementById('calendar'), byp = getByp();
-    el.style.display = 'block';
-    el.innerHTML = '';
-    document.getElementById('calTitle').textContent = 'Calendar';
-    var cs = document.getElementById('calStreak');
-    if (!cs) {
-      cs = document.createElement('div');
-      cs.id = 'calStreak';
-      var head = document.querySelector('#page-calendar .page-head');
-      head.parentNode.insertBefore(cs, head.nextSibling);
-    }
-    var st = streak();
-    cs.textContent = 'Streak · ' + st + (st === 1 ? ' training day' : ' training days');
-    var keys = Object.keys(logs).filter(function (k) { return logs[k] && logs[k].length; }).sort();
-    var now = new Date(), s = keys.length ? parseDateStr(keys[0]) : now;
-    if (s > now) s = now;
-    var y = s.getFullYear(), m = s.getMonth(), endIdx = now.getFullYear() * 12 + now.getMonth() + 24, cur = null;
-    while (y * 12 + m <= endIdx) {
-      var days = new Date(y, m + 1, 0).getDate(), first = mondayIndex(new Date(y, m, 1).getDay()), n = 0, sec = 0;
-      for (var d = 1; d <= days; d++) {
-        var ds = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
-        if (logs[ds]) logs[ds].forEach(function (x) { n++; sec += x.duration || 0; });
-      }
-      var wrap = document.createElement('div');
-      wrap.className = 'cal-month';
-      wrap.innerHTML = '<div class="cal-month-head">' + MN[m] + ' ' + y + '<span>' + (n ? n + ' workouts · ' + dur(sec) : '–') + '</span></div>' +
-        '<div class="cal-dow"><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div><div>S</div></div>';
-      var grid = document.createElement('div');
-      grid.className = 'cal-grid';
-      for (var i = 0; i < first; i++) { var g = document.createElement('div'); g.className = 'cal-cell empty'; grid.appendChild(g); }
-      for (var k = 1; k <= days; k++) grid.appendChild(mkCell(y, m, k, byp));
-      wrap.appendChild(grid);
-      el.appendChild(wrap);
-      if (y === now.getFullYear() && m === now.getMonth()) cur = wrap;
-      m++; if (m > 11) { m = 0; y++; }
-    }
-    if (cur && keep !== true) setTimeout(function () { cur.scrollIntoView(); }, 0);
-  };
-
-  // ---- Today: nicer "workout done" card + a long Coming up list ----
-  function doneHero() {
-    var btn = document.getElementById('startTodayBtn');
-    if (!btn) return;
-    var dStr = todayStr(), w = SCHEDULE[mondayIndex(new Date().getDay())];
-    var sess = (logs[dStr] || []).filter(function (s) { return s.day === w; })[0];
-    if (!sess) return;
-    var exs = sess.exercises || [], sets = 0;
-    exs.forEach(function (e) { sets += (e.sets || []).length; });
-    var hero = btn.closest('.hero');
-    hero.querySelector('.hero-meta').textContent = ['Workout complete', sess.duration ? Math.max(1, Math.round(sess.duration / 60)) + ' min' : '', exs.length + ' exercises', sets + ' sets']
-      .filter(Boolean).join(' · ');
-    var row = document.createElement('div');
-    row.className = 'hero-actions';
-    row.innerHTML = '<button id="heroView" class="btn-primary">View workout</button><button id="heroAgain" class="btn-secondary">Log again</button>';
-    btn.parentNode.replaceChild(row, btn);
-    document.getElementById('heroView').onclick = function () { showDayLogs(dStr, w); };
-    document.getElementById('heroAgain').onclick = function () { startSession(w, dStr); };
-  }
-  function upcoming() {
-    var list = document.getElementById('upcomingList'), byp = getByp(), today = new Date(), lastM = today.getMonth();
-    list.innerHTML = '';
-    for (var i = 1; i <= 120; i++) {
-      var d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
-      if (d.getMonth() !== lastM) {
-        lastM = d.getMonth();
-        var h = document.createElement('div');
-        h.className = 'up-month';
-        h.textContent = MN[lastM] + ' ' + d.getFullYear();
-        list.appendChild(h);
-      }
-      addRow(list, d, byp);
-    }
-  }
-  function addRow(list, d, byp) {
-    var idx = mondayIndex(d.getDay()), w = SCHEDULE[idx], ds = todayStr(d), row = document.createElement('div');
-    var dayHtml = '<div class="up-day"><b>' + DOW_NAMES[idx].slice(0, 3) + '</b><span>' + fmtShort(ds) + '</span></div>';
-    if (w) {
-      var logged = !!(logs[ds] && logs[ds].some(function (s) { return s.day === w; })), isB = !!byp[ds] && !logged;
-      row.className = 'up-row tappable' + (logged ? ' logged' : '');
-      row.innerHTML = dayHtml + '<div class="up-name">' + w + '<small>' + (logged ? 'Logged ✓' : isB ? 'Bypass day' : workoutSummary(w)) + '</small></div><div class="up-chev">›</div>';
-      row.onclick = function () { if (logged) showDayLogs(ds, w); else openDa(ds, w); };
-    } else {
-      row.className = 'up-row rest';
-      row.innerHTML = dayHtml + '<div class="up-name">Rest</div>';
-    }
-    list.appendChild(row);
-  }
-  var _rt = renderToday;
-  renderToday = function () { _rt(); doneHero(); upcoming(); };
 
   renderToday();
 })();
