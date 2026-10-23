@@ -392,6 +392,28 @@
         cursor: pointer;
       }
       #updateBanner span { display: block; font-size: 12px; font-weight: 600; color: #4a4945; margin-top: 2px; }
+
+      #appInstallBanner {
+        display: none;
+        position: fixed;
+        left: 12px; right: 12px;
+        bottom: calc(78px + env(safe-area-inset-bottom));
+        z-index: 190;
+        align-items: center;
+        gap: 10px;
+        padding: 12px;
+        border: 1px solid var(--border-light);
+        border-radius: var(--radius-md);
+        background: rgba(36,35,33,0.97);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.42);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+      }
+      #appInstallBanner .install-copy { flex: 1; min-width: 0; }
+      #appInstallBanner strong { display: block; color: var(--text); font-size: 13px; line-height: 1.25; }
+      #appInstallBanner small { display: block; color: var(--text-muted); font-size: 11px; line-height: 1.35; margin-top: 3px; }
+      #appInstallBanner .install-link { flex: none; display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 12px; border-radius: 10px; background: var(--accent); color: #171614; text-decoration: none; font-size: 12px; font-weight: 800; }
+      #appInstallBanner .install-close { flex: none; width: 30px; height: 34px; border: 0; background: transparent; color: var(--text-muted); font-size: 20px; }
     
       #toast {
         position: fixed; left: 50%; bottom: calc(92px + env(safe-area-inset-bottom)); z-index: 300;
@@ -429,6 +451,11 @@
     </div>
     
     <div id="updateBanner">New version available — tap to update<span>Tracker will reload with the latest changes</span></div>
+    <aside id="appInstallBanner" aria-label="Android app available">
+      <div class="install-copy"><strong>Get the Tracker app</strong><small>Install it on your phone for the full app experience.</small></div>
+      <a class="install-link" id="appInstallLink" href="https://github.com/roguelineageaccmanager/gymapptest2/releases/download/latest/rat-tracker.apk">Install app</a>
+      <button class="install-close" id="closeAppInstall" type="button" aria-label="Dismiss app install message">×</button>
+    </aside>
     
     <div class="page active" id="page-today">
       <header class="page-head">
@@ -548,7 +575,7 @@
     
     <script>
     // ---------- APP VERSION / AUTO UPDATE ----------
-    const APP_VERSION = "2.8.2";
+    const APP_VERSION = "2.8.3";
     document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
     
     function checkForUpdate() {
@@ -575,6 +602,14 @@
     function isNativeApp() {
       return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
     }
+    const appInstallBanner = document.getElementById('appInstallBanner');
+    if (/Android/i.test(navigator.userAgent) && !isNativeApp() && !window.matchMedia('(display-mode: standalone)').matches && sessionStorage.getItem('hideAndroidAppInstallPrompt') !== '1') {
+      appInstallBanner.style.display = 'flex';
+    }
+    document.getElementById('closeAppInstall').onclick = () => {
+      appInstallBanner.style.display = 'none';
+      sessionStorage.setItem('hideAndroidAppInstallPrompt', '1');
+    };
     function isNewerVersion(a, b) {
       const x = String(a).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
       const y = String(b).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
@@ -2053,7 +2088,7 @@
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./cloud-config.js?v=2.8.2"></script>
-<script src="./cloud.js?v=2.8.2"></script>
-<script src="./plan.js?v=2.8.2"></script>
+<script src="./cloud-config.js?v=2.8.3"></script>
+<script src="./cloud.js?v=2.8.3"></script>
+<script src="./plan.js?v=2.8.3"></script>
     </html>
