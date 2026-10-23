@@ -896,7 +896,7 @@
         todayCard.innerHTML = `
           <div class="hero">
             <div class="hero-date">${fmtLong(dStr)}</div>
-            <div class="hero-title">${todaysWorkout}</div>
+            <div class="hero-title">${escAttr(todaysWorkout)}</div>
             <div class="hero-meta">${workoutSummary(todaysWorkout)}</div>
             ${alreadyDone ? '<div class="hero-done">Logged today ✓</div>' : ''}
             <button id="startTodayBtn" class="btn-primary">Start workout</button>
@@ -911,7 +911,7 @@
           <div class="hero rest">
             <div class="hero-date">${fmtLong(dStr)}</div>
             <img class="rest-pic" src="${localStorage.getItem('gymRestImage') || 'rest.png'}" alt="Rest day">
-            <div class="hero-meta">${next ? 'Next up: ' + next.name + ' on ' + next.dow : 'Rest day'}</div>
+            <div class="hero-meta">${next ? 'Next up: ' + escAttr(next.name) + ' on ' + next.dow : 'Rest day'}</div>
           </div>`;
       }
     
@@ -927,7 +927,7 @@
         if (workout) {
           const logged = !!(logs[dateStr] && logs[dateStr].some(s => s.day === workout));
           row.className = 'up-row tappable' + (logged ? ' logged' : '');
-          row.innerHTML = `${dayHtml}<div class="up-name">${workout}<small>${logged ? 'Logged ✓' : workoutSummary(workout)}</small></div><div class="up-chev">›</div>`;
+          row.innerHTML = `${dayHtml}<div class="up-name">${escAttr(workout)}<small>${logged ? 'Logged ✓' : workoutSummary(workout)}</small></div><div class="up-chev">›</div>`;
           row.onclick = () => startSession(workout, dateStr);
         } else {
           row.className = 'up-row rest';
@@ -991,7 +991,7 @@
       } catch (e) {}
     }
     
-    function escAttr(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+    function escAttr(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
     
     function setRowHTML(num, w, r, done) {
       return `<tr class="${done ? 'set-done' : ''}">
@@ -1076,11 +1076,11 @@
     
         card.innerHTML = `
           <div class="exercise-head">
-            <div class="exercise-name">${ex.name}</div>
+            <div class="exercise-name">${escAttr(ex.name)}</div>
             <div class="ex-count">0/${numSets}</div>
           </div>
-          <div class="exercise-target">Target: ${ex.target}</div>
-          ${ex.note ? `<div class="exercise-note">${ex.note}</div>` : ''}
+          <div class="exercise-target">Target: ${escAttr(ex.target)}</div>
+          ${ex.note ? `<div class="exercise-note">${escAttr(ex.note)}</div>` : ''}
           <table class="sets-table">
             <tr><th>Set</th><th>Kg</th><th>Reps</th><th>Done</th></tr>
             ${rows}
@@ -1270,12 +1270,12 @@
         const diff = (parseFloat(history[history.length - 1].w)||0) - (parseFloat(history[0].w)||0);
         const lbl = history.length > 1 ? (diff > 0 ? `▲ +${diff} kg since the first session` : diff < 0 ? `▼ ${diff} kg since the first session` : 'Same as the first session') : 'First session';
         const rows = history.slice().reverse().slice(0, 5).map(h =>
-          `<div class="stat-history-row"><span>${fmtShort(h.date)}</span><div><b>${h.w || '–'} kg</b> × ${h.r || '–'}</div></div>`).join('');
+          `<div class="stat-history-row"><span>${fmtShort(h.date)}</span><div><b>${escAttr(h.w || '–')} kg</b> × ${escAttr(h.r || '–')}</div></div>`).join('');
     
         const box = document.createElement('div');
         box.className = 'stat-card';
         box.innerHTML = `<div class="stat-card-header">
-            <div class="stat-card-main"><div class="stat-card-name">${name}</div><div class="stat-card-trend${diff > 0 ? ' up' : ''}">${lbl}</div></div>
+            <div class="stat-card-main"><div class="stat-card-name">${escAttr(name)}</div><div class="stat-card-trend${diff > 0 ? ' up' : ''}">${lbl}</div></div>
             ${sparklineSVG(history.slice(-12).map(h => h.w))}
           </div>${rows}`;
         el.appendChild(box);
@@ -1304,7 +1304,7 @@
         const isLogged = !!(logs[dStr] && logs[dStr].length > 0);
         const cell = document.createElement('div');
         cell.className = 'cal-cell' + (sch ? ' workout' : ' rest') + (isLogged ? ' logged' : '') + (dStr === today ? ' today' : '');
-        cell.innerHTML = '<span>' + d + '</span><span class="cal-tag">' + (sch ? (TAGS[sch] || sch) : 'Rest') + '</span>';
+        cell.innerHTML = '<span>' + d + '</span><span class="cal-tag">' + (sch ? escAttr(TAGS[sch] || sch) : 'Rest') + '</span>';
         cell.onclick = () => {
           if (isLogged) showDayLogs(dStr, sch);
           else if (sch) startSession(sch, dStr);
@@ -1317,11 +1317,11 @@
       document.getElementById('overviewTitle').textContent = fmtLong(dateStr);
       let html = '';
       logs[dateStr].forEach(session => {
-        html += `<div class="log-day"><span>${session.day}</span>${session.duration ? `<span class="log-time">${Math.max(1, Math.round(session.duration / 60))} min</span>` : ''}</div>`;
+        html += `<div class="log-day"><span>${escAttr(session.day)}</span>${session.duration ? `<span class="log-time">${Math.max(1, Math.round(session.duration / 60))} min</span>` : ''}</div>`;
         session.exercises.forEach(ex => {
-          html += `<div class="log-ex"><div class="log-ex-name">${ex.name}</div>`;
+          html += `<div class="log-ex"><div class="log-ex-name">${escAttr(ex.name)}</div>`;
           ex.sets.forEach((s, idx) => {
-            html += `<div class="log-set"><span>Set ${idx + 1}</span><span><b>${s.w || '–'} kg</b> × ${s.r || '–'}${s.done ? '<i>✓</i>' : ''}</span></div>`;
+            html += `<div class="log-set"><span>Set ${idx + 1}</span><span><b>${escAttr(s.w || '–')} kg</b> × ${escAttr(s.r || '–')}${s.done ? '<i>✓</i>' : ''}</span></div>`;
           });
           html += `</div>`;
         });
@@ -1961,7 +1961,7 @@
     $('daSub').textContent = w + (isB ? ' · bypass day' : '');
     $('daList').innerHTML = (WORKOUTS[w] || []).map(function (e) {
       var n = isUnilateral(e) ? (e.sets / 2) + ' sets · L/R' : e.sets + ' sets';
-      return '<div class="pv-row"><div><b>' + e.name + '</b><small>' + ((CATEGORY_META[e.cat] || {}).label || e.cat) + '</small></div><span>' + n + '</span></div>';
+      return '<div class="pv-row"><div><b>' + escAttr(e.name) + '</b><small>' + ((CATEGORY_META[e.cat] || {}).label || e.cat) + '</small></div><span>' + n + '</span></div>';
     }).join('');
     $('daByp').style.display = allowByp ? '' : 'none';
     $('daStart').textContent = 'Start ' + w;
@@ -1986,7 +1986,7 @@
     var c = document.createElement('div');
     c.className = 'cal-cell' + (sch ? ' workout' : ' rest') + (isL ? ' logged' : '') + (isB ? ' bypass' : '') + (ds === todayStr() ? ' today' : '');
     var seconds = summary ? summary.total_seconds : 0, minutes = Math.round(seconds / 60), timeText = minutes >= 60 ? Math.floor(minutes / 60) + 'h' + (minutes % 60 ? String(minutes % 60).padStart(2, '0') : '') : minutes + 'm';
-    c.innerHTML = '<span>' + d + '</span><span class="cal-tag">' + (isL ? 'Done' : isB ? 'Bypass' : sch ? (sch === 'Full Body' ? 'Full' : sch) : 'Rest') + '</span>' + (isL ? '<span class="cal-done">' + (summary.workouts > 1 ? summary.workouts + ' · ' : '') + timeText + '</span>' : '');
+    c.innerHTML = '<span>' + d + '</span><span class="cal-tag">' + (isL ? 'Done' : isB ? 'Bypass' : sch ? (sch === 'Full Body' ? 'Full' : escAttr(sch)) : 'Rest') + '</span>' + (isL ? '<span class="cal-done">' + (summary.workouts > 1 ? summary.workouts + ' · ' : '') + timeText + '</span>' : '');
     if (isL) c.title = summary.workouts + (summary.workouts === 1 ? ' workout · ' : ' workouts · ') + dur(seconds);
     c.onclick = function () { if (isL) showDayLogs(ds, sch); else if (sch) openDa(ds, sch, true); };
     return c;
@@ -2055,7 +2055,7 @@
     if (w) {
       var logged = !!(logs[ds] && logs[ds].some(function (s) { return s.day === w; })), isB = !!byp[ds] && !logged;
       row.className = 'up-row tappable' + (logged ? ' logged' : '');
-      row.innerHTML = dayHtml + '<div class="up-name">' + w + '<small>' + (logged ? 'Logged ✓' : isB ? 'Bypass day' : workoutSummary(w)) + '</small></div><div class="up-chev">›</div>';
+      row.innerHTML = dayHtml + '<div class="up-name">' + escAttr(w) + '<small>' + (logged ? 'Logged ✓' : isB ? 'Bypass day' : workoutSummary(w)) + '</small></div><div class="up-chev">›</div>';
       row.onclick = function () { startSession(w, ds); };
     } else {
       row.className = 'up-row rest';
