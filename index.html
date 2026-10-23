@@ -575,7 +575,7 @@
     
     <script>
     // ---------- APP VERSION / AUTO UPDATE ----------
-    const APP_VERSION = "2.8.3";
+    const APP_VERSION = "2.9.0";
     document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
     
     function checkForUpdate() {
@@ -655,47 +655,7 @@
     document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForApkUpdate(); });
     
     // ---------- DATA ----------
-    const WORKOUTS = {
-      "Push + Abs": [
-        { name: "Smith Machine Incline Bench Press", target: "6–10", sets: 2, rest: 120, cat: "chest", note: "Bench at a low incline, lower the bar to your upper chest, press straight up without flaring your elbows." },
-        { name: "Chest Press Machine", target: "8–12", sets: 2, rest: 120, cat: "chest", note: "Seat height so handles line up with mid-chest, press forward, control the way back." },
-        { name: "Shoulder Press Machine", target: "8–12", sets: 2, rest: 120, cat: "shoulders", note: "Back flat against the pad, press up without shrugging, stop just short of locking out." },
-        { name: "Single-Arm Cable Lateral Raises", target: "12–20", sets: 2, rest: 90, cat: "shoulders", note: "One arm at a time, slight elbow bend, lead with the elbow and stop at shoulder height." },
-        { name: "Single-Arm Tricep Pushdowns", target: "10–15", sets: 2, rest: 90, cat: "triceps", note: "Elbow pinned to your side, press down until the arm is straight, control the return." },
-        { name: "Abdominal Crunch Machine", target: "10–15", sets: 2, rest: 90, cat: "abs", note: "Curl your ribs toward your hips, exhale at the bottom, don't pull with your arms." }
-      ],
-      "Pull": [
-        { name: "T-Bar Row", target: "6–12", sets: 2, rest: 120, cat: "back", note: "Chest supported or hinged with a flat back, pull to your lower ribs, squeeze your shoulder blades." },
-        { name: "Assisted Pull-Ups", target: "6–12", sets: 2, rest: 120, cat: "back", note: "Pull your chest toward the bar, lead with the elbows, lower under control to a full stretch." },
-        { name: "Seated Cable Row", target: "8–12", sets: 2, rest: 120, cat: "back", note: "Sit tall, pull the handle to your stomach, pause briefly and don't lean back." },
-        { name: "Reverse Chest Fly Machine", target: "12–20", sets: 2, rest: 90, cat: "shoulders", note: "Light weight, lead with the elbows, open the arms wide and squeeze the rear delts." },
-        { name: "Preacher Curls", target: "8–12", sets: 2, rest: 90, cat: "biceps", note: "Upper arms flat on the pad, curl up, lower slowly to a full stretch." },
-        { name: "Reverse Cable Bicep Curls", target: "10–15", sets: 2, rest: 60, cat: "forearms", note: "Palms facing down through the whole curl, elbows pinned to your sides." },
-        { name: "Meow Curls", target: "10–15", sets: 2, rest: 60, cat: "forearms", note: "Controlled reps, full range of motion, squeeze at the top of each rep." }
-      ],
-      "Legs": [
-        { name: "Leg Press", target: "8–12", sets: 2, rest: 150, cat: "quads", note: "Feet shoulder-width, lower until your knees are around 90 degrees, press through your heels without locking out." },
-        { name: "Seated Leg Curl", target: "10–15", sets: 2, rest: 90, cat: "hamstrings", note: "Pad snug on your lower legs, curl down fully, control the return." },
-        { name: "Leg Extensions", target: "10–15", sets: 2, rest: 90, cat: "quads", note: "Extend until your legs are straight, squeeze the quads for a second, lower slowly." },
-        { name: "Hip Abduction Machine", target: "12–20", sets: 2, rest: 60, cat: "hips", note: "Push your legs apart with control, pause at the end and don't swing." },
-        { name: "Hip Adduction Machine", target: "12–20", sets: 2, rest: 60, cat: "hips", note: "Bring your legs together slowly, pause at the squeeze, control the way back." },
-        { name: "Standing Calf Raises", target: "10–15", sets: 2, rest: 60, cat: "calves", note: "Full stretch at the bottom, pause and squeeze at the top of each rep." }
-      ],
-      "Full Body": [
-        { name: "Smith Machine Incline Bench Press", target: "8–12", sets: 2, rest: 120, cat: "chest", note: "Bench at a low incline, lower the bar to your upper chest, press straight up without flaring your elbows." },
-        { name: "T-Bar Row", target: "8–12", sets: 2, rest: 120, cat: "back", note: "Chest supported or hinged with a flat back, pull to your lower ribs, squeeze your shoulder blades." },
-        { name: "Leg Press", target: "10–15", sets: 2, rest: 150, cat: "quads", note: "Feet shoulder-width, lower until your knees are around 90 degrees, press through your heels without locking out." },
-        { name: "Seated Leg Curl", target: "10–15", sets: 2, rest: 90, cat: "hamstrings", note: "Pad snug on your lower legs, curl down fully, control the return." },
-        { name: "Shoulder Press Machine", target: "8–12", sets: 2, rest: 120, cat: "shoulders", note: "Back flat against the pad, press up without shrugging, stop just short of locking out." },
-        { name: "Reverse Chest Fly Machine", target: "12–20", sets: 2, rest: 90, cat: "shoulders", note: "Light weight, lead with the elbows, open the arms wide and squeeze the rear delts." },
-        { name: "Single-Arm Cable Lateral Raises", target: "12–20", sets: 2, rest: 90, cat: "shoulders", note: "One arm at a time, slight elbow bend, lead with the elbow and stop at shoulder height." },
-        { name: "Single-Arm Tricep Pushdowns", target: "10–15", sets: 2, rest: 90, cat: "triceps", note: "Elbow pinned to your side, press down until the arm is straight, control the return." },
-        { name: "Preacher Curls", target: "10–15", sets: 2, rest: 90, cat: "biceps", note: "Upper arms flat on the pad, curl up, lower slowly to a full stretch." },
-        { name: "Meow Curls", target: "10–15", sets: 2, rest: 60, cat: "forearms", note: "Controlled reps, full range of motion, squeeze at the top of each rep." },
-        { name: "Abdominal Crunch Machine", target: "10–15", sets: 2, rest: 90, cat: "abs", note: "Curl your ribs toward your hips, exhale at the bottom, don't pull with your arms." },
-        { name: "Standing Calf Raises", target: "10–15", sets: 2, rest: 60, cat: "calves", note: "Full stretch at the bottom, pause and squeeze at the top of each rep." }
-      ]
-    };
+    const WORKOUTS = {};
     window.WORKOUTS = WORKOUTS;
     try { Object.assign(WORKOUTS, JSON.parse(localStorage.getItem('gymCustomWorkouts') || '{}')); } catch (e) {}
     
@@ -714,9 +674,25 @@
       hips:       { color: "#ffffff", label: "Hips" }
     };
     
-    const SCHEDULE = { 0: "Push + Abs", 1: null, 2: "Pull", 3: "Legs", 4: null, 5: "Full Body", 6: null };
+    const SCHEDULE = { 0: null, 1: null, 2: null, 3: null, 4: null, 5: null, 6: null };
     window.SCHEDULE = SCHEDULE;
     try { Object.assign(SCHEDULE, JSON.parse(localStorage.getItem('gymPlanSchedule') || '{}')); } catch (e) {}
+    (function removeUneditedPresets() {
+      const stock = { "Push + Abs": "08c00f89", "Push": "08c00f89", "Pull": "737bbac2", "Legs": "bb969241", "Full Body": "63145501" };
+      function fingerprint(value) { const s = JSON.stringify(value); let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(16).padStart(8, '0'); }
+      const removed = [];
+      Object.keys(WORKOUTS).forEach(name => { if (stock[name] && fingerprint(WORKOUTS[name]) === stock[name]) { delete WORKOUTS[name]; removed.push(name); } });
+      if (removed.length) {
+        localStorage.setItem('gymCustomWorkouts', JSON.stringify(WORKOUTS));
+        let deleted = []; try { deleted = JSON.parse(localStorage.getItem('gymDeletedWorkouts') || '[]'); } catch (e) {}
+        localStorage.setItem('gymDeletedWorkouts', JSON.stringify(Array.from(new Set(deleted.concat(removed)))));
+      }
+      if (localStorage.getItem('gymPlanSchedule')) {
+        let changed = false;
+        Object.keys(SCHEDULE).forEach(key => { if (SCHEDULE[key] && !WORKOUTS[SCHEDULE[key]]) { SCHEDULE[key] = null; changed = true; } });
+        if (changed) localStorage.setItem('gymPlanSchedule', JSON.stringify(SCHEDULE));
+      }
+    })();
     window.startSession = startSession;
     window.renderToday = renderToday;
     const DOW_NAMES = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
@@ -725,11 +701,31 @@
     
     // ---------- STORAGE ----------
     function loadLogs() { try { return JSON.parse(localStorage.getItem('gymLogs') || '{}'); } catch(e) { return {}; } }
-    function saveLogs(logs) { localStorage.setItem('gymLogs', JSON.stringify(logs)); }
+    function saveLogs(logs, silentCloud) { localStorage.setItem('gymLogs', JSON.stringify(logs)); if (!silentCloud) window.dispatchEvent(new Event('gym:logs-changed')); }
     let logs = loadLogs();
+    window.getWorkoutLogsForCloud = () => logs;
+    window.mergeWorkoutLogsFromCloud = remote => {
+      const merged = {};
+      Object.keys(remote || {}).forEach(date => { merged[date] = Array.isArray(remote[date]) ? remote[date].slice() : []; });
+      Object.keys(logs).forEach(date => {
+        const byDay = {};
+        (merged[date] || []).concat(logs[date] || []).forEach(session => {
+          const old = byDay[session.day], oldTime = old && Date.parse(old.time || '') || 0, newTime = Date.parse(session.time || '') || 0;
+          if (!old || newTime >= oldTime) byDay[session.day] = session;
+        });
+        merged[date] = Object.keys(byDay).map(day => byDay[day]);
+      });
+      Object.keys(logs).forEach(date => delete logs[date]);
+      Object.keys(merged).forEach(date => { logs[date] = merged[date]; });
+      saveLogs(logs, true);
+      if (window.renderToday) window.renderToday();
+      if (typeof renderStats === 'function') renderStats();
+      if (typeof renderCalendar === 'function') renderCalendar();
+      return logs;
+    };
     
     function loadLastUsed() { try { return JSON.parse(localStorage.getItem('gymLastUsed') || '{}'); } catch(e) { return {}; } }
-    function saveLastUsed(lu) { localStorage.setItem('gymLastUsed', JSON.stringify(lu)); }
+  function saveLastUsed(lu, silentCloud) { localStorage.setItem('gymLastUsed', JSON.stringify(lu)); if (!silentCloud) window.dispatchEvent(new Event('gym:progress-changed')); }
     let lastUsed = loadLastUsed();
     
     function todayStr(d = new Date()) {
@@ -932,7 +928,7 @@
     function setRowHTML(num, w, r, done) {
       return `<tr class="${done ? 'set-done' : ''}">
         <td style="font-size:14px;font-weight:bold;">${num}</td>
-        <td><input type="number" inputmode="decimal" class="w-input" value="${escAttr(w)}" placeholder="kg"></td>
+        <td><input type="number" inputmode="decimal" min="0" step="5" class="w-input" value="${escAttr(w)}" placeholder="kg" aria-label="Weight in 5 kilogram steps"></td>
         <td><input type="number" inputmode="numeric" class="r-input" value="${escAttr(r)}" placeholder="reps"></td>
         <td><label class="chk"><input type="checkbox" class="d-input" ${done ? 'checked' : ''}><span class="chk-box"></span></label></td>
       </tr>`;
@@ -967,6 +963,12 @@
           void card.offsetWidth;
           card.classList.add('card-completed-flash');
         }
+        saveDraft();
+      });
+      box.addEventListener('change', e => {
+        if (!e.target.classList.contains('w-input') || e.target.value === '') return;
+        const value = Math.max(0, Math.round((parseFloat(e.target.value) || 0) / 5) * 5);
+        e.target.value = String(value);
         saveDraft();
       });
       box.addEventListener('input', () => saveDraft());
@@ -1534,17 +1536,7 @@
   }
   function setActive(a) { try { if (a) localStorage.setItem('gymActive', JSON.stringify(a)); else localStorage.removeItem('gymActive'); } catch (e) {} }
 
-  // ================= data fixes =================
-  // "Push + Abs" -> "Push"
-  var OLD = 'Push + Abs', NEW = 'Push';
-  if (WORKOUTS[OLD]) { WORKOUTS[NEW] = WORKOUTS[OLD]; delete WORKOUTS[OLD]; }
-  Object.keys(SCHEDULE).forEach(function (k) { if (SCHEDULE[k] === OLD) SCHEDULE[k] = NEW; });
-  var ch = false;
-  Object.keys(logs).forEach(function (d) { logs[d].forEach(function (s) { if (s.day === OLD) { s.day = NEW; ch = true; } }); });
-  if (ch) saveLogs(logs);
-  var dr = readDraft();
-  if (dr && dr.day === OLD) { dr.day = NEW; try { localStorage.setItem(DRAFT_KEY, JSON.stringify(dr)); } catch (e) {} }
-  // rest times, left/right rows
+  // Keep legacy routines and history intact; only normalize exercise metadata.
   Object.keys(WORKOUTS).forEach(function (d) {
     WORKOUTS[d].forEach(function (e) {
       if (REST[e.name]) e.rest = REST[e.name];
@@ -1580,6 +1572,19 @@
     has: function (t, k) { return bare(k) in t; }
   });
   if (hasOld) saveLastUsed(lastUsed);
+  window.getWorkoutProgressForCloud = function () { return lastUsed; };
+  window.mergeWorkoutProgressFromCloud = function (remote) {
+    var base = Object.assign({}, remote || {});
+    Object.keys(lastUsed).forEach(function (k) { base[k] = lastUsed[k]; });
+    lastUsed = new Proxy(base, {
+      get: function (t, k) { return t[bare(k)]; },
+      set: function (t, k, v) { t[bare(k)] = v; return true; },
+      deleteProperty: function (t, k) { delete t[bare(k)]; return true; },
+      has: function (t, k) { return bare(k) in t; }
+    });
+    saveLastUsed(lastUsed, true);
+    return lastUsed;
+  };
 
   // ================= workout screen parts =================
   var box = $('sessionExercises'), modal = $('sessionModal'), btn = $('saveSession');
@@ -2088,7 +2093,7 @@
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./cloud-config.js?v=2.8.3"></script>
-<script src="./cloud.js?v=2.8.3"></script>
-<script src="./plan.js?v=2.8.3"></script>
+<script src="./cloud-config.js?v=2.9.0"></script>
+<script src="./cloud.js?v=2.9.0"></script>
+<script src="./plan.js?v=2.9.0"></script>
     </html>

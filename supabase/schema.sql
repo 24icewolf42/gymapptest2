@@ -47,18 +47,28 @@ create table if not exists public.body_weight_logs (
   primary key (user_id, log_date)
 );
 
+-- Private workout history and last-used exercise values synced between a user's devices.
+create table if not exists public.workout_data (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  logs jsonb not null default '{}'::jsonb check (jsonb_typeof(logs) = 'object'),
+  progress jsonb not null default '{}'::jsonb check (jsonb_typeof(progress) = 'object'),
+  updated_at timestamptz not null default now()
+);
+
 alter table public.profiles enable row level security;
 alter table public.friend_requests enable row level security;
 alter table public.shared_workouts enable row level security;
 alter table public.leaderboard_stats enable row level security;
 alter table public.workout_plans enable row level security;
 alter table public.body_weight_logs enable row level security;
+alter table public.workout_data enable row level security;
 grant select, insert, update, delete on public.profiles to authenticated;
 grant select, insert, update, delete on public.friend_requests to authenticated;
 grant select, insert, update, delete on public.shared_workouts to authenticated;
 grant select, insert, update, delete on public.leaderboard_stats to authenticated;
 grant select, insert, update, delete on public.workout_plans to authenticated;
 grant select, insert, update, delete on public.body_weight_logs to authenticated;
+grant select, insert, update, delete on public.workout_data to authenticated;
 
 create policy "Authenticated users can find usernames" on public.profiles
   for select to authenticated using (true);
@@ -135,5 +145,14 @@ create policy "Users record their own body weight" on public.body_weight_logs
 create policy "Users update their own body weight" on public.body_weight_logs
   for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 create policy "Users delete their own body weight" on public.body_weight_logs
+  for delete to authenticated using (user_id = auth.uid());
+
+create policy "Users read their own workout data" on public.workout_data
+  for select to authenticated using (user_id = auth.uid());
+create policy "Users create their own workout data" on public.workout_data
+  for insert to authenticated with check (user_id = auth.uid());
+create policy "Users update their own workout data" on public.workout_data
+  for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "Users remove their own workout data" on public.workout_data
   for delete to authenticated using (user_id = auth.uid());
 
