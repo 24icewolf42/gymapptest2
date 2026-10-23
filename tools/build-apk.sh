@@ -18,6 +18,10 @@ if [ -n "${GYM_CLOUD_URL:-}" ]; then
   echo "cloud-config.js -> $GYM_CLOUD_URL"
 fi
 
+# Plain-http backends (the local test database) need cleartext; release builds never allow it.
+CLEARTEXT=false
+case "${GYM_CLOUD_URL:-}" in http://*) CLEARTEXT=true ;; esac
+
 cd "$OUT"
 # Exact versions from a committed lockfile; install scripts are not needed.
 cp "$ROOT/tools/android/package.json" "$ROOT/tools/android/package-lock.json" .
@@ -30,7 +34,7 @@ cat > capacitor.config.json <<JSON
   "webDir": "www",
   "backgroundColor": "#0d0e10",
   "android": { "backgroundColor": "#0d0e10", "adjustMarginsForEdgeToEdge": "auto" },
-  "server": { "androidScheme": "https" }
+  "server": { "androidScheme": "https", "cleartext": $CLEARTEXT }
 }
 JSON
 

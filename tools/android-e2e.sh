@@ -29,7 +29,7 @@ if [ "${ANDROID_E2E_SKIP_EMULATOR:-0}" != "1" ]; then
     echo no | avdmanager create avd -n "$AVD" -k "system-images;android-35;google_apis;x86_64" -d pixel_7 --force
   fi
   mkdir -p .android-e2e
-  emulator -avd "$AVD" -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > .android-e2e/emulator.log 2>&1 &
+  emulator -avd "$AVD" -no-window -no-audio -no-boot-anim -no-snapshot -gpu "${ANDROID_E2E_GPU:-swangle_indirect}" > .android-e2e/emulator.log 2>&1 &
   STARTED=$!
   trap 'adb emu kill >/dev/null 2>&1 || kill $STARTED 2>/dev/null || true' EXIT
 fi

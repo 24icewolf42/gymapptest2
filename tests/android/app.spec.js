@@ -61,6 +61,9 @@ test('logs a workout offline and keeps it after the app restarts', async () => {
   await page.locator('#sessionMain').click();
   await page.locator('.sheet').getByRole('button', { name: 'Save workout' }).click();
   await expect(page.locator('.hero-card.done')).toBeVisible();
+  // The WebView writes localStorage to disk shortly after a change; give it a moment
+  // before killing the process, as a user switching apps would.
+  await page.waitForTimeout(2000);
 
   page = await launch();
   await expect(page.locator('.hero-card.done')).toBeVisible();
