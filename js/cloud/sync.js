@@ -6,7 +6,7 @@ import {
   hasLocalData, clearLocalData,
 } from '../state.js';
 import { mergePlans, planHashes, stableStringify } from '../domain/plan.js';
-import { mergeLogs, mergeProgress, mergeBypass, dailySummaries } from '../domain/logs.js';
+import { mergeLogs, mergeProgress, mergeBypass, dailySummaries, sessionKey, newSessionId } from '../domain/logs.js';
 import { mergeWeights } from '../domain/weights.js';
 import { emit, listen, writeText, read, write, remove, KEYS } from '../core/store.js';
 import { makeBackup } from '../domain/backup.js';
@@ -49,11 +49,21 @@ export function initAccount() {
   });
 }
 
+// Bumped whenever the phone's data stops belonging to the signed-in account
+// (sign-out, account deletion, another user). A sync started before then must
+// not write what it read back onto the phone.
+let generation = 0;
+function retire() {
+  generation++;
+  Object.keys(timers).forEach((k) => { clearTimeout(timers[k]?.id); timers[k] = null; });
+}
+
 let starting = null;
 async function handleAuth(event, session) {
   if (event === 'PASSWORD_RECOVERY') emit('gym:password-recovery');
   const user = session?.user || null;
   if (!user) {
+    if (account.user) retire();
     account.user = null;
     account.profile = null;
     account.ready = false;
@@ -65,6 +75,7 @@ async function handleAuth(event, session) {
   // Only a new sign-in (or app start with a saved session) triggers a full sync;
   // hourly token refreshes do not.
   if (changed && !starting) {
+    retire();
     account.ready = false;
     starting = startSession(user).finally(() => { starting = null; });
   } else {
@@ -138,16 +149,18 @@ const running = {}, again = {}, timers = {};
 function run(area) {
   if (!account.user || !account.ready) return Promise.resolve(false);
   if (running[area]) { again[area] = true; return running[area]; }
+  const started = generation;
+  const stale = () => started !== generation;
   running[area] = (async () => {
     let ok;
     try {
       do {
         again[area] = false;
-        ok = await SYNC[area]();
-      } while (again[area] && account.user);
+        ok = await SYNC[area](stale);
+      } while (again[area] && account.user && account.ready && !stale());
     } catch (error) {
       ok = false;
-      setStatus('Saved on this phone. Cloud sync failed: ' + errorText(error), 'error');
+      if (!stale()) setStatus('Saved on this phone. Cloud sync failed: ' + errorText(error), 'error');
     } finally {
       running[area] = null;
     }
@@ -168,6 +181,7 @@ function queue(area, delay = 800) {
 // Postgres reorders JSON keys, so compare with sorted keys.
 const same = (a, b) => stableStringify(a) === stableStringify(b);
 const MAX_ATTEMPTS = 3;
+const WEIGHT_BATCH = 200; // the server takes up to 400 weigh-ins per call
 
 /**
  * Writes a row only if nobody else wrote it since we read it (compare-and-set
@@ -202,17 +216,20 @@ function maxMetrics(...sources) {
 }
 
 const SYNC = {
-  async plan() {
+  async plan(stale) {
     const uid = account.user.id;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const r = await supabase.from('workout_plans').select('plan,updated_at').eq('user_id', uid).maybeSingle();
+      if (stale()) return false;
       if (r.error) throw r.error;
       // No cloud plan (first sync, or the row was removed): there is no common base.
       const merged = mergePlans(r.data?.plan, localPlan(), r.data ? planBase() : null);
       const local = localPlan();
       if (!same(merged.workouts, local.workouts) || !same(merged.schedule, local.schedule) || merged.restImage !== local.restImage) applyPlan(merged);
       const done = r.data && same(r.data.plan, merged);
-      if (done || await casWrite('workout_plans', uid, r.data?.updated_at ?? null, { user_id: uid, plan: merged, updated_at: new Date().toISOString() })) {
+      const wrote = done || await casWrite('workout_plans', uid, r.data?.updated_at ?? null, { user_id: uid, plan: merged, updated_at: new Date().toISOString() });
+      if (stale()) return false;
+      if (wrote) {
         setPlanBase(planHashes(merged));
         return true;
       }
@@ -220,7 +237,7 @@ const SYNC = {
     throw new Error('Your plan changed on another device at the same time. It will sync again shortly.');
   },
 
-  async data() {
+  async data(stale) {
     const uid = account.user.id;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       // Databases that have not applied every migration lack some columns; use what exists.
@@ -229,9 +246,26 @@ const SYNC = {
         r = await supabase.from('workout_data').select([...set, 'updated_at'].join(',')).eq('user_id', uid).maybeSingle();
         if (!isMissingSchema(r.error)) { columns = set; break; }
       }
+      if (stale()) return false;
       if (r.error) throw r.error;
       const remote = r.data || {};
       const has = (c) => columns.includes(c);
+      // Sessions brought back from a backup that were deleted in the account
+      // since: give them new ids, so the deletion doesn't remove them again.
+      const restored = new Set(state.sync.restoredSessions || []);
+      if (restored.size) {
+        const gone = new Set(Array.isArray(remote.deleted_sessions) ? remote.deleted_sessions : []);
+        let rekeyed = false;
+        Object.keys(state.logs).forEach((d) => {
+          state.logs[d] = state.logs[d].map((x) => {
+            const k = sessionKey(d, x);
+            if (!restored.has(k) || !gone.has(k)) return x;
+            rekeyed = true;
+            return { ...x, id: newSessionId() };
+          });
+        });
+        if (rekeyed) saveLogs({ silent: true });
+      }
 
       const deleted = [...new Set([...state.deletedSessions, ...(Array.isArray(remote.deleted_sessions) ? remote.deleted_sessions : [])])];
       const deletedDates = { ...(remote.deleted_dates || {}) };
@@ -253,15 +287,19 @@ const SYNC = {
       if (has('bypass_days')) Object.assign(row, { bypass_days: bypass, deleted_sessions: deleted, legacy_stats: legacy });
       if (has('deleted_dates')) Object.assign(row, { deleted_dates: deletedDates, daily_summaries: dailySummaries(logs) });
       const changed = !r.data || Object.keys(row).some((k) => k !== 'updated_at' && k !== 'user_id' && !same(remote[k] ?? null, row[k]));
-      if (!changed || await casWrite('workout_data', uid, r.data?.updated_at ?? null, row)) return true;
+      if (!changed || await casWrite('workout_data', uid, r.data?.updated_at ?? null, row)) {
+        if (restored.size && !stale()) { state.sync.restoredSessions = []; saveSync(); }
+        return true;
+      }
     }
     throw new Error('Your workouts changed on another device at the same time. They will sync again shortly.');
   },
 
-  async weights() {
+  async weights(stale) {
     const uid = account.user.id;
     for (const date of Object.keys(state.sync.pendingWeightDeletes)) {
       const del = await supabase.from('body_weight_logs').delete().eq('user_id', uid).eq('log_date', date);
+      if (stale()) return false;
       if (del.error) throw del.error;
       delete state.sync.pendingWeightDeletes[date];
       saveSync();
@@ -269,21 +307,48 @@ const SYNC = {
     let withStamp = true;
     let r = await supabase.from('body_weight_logs').select('log_date,weight_kg,updated_at').eq('user_id', uid);
     if (isMissingSchema(r.error)) { withStamp = false; r = await supabase.from('body_weight_logs').select('log_date,weight_kg').eq('user_id', uid); }
+    if (stale()) return false;
     if (r.error) throw r.error;
-    const merged = mergeWeights(r.data, state.weights, state.sync.syncedWeightDates);
+    const dirty = new Set(state.sync.dirtyWeightDates);
+    const merged = mergeWeights(r.data, state.weights, state.sync.syncedWeightDates, [...dirty]);
     if (!same(merged, state.weights)) { state.weights = merged; saveWeights({ silent: true }); }
     const remote = new Map((r.data || []).map((x) => [x.log_date, Number(x.weight_kg)]));
-    const stamps = new Map((r.data || []).map((x) => [x.log_date, Date.parse(x.updated_at || '') || 0]));
-    const changed = merged
-      .filter((x) => remote.get(x.date) !== x.weight || (withStamp && x.updatedAt && x.updatedAt > (stamps.get(x.date) || 0)))
-      .map((x) => ({ user_id: uid, log_date: x.date, weight_kg: x.weight, ...(withStamp ? { updated_at: new Date(x.updatedAt || Date.now()).toISOString() } : {}) }));
-    if (changed.length) {
-      // Server time decides for entries made here; older databases get a plain upsert.
-      let up = await supabase.rpc('save_my_weights', { entries: changed.map(({ log_date, weight_kg }) => ({ log_date, weight_kg })) });
-      if (isMissingSchema(up.error)) up = await supabase.from('body_weight_logs').upsert(changed, { onConflict: 'user_id,log_date' });
+    const changed = merged.filter((x) => dirty.has(x.date) || remote.get(x.date) !== x.weight);
+    // Server stamps of what was written; an entry missing here was refused (deleted elsewhere).
+    const saved = new Map();
+    let rpc = true;
+    for (let i = 0; i < changed.length; i += WEIGHT_BATCH) {
+      const batch = changed.slice(i, i + WEIGHT_BATCH);
+      if (rpc) {
+        // Server time decides; only entries changed here may override a deletion made elsewhere.
+        const up = await supabase.rpc('save_my_weights', { entries: batch.map((x) => ({ log_date: x.date, weight_kg: x.weight, fresh: dirty.has(x.date) })) });
+        if (stale()) return false;
+        if (!isMissingSchema(up.error)) {
+          if (up.error) throw up.error;
+          (up.data || []).forEach((row) => saved.set(row.log_date, Date.parse(row.updated_at) || 0));
+          continue;
+        }
+        rpc = false; // older database: plain upsert
+      }
+      const rows = batch.map((x) => ({ user_id: uid, log_date: x.date, weight_kg: x.weight, ...(withStamp ? { updated_at: new Date(x.updatedAt || Date.now()).toISOString() } : {}) }));
+      const up = await supabase.from('body_weight_logs').upsert(rows, { onConflict: 'user_id,log_date' });
+      if (stale()) return false;
       if (up.error) throw up.error;
+      batch.forEach((x) => saved.set(x.date, x.updatedAt || 0));
     }
-    state.sync.syncedWeightDates = merged.map((x) => x.date);
+    if (changed.length) {
+      // Entries edited again during the upload stay as they are (and stay dirty).
+      const sent = new Map(changed.map((x) => [x.date, x]));
+      const untouched = (x) => sent.has(x.date) && sent.get(x.date).weight === x.weight && sent.get(x.date).updatedAt === x.updatedAt;
+      const current = new Map(state.weights.map((x) => [x.date, x]));
+      const settled = new Set(changed.filter((x) => !current.has(x.date) || untouched(current.get(x.date))).map((x) => x.date));
+      state.weights = state.weights
+        .filter((x) => !untouched(x) || saved.has(x.date))
+        .map((x) => (untouched(x) && saved.get(x.date) ? { ...x, updatedAt: saved.get(x.date) } : x));
+      state.sync.dirtyWeightDates = state.sync.dirtyWeightDates.filter((d) => !settled.has(d));
+      saveWeights({ silent: true });
+    }
+    state.sync.syncedWeightDates = state.weights.filter((x) => !state.sync.dirtyWeightDates.includes(x.date)).map((x) => x.date);
     saveSync();
     return true;
   },
@@ -342,9 +407,9 @@ export async function signOut({ removeLocalData = false, force = false } = {}) {
   if (account.user && account.ready) synced = await syncAll();
   if (removeLocalData && !synced && !force) return 'not-synced';
   account.ready = false;
+  retire(); // a sync still in flight must not write the account's data back
   await supabase.auth.signOut();
   if (removeLocalData) clearLocalData();
-  else { state.sync.syncedWeightDates = []; saveSync(); }
   return '';
 }
 
@@ -371,7 +436,9 @@ export async function deleteAccount({ removeLocalData = false } = {}) {
   const r = await supabase.rpc('delete_my_account');
   if (r.error) return isMissingSchema(r.error) ? 'This needs the latest database update.' : errorText(r.error);
   // Whoever signs in next on this phone is asked before the remaining data joins their account.
-  state.sync = { ...state.sync, accountId: 'deleted:' + account.user.id, syncedWeightDates: [], pendingWeightDeletes: {} };
+  account.ready = false;
+  retire();
+  state.sync = { ...state.sync, accountId: 'deleted:' + account.user.id, syncedWeightDates: [], pendingWeightDeletes: {}, dirtyWeightDates: [] };
   saveSync();
   await supabase.auth.signOut();
   if (removeLocalData) clearLocalData();

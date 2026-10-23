@@ -23,7 +23,7 @@ export const state = {
   deletedDates: {},
   settings: { ...DEFAULT_SETTINGS },
   // Cloud bookkeeping: what this phone last uploaded, and deletions not yet uploaded.
-  sync: { accountId: null, syncedWeightDates: [], pendingWeightDeletes: {} },
+  sync: { accountId: null, syncedWeightDates: [], pendingWeightDeletes: {}, dirtyWeightDates: [] },
 };
 
 export function loadState() {
@@ -52,7 +52,7 @@ export function loadState() {
   state.bypassState = normalizeBypass(read(KEYS.bypassState, {}), read(KEYS.bypass, {}));
   state.bypass = activeBypass(state.bypassState);
   state.settings = { ...DEFAULT_SETTINGS, ...(read(KEYS.settings, {}) || {}) };
-  state.sync = { accountId: null, syncedWeightDates: [], pendingWeightDeletes: {}, ...(read(KEYS.sync, {}) || {}) };
+  state.sync = { accountId: null, syncedWeightDates: [], pendingWeightDeletes: {}, dirtyWeightDates: [], ...(read(KEYS.sync, {}) || {}) };
   if (!readText(KEYS.sidesFrom)) writeText(KEYS.sidesFrom, ymd());
   savedHashes = planHashes(localPlan());
 }
@@ -203,6 +203,8 @@ export function setWeight(date, kg) {
   // A new entry is not "already uploaded", even if this day was synced and deleted before.
   delete state.sync.pendingWeightDeletes[date];
   state.sync.syncedWeightDates = state.sync.syncedWeightDates.filter((d) => d !== date);
+  // Changed here and not uploaded yet: wins over the cloud copy and over a deletion there.
+  if (!state.sync.dirtyWeightDates.includes(date)) state.sync.dirtyWeightDates.push(date);
   saveSync();
   saveWeights();
 }
@@ -210,6 +212,7 @@ export function setWeight(date, kg) {
 export function deleteWeight(date) {
   state.weights = state.weights.filter((x) => x.date !== date);
   state.sync.pendingWeightDeletes[date] = true;
+  state.sync.dirtyWeightDates = state.sync.dirtyWeightDates.filter((d) => d !== date);
   saveSync();
   saveWeights();
 }
@@ -249,7 +252,7 @@ export function hasLocalData() {
 /** Removes this phone's training data (used when another account signs in, or on request at sign-out). */
 export function clearLocalData() {
   LOCAL_DATA_KEYS.forEach(remove);
-  state.sync = { accountId: null, syncedWeightDates: [], pendingWeightDeletes: {} };
+  state.sync = { accountId: null, syncedWeightDates: [], pendingWeightDeletes: {}, dirtyWeightDates: [] };
   loadState();
   emit('gym:plan-updated');
   emit('gym:logs-updated');

@@ -71,21 +71,15 @@ activeBar.addEventListener('click', () => { const a = getActive(); if (a) openSe
 listen('gym:active-changed', () => { paintActive(); if (currentPage() === 'today') refresh('today'); });
 paintActive();
 
-// Another tab or window of the app changed the data: load it, so neither copy
-// overwrites the other. During a workout this waits until the workout is closed.
-let staleFromOtherTab = false;
+// Another tab or window of the app changed the data: load it at once, so
+// neither copy overwrites the other. An open workout keeps its own exercise
+// list, and saving it re-reads the logs, so it is safe to reload under it.
 window.addEventListener('storage', (e) => {
   if (e.key !== null && !e.key.startsWith('gym')) return;
-  staleFromOtherTab = true;
-  if (!isOpen()) reloadFromStorage();
-});
-listen('gym:active-changed', () => { if (staleFromOtherTab && !isOpen()) reloadFromStorage(); });
-function reloadFromStorage() {
-  staleFromOtherTab = false;
   loadState();
   paintActive();
   refresh();
-}
+});
 
 // A different account signing in on this phone must not absorb the previous person's data.
 onAccountSwitch(() => openSheet({

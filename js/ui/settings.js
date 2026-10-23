@@ -4,6 +4,7 @@ import { listen, readText, KEYS } from '../core/store.js';
 import { pushLayer, go, currentPage } from '../core/router.js';
 import { state, saveSettings, restImage, setRestImage, loadState } from '../state.js';
 import { makeBackup, parseBackup, BACKUP_KEYS } from '../domain/backup.js';
+import { sessionKey } from '../domain/logs.js';
 import { cloudConfigured } from '../cloud/client.js';
 import {
   account, signIn, signUp, resetPassword, verifyRecoveryCode, updatePassword, signOut, changeUsername, setShareWeight,
@@ -215,7 +216,7 @@ async function restoreFrom(text) {
   let data;
   try { data = parseBackup(text); } catch (e) { toast(e.message, { tone: 'error' }); return; }
   const ok = await confirmDialog(account.user
-    ? 'Your workouts on this phone are replaced by the backup. Workouts already in your account are merged back in at the next sync.'
+    ? 'Your workouts on this phone are replaced by the backup. At the next sync, workouts already in your account are merged back in, and what the backup holds comes back even if it was deleted since.'
     : 'Everything on this phone is replaced by the backup.', { title: 'Restore this backup?', ok: 'Restore', danger: true });
   if (!ok) return;
   // Replace everything: keys the backup does not have are removed, not kept.
@@ -227,6 +228,10 @@ async function restoreFrom(text) {
   state.sync.pendingWeightDeletes = {};
   localStorage.setItem(KEYS.sync, JSON.stringify(state.sync));
   loadState();
+  // What the backup holds comes back, also if it was deleted in the account since.
+  state.sync.restoredSessions = Object.entries(state.logs).flatMap(([d, list]) => list.map((x) => sessionKey(d, x)));
+  state.sync.dirtyWeightDates = state.weights.map((x) => x.date);
+  localStorage.setItem(KEYS.sync, JSON.stringify(state.sync));
   toast('Backup restored.');
   setTimeout(() => location.reload(), 600);
 }

@@ -50,9 +50,9 @@ export function validateDraft({ gym, startsAt, duration, note }, now = new Date(
 /** Groups visible dates for the list: live, today, tomorrow, later. Ended and cancelled are dropped. */
 export function groupDates(dates, now = new Date()) {
   const groups = { live: [], today: [], tomorrow: [], later: [] };
-  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const tomorrow = new Date(dayStart.getTime() + 86400000);
-  const after = new Date(dayStart.getTime() + 2 * 86400000);
+  // Calendar days, so a 23- or 25-hour daylight-saving day is handled.
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const after = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2);
   [...dates].sort((a, b) => startOf(a) - startOf(b)).forEach((d) => {
     const p = phase(d, now);
     if (p === 'live') groups.live.push(d);

@@ -83,7 +83,8 @@ export function renameRunningWorkout(from, to) {
 /**
  * Opens a workout. Without options it resumes the running session of that
  * workout and date, else edits the latest logged one, else starts a new one.
- * `key` edits a specific logged session; `fresh` always starts a new one.
+ * `key` edits a specific logged session; `fresh` starts a new one instead of
+ * editing a logged one (an unsaved new one of this workout and day is continued).
  * Future dates can be previewed in the calendar but not logged.
  */
 export function openSession(day, date = ymd(), { key = null, fresh = false } = {}) {
@@ -112,7 +113,7 @@ export function openSession(day, date = ymd(), { key = null, fresh = false } = {
     const prefix = date + '|' + day + '|' + NEW;
     const drafts = readDrafts();
     const newest = Object.keys(drafts).filter((k) => k.startsWith(prefix)).sort((a, b) => (drafts[b].active || 0) - (drafts[a].active || 0))[0];
-    sessionRef = !fresh && newest ? newest.slice(date.length + day.length + 2) : NEW + newSessionId();
+    sessionRef = newest ? newest.slice(date.length + day.length + 2) : NEW + newSessionId();
   }
   const id = draftId(day, date, sessionRef);
   const saved = readDrafts()[id];

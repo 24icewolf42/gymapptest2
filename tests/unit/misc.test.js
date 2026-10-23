@@ -27,6 +27,13 @@ describe('weights', () => {
     ]);
   });
 
+  it('keeps entries changed here until they are uploaded, whatever the clocks say', () => {
+    const remote = [{ log_date: '2026-01-01', weight_kg: 80, updated_at: '2026-01-05T00:00:10Z' }];
+    const local = [{ date: '2026-01-01', weight: 82, updatedAt: Date.parse('2026-01-05T00:00:05Z') }, { date: '2026-01-02', weight: 81, updatedAt: 1 }];
+    expect(mergeWeights(remote, local, ['2026-01-01', '2026-01-02'], ['2026-01-01', '2026-01-02']).map((x) => x.weight)).toEqual([82, 81]);
+    expect(mergeWeights(remote, local, ['2026-01-01', '2026-01-02']).map((x) => x.weight)).toEqual([80]);
+  });
+
   it('upserts by day', () => {
     expect(upsertWeight([{ date: '2026-01-01', weight: 1 }], '2026-01-01', 2, 99)).toEqual([{ date: '2026-01-01', weight: 2, updatedAt: 99 }]);
   });
