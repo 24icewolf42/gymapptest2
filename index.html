@@ -540,7 +540,7 @@
     
     <script>
     // ---------- APP VERSION / AUTO UPDATE ----------
-    const APP_VERSION = "2.6.0";
+    const APP_VERSION = "2.7.0";
     document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
     
     function checkForUpdate() {
@@ -792,11 +792,10 @@
             <div class="hero-title">${todaysWorkout}</div>
             <div class="hero-meta">${workoutSummary(todaysWorkout)}</div>
             ${alreadyDone ? '<div class="hero-done">Logged today ✓</div>' : ''}
-            <button id="startTodayBtn" class="btn-primary">View workout</button>
+            <button id="startTodayBtn" class="btn-primary">Start workout</button>
           </div>`;
         document.getElementById('startTodayBtn').onclick = () => {
-          if (window.openPlanWorkout) window.openPlanWorkout(todaysWorkout, dStr, alreadyDone);
-          else startSession(todaysWorkout, dStr);
+          startSession(todaysWorkout, dStr);
         };
       } else {
         let next = null;
@@ -804,7 +803,7 @@
         todayCard.innerHTML = `
           <div class="hero rest">
             <div class="hero-date">${fmtLong(dStr)}</div>
-            <img class="rest-pic" src="rest.png" alt="Rest day">
+            <img class="rest-pic" src="${localStorage.getItem('gymRestImage') || 'rest.png'}" alt="Rest day">
             <div class="hero-meta">${next ? 'Next up: ' + next.name + ' on ' + next.dow : 'Rest day'}</div>
           </div>`;
       }
@@ -822,13 +821,10 @@
           const logged = !!(logs[dateStr] && logs[dateStr].some(s => s.day === workout));
           row.className = 'up-row tappable' + (logged ? ' logged' : '');
           row.innerHTML = `${dayHtml}<div class="up-name">${workout}<small>${logged ? 'Logged ✓' : workoutSummary(workout)}</small></div><div class="up-chev">›</div>`;
-          row.onclick = () => {
-            if (logged) showDayLogs(dateStr, workout);
-            else startSession(workout, dateStr);
-          };
+          row.onclick = () => startSession(workout, dateStr);
         } else {
           row.className = 'up-row rest';
-          row.innerHTML = `${dayHtml}<div class="up-name">Rest</div><img class="up-thumb" src="rest.png" alt="">`;
+          row.innerHTML = `${dayHtml}<div class="up-name">Rest</div><img class="up-thumb" src="${localStorage.getItem('gymRestImage') || 'rest.png'}" alt="">`;
         }
         listEl.appendChild(row);
       }
@@ -1901,10 +1897,9 @@
       ['Workout complete', sess.duration ? Math.max(1, Math.round(sess.duration / 60)) + ' min' : '', exs.length + ' exercises', sets + ' sets'].filter(Boolean).join(' · ');
     var row = document.createElement('div');
     row.className = 'hero-actions';
-    row.innerHTML = '<button id="heroView" class="btn-primary">View workout</button><button id="heroAgain" class="btn-secondary">Log again</button>';
+    row.innerHTML = '<button id="heroView" class="btn-primary">Start workout</button>';
     b.parentNode.replaceChild(row, b);
-    $('heroView').onclick = function () { showDayLogs(dStr, w); };
-    $('heroAgain').onclick = function () { startSession(w, dStr); };
+    $('heroView').onclick = function () { startSession(w, dStr); };
   }
   function addRow(list, d, byp) {
     var idx = mondayIndex(d.getDay()), w = SCHEDULE[idx], ds = todayStr(d), row = document.createElement('div');
@@ -1913,10 +1908,10 @@
       var logged = !!(logs[ds] && logs[ds].some(function (s) { return s.day === w; })), isB = !!byp[ds] && !logged;
       row.className = 'up-row tappable' + (logged ? ' logged' : '');
       row.innerHTML = dayHtml + '<div class="up-name">' + w + '<small>' + (logged ? 'Logged ✓' : isB ? 'Bypass day' : workoutSummary(w)) + '</small></div><div class="up-chev">›</div>';
-      row.onclick = function () { if (logged) showDayLogs(ds, w); else openDa(ds, w, false); };
+      row.onclick = function () { startSession(w, ds); };
     } else {
       row.className = 'up-row rest';
-      row.innerHTML = dayHtml + '<div class="up-name">Rest</div><img class="up-thumb" src="rest.png" alt="" loading="lazy" decoding="async">';
+      row.innerHTML = dayHtml + '<div class="up-name">Rest</div><img class="up-thumb" src="' + (localStorage.getItem('gymRestImage') || 'rest.png') + '" alt="" loading="lazy" decoding="async">';
     }
     list.appendChild(row);
   }
@@ -2050,7 +2045,7 @@
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./cloud-config.js?v=2.6.0"></script>
-<script src="./cloud.js?v=2.6.0"></script>
-<script src="./plan.js?v=2.6.0"></script>
+<script src="./cloud-config.js?v=2.7.0"></script>
+<script src="./cloud.js?v=2.7.0"></script>
+<script src="./plan.js?v=2.7.0"></script>
     </html>
