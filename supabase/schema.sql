@@ -33,9 +33,6 @@ create table if not exists public.leaderboard_stats (
   user_id uuid primary key references public.profiles(id) on delete cascade,
   workouts_count integer not null check (workouts_count >= 0),
   volume_kg_reps bigint not null check (volume_kg_reps >= 0),
-  total_seconds bigint not null default 0 check (total_seconds >= 0),
-  current_streak integer not null default 0 check (current_streak >= 0),
-  best_streak integer not null default 0 check (best_streak >= 0),
   updated_at timestamptz not null default now()
 );
 
@@ -52,7 +49,6 @@ create table if not exists public.body_weight_logs (
   log_date date not null,
   weight_kg numeric(6,2) not null check (weight_kg > 0 and weight_kg < 1000),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
   primary key (user_id, log_date)
 );
 
@@ -60,13 +56,7 @@ create table if not exists public.body_weight_logs (
 create table if not exists public.workout_data (
   user_id uuid primary key references public.profiles(id) on delete cascade,
   logs jsonb not null default '{}'::jsonb check (jsonb_typeof(logs) = 'object'),
-  daily_summaries jsonb not null default '{}'::jsonb check (jsonb_typeof(daily_summaries) = 'object'),
   progress jsonb not null default '{}'::jsonb check (jsonb_typeof(progress) = 'object'),
-  bypass_days jsonb not null default '{}'::jsonb check (jsonb_typeof(bypass_days) = 'object'),
-  deleted_sessions jsonb not null default '[]'::jsonb check (jsonb_typeof(deleted_sessions) = 'array'),
-  deleted_dates jsonb not null default '{}'::jsonb check (jsonb_typeof(deleted_dates) = 'object'),
-  legacy_stats jsonb not null default '{}'::jsonb check (jsonb_typeof(legacy_stats) = 'object'),
-  stats_snapshot jsonb not null default '{}'::jsonb check (jsonb_typeof(stats_snapshot) = 'object'),
   updated_at timestamptz not null default now()
 );
 
@@ -256,6 +246,58 @@ create policy "Users update their own workout data" on public.workout_data
 drop policy if exists "Users remove their own workout data" on public.workout_data;
 create policy "Users remove their own workout data" on public.workout_data
   for delete to authenticated using (user_id = auth.uid());
+
+-- ===== 20261023000003_complete_workout_sync.sql =====
+-- Preserve all workout progress and aggregate stats across a user's devices.
+alter table public.workout_data
+  add column if not exists bypass_days jsonb not null default '{}'::jsonb,
+  add column if not exists deleted_sessions jsonb not null default '[]'::jsonb,
+  add column if not exists legacy_stats jsonb not null default '{}'::jsonb,
+  add column if not exists stats_snapshot jsonb not null default '{}'::jsonb;
+
+alter table public.workout_data
+  drop constraint if exists workout_data_bypass_days_object,
+  drop constraint if exists workout_data_deleted_sessions_array,
+  drop constraint if exists workout_data_legacy_stats_object,
+  drop constraint if exists workout_data_stats_snapshot_object;
+alter table public.workout_data
+  add constraint workout_data_bypass_days_object check (jsonb_typeof(bypass_days) = 'object'),
+  add constraint workout_data_deleted_sessions_array check (jsonb_typeof(deleted_sessions) = 'array'),
+  add constraint workout_data_legacy_stats_object check (jsonb_typeof(legacy_stats) = 'object'),
+  add constraint workout_data_stats_snapshot_object check (jsonb_typeof(stats_snapshot) = 'object');
+
+alter table public.leaderboard_stats
+  add column if not exists total_seconds bigint not null default 0,
+  add column if not exists current_streak integer not null default 0,
+  add column if not exists best_streak integer not null default 0;
+
+alter table public.leaderboard_stats
+  drop constraint if exists leaderboard_stats_total_seconds_nonnegative,
+  drop constraint if exists leaderboard_stats_current_streak_nonnegative,
+  drop constraint if exists leaderboard_stats_best_streak_nonnegative;
+alter table public.leaderboard_stats
+  add constraint leaderboard_stats_total_seconds_nonnegative check (total_seconds >= 0),
+  add constraint leaderboard_stats_current_streak_nonnegative check (current_streak >= 0),
+  add constraint leaderboard_stats_best_streak_nonnegative check (best_streak >= 0);
+
+alter table public.body_weight_logs
+  add column if not exists updated_at timestamptz not null default now();
+
+-- ===== 20261023190000_daily_workout_summaries.sql =====
+-- Keep calendar totals grouped by date and recomputed from workout logs.
+alter table public.workout_data
+  add column if not exists daily_summaries jsonb not null default '{}'::jsonb,
+  add column if not exists deleted_dates jsonb not null default '{}'::jsonb;
+
+alter table public.workout_data
+  drop constraint if exists workout_data_daily_summaries_object,
+  drop constraint if exists workout_data_deleted_dates_object;
+
+alter table public.workout_data
+  add constraint workout_data_daily_summaries_object
+  check (jsonb_typeof(daily_summaries) = 'object'),
+  add constraint workout_data_deleted_dates_object
+  check (jsonb_typeof(deleted_dates) = 'object');
 
 -- ===== 20261024000000_friendships.sql =====
 -- Closes a hole that let anyone forge an accepted friendship, lets people decline
