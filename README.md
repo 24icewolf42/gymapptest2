@@ -1,13 +1,14 @@
 # Workout Tracker
 
-The existing single-file workout tracker remains usable offline. This update adds an exercise finder and workout builder, plus optional accounts, friend requests, private-to-friends workout sharing, and an opt-in friend leaderboard.
+The existing workout tracker remains usable offline. The app adds a dedicated plan editor, a searchable exercise picker, account sync for plans and body weight, friend requests, and a friend-only progress comparison.
 
 ## Data and privacy
 
-- Existing workout logs, body-weight records, timers, and backups remain in this browser's `localStorage` and are never synced by this app.
+- Workout logs, timers, and backups remain on this device. Workout plans and weigh-ins sync to Supabase when signed in.
 - Account creation stores an email with Supabase Auth and a username in the profiles table.
 - A workout is uploaded only after pressing **Share this workout with friends**. Only accepted friends can read it.
-- **Publish my stats** explicitly shares only workout count and lifted volume (kg × reps) with accepted friends. It does not upload session details or body weight.
+- Accepted friends can compare workout-plan summaries and latest body weight. Row-level security limits those records to the owner and accepted friends.
+- **Refresh** publishes only workout count and lifted volume (kg × reps) to the friend leaderboard; session details remain on this device.
 - To remove a shared workout or stats, use Supabase's table editor (or add a delete control before production use). Deleting the account in Supabase removes related rows through cascading foreign keys.
 
 ## Online account setup
@@ -16,7 +17,7 @@ The live app is connected to the Supabase project in Central EU (Frankfurt). Its
 
 - `cloud-config.js` contains the project URL and a browser-safe publishable key. The publishable key is public by design; never put a secret or `service_role` key in browser code.
 - The deployed app is available at https://roguelineageaccmanager.github.io/gymapptest2/.
-- Workout logs and body-weight records stay in browser storage. Users choose whether to share a workout or publish aggregate stats.
+- Workout history stays in browser storage. Signed-in users sync their workout plans and weigh-ins; only accepted friends can read those synced records.
 
 To connect a different Supabase project, run [`supabase/schema.sql`](supabase/schema.sql) in its SQL Editor, then replace the URL and publishable key in `cloud-config.js`. Set the Supabase Authentication Site URL and allowed redirect URL to the deployed app address.
 

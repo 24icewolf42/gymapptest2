@@ -469,10 +469,15 @@
       </div>
       <div id="statsBody"></div>
     </div>
+
+    <div class="page" id="page-plan">
+      <header class="page-head"><h1>My plan</h1><span class="page-meta">Your training, your way</span></header>
+      <div id="planRoot"></div>
+    </div>
     
     <div class="page" id="page-social">
       <header class="page-head"><h1>Friends</h1></header>
-      <div id="socialRoot" class="panel"></div>
+      <div id="socialRoot"></div>
     </div>
     <div class="bottom-nav" id="bottomNav">
       <button class="nav-btn active" data-page="today">
@@ -486,6 +491,10 @@
       <button class="nav-btn" data-page="stats">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
         <span>Stats</span>
+      </button>
+      <button class="nav-btn" data-page="plan" aria-label="My plan">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 5h16M4 12h16M4 19h16"/><path d="m7 5 1 1 2-2M7 12l1 1 2-2M7 19l1 1 2-2"/></svg>
+        <span>Plan</span>
       </button>
       <button class="nav-btn" data-page="social" aria-label="Friends">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM20 8v6M23 11h-6"/></svg>
@@ -531,7 +540,7 @@
     
     <script>
     // ---------- APP VERSION / AUTO UPDATE ----------
-    const APP_VERSION = "2.5.1";
+    const APP_VERSION = "2.6.0";
     document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
     
     function checkForUpdate() {
@@ -645,6 +654,7 @@
       ]
     };
     window.WORKOUTS = WORKOUTS;
+    try { Object.assign(WORKOUTS, JSON.parse(localStorage.getItem('gymCustomWorkouts') || '{}')); } catch (e) {}
     
     const CATEGORY_META = {
       chest:      { color: "#ffffff", label: "Chest" },
@@ -662,6 +672,10 @@
     };
     
     const SCHEDULE = { 0: "Push + Abs", 1: null, 2: "Pull", 3: "Legs", 4: null, 5: "Full Body", 6: null };
+    window.SCHEDULE = SCHEDULE;
+    try { Object.assign(SCHEDULE, JSON.parse(localStorage.getItem('gymPlanSchedule') || '{}')); } catch (e) {}
+    window.startSession = startSession;
+    window.renderToday = renderToday;
     const DOW_NAMES = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
     
     function mondayIndex(jsDay) { return (jsDay + 6) % 7; }
@@ -725,13 +739,12 @@
       btn.addEventListener('click', () => {
         document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        document.getElementById('page-today').classList.remove('active');
-        document.getElementById('page-calendar').classList.remove('active');
-        document.getElementById('page-stats').classList.remove('active');
+        document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
         document.getElementById('page-' + btn.dataset.page).classList.add('active');
         if (btn.dataset.page === 'calendar') renderCalendar();
         if (btn.dataset.page === 'today') renderToday();
         if (btn.dataset.page === 'stats') renderStats();
+        if (btn.dataset.page === 'plan' && window.renderPlan) window.renderPlan();
         if (btn.dataset.page === 'today') removeLayer('tab');
         else if (!layerStack.includes('tab')) pushLayer('tab');
       });
@@ -779,10 +792,10 @@
             <div class="hero-title">${todaysWorkout}</div>
             <div class="hero-meta">${workoutSummary(todaysWorkout)}</div>
             ${alreadyDone ? '<div class="hero-done">Logged today ✓</div>' : ''}
-            <button id="startTodayBtn" class="btn-primary">${alreadyDone ? 'View or log again' : 'Start workout'}</button>
+            <button id="startTodayBtn" class="btn-primary">View workout</button>
           </div>`;
         document.getElementById('startTodayBtn').onclick = () => {
-          if (alreadyDone) showDayLogs(dStr, todaysWorkout);
+          if (window.openPlanWorkout) window.openPlanWorkout(todaysWorkout, dStr, alreadyDone);
           else startSession(todaysWorkout, dStr);
         };
       } else {
@@ -1061,7 +1074,7 @@
     
     // ---------- WEIGHT & STATS ----------
     function loadBodyWeights() { try { return JSON.parse(localStorage.getItem('bodyWeightLogs') || '[]'); } catch (e) { return []; } }
-    function saveBodyWeights(list) { localStorage.setItem('bodyWeightLogs', JSON.stringify(list)); }
+    function saveBodyWeights(list) { localStorage.setItem('bodyWeightLogs', JSON.stringify(list)); window.dispatchEvent(new Event('gym:weight-changed')); }
     
     function renderBodyWeightList() {
       const list = loadBodyWeights().slice().sort((a, b) => b.date.localeCompare(a.date));
@@ -1077,6 +1090,7 @@
       el.querySelectorAll('.bw-del').forEach(btn => {
         btn.onclick = () => {
           saveBodyWeights(loadBodyWeights().filter(e => e.date !== btn.dataset.date));
+          if (window.cloudDeleteWeight) window.cloudDeleteWeight(btn.dataset.date);
           renderBodyWeightList();
         };
       });
@@ -1231,7 +1245,7 @@
     document.getElementById('nextMonth').onclick = () => { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } renderCalendar(); };
     
     // ---------- SWIPE BETWEEN PAGES ----------
-    const PAGE_ORDER = ['today', 'calendar', 'stats'];
+    const PAGE_ORDER = ['today', 'calendar', 'stats', 'plan', 'social'];
     
     function currentPageIndex() {
       const activeBtn = document.querySelector('.nav-btn.active');
@@ -2036,6 +2050,7 @@
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./cloud-config.js?v=2.5.1"></script>
-<script src="./cloud.js"></script>
+<script src="./cloud-config.js?v=2.6.0"></script>
+<script src="./cloud.js?v=2.6.0"></script>
+<script src="./plan.js?v=2.6.0"></script>
     </html>

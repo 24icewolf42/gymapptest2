@@ -31,14 +31,34 @@ create table if not exists public.leaderboard_stats (
   updated_at timestamptz not null default now()
 );
 
+-- Each account can sync one editable routine library and weekly schedule.
+create table if not exists public.workout_plans (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  plan jsonb not null check (jsonb_typeof(plan) = 'object'),
+  updated_at timestamptz not null default now()
+);
+
+-- Body weight is private to the owner and accepted friends.
+create table if not exists public.body_weight_logs (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  log_date date not null,
+  weight_kg numeric(6,2) not null check (weight_kg > 0 and weight_kg < 1000),
+  created_at timestamptz not null default now(),
+  primary key (user_id, log_date)
+);
+
 alter table public.profiles enable row level security;
 alter table public.friend_requests enable row level security;
 alter table public.shared_workouts enable row level security;
 alter table public.leaderboard_stats enable row level security;
+alter table public.workout_plans enable row level security;
+alter table public.body_weight_logs enable row level security;
 grant select, insert, update, delete on public.profiles to authenticated;
 grant select, insert, update, delete on public.friend_requests to authenticated;
 grant select, insert, update, delete on public.shared_workouts to authenticated;
 grant select, insert, update, delete on public.leaderboard_stats to authenticated;
+grant select, insert, update, delete on public.workout_plans to authenticated;
+grant select, insert, update, delete on public.body_weight_logs to authenticated;
 
 create policy "Authenticated users can find usernames" on public.profiles
   for select to authenticated using (true);
@@ -83,5 +103,37 @@ create policy "Users publish their own aggregate stats" on public.leaderboard_st
 create policy "Users update their own aggregate stats" on public.leaderboard_stats
   for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 create policy "Users remove their published stats" on public.leaderboard_stats
+  for delete to authenticated using (user_id = auth.uid());
+
+create policy "Owners and accepted friends read workout plans" on public.workout_plans
+  for select to authenticated using (
+    user_id = auth.uid() or exists (
+      select 1 from public.friend_requests f
+      where f.status = 'accepted' and
+        ((f.requester_id = auth.uid() and f.target_id = user_id) or
+         (f.target_id = auth.uid() and f.requester_id = user_id))
+    )
+  );
+create policy "Users create their own workout plan" on public.workout_plans
+  for insert to authenticated with check (user_id = auth.uid());
+create policy "Users update their own workout plan" on public.workout_plans
+  for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "Users remove their own workout plan" on public.workout_plans
+  for delete to authenticated using (user_id = auth.uid());
+
+create policy "Owners and accepted friends read body weight" on public.body_weight_logs
+  for select to authenticated using (
+    user_id = auth.uid() or exists (
+      select 1 from public.friend_requests f
+      where f.status = 'accepted' and
+        ((f.requester_id = auth.uid() and f.target_id = user_id) or
+         (f.target_id = auth.uid() and f.requester_id = user_id))
+    )
+  );
+create policy "Users record their own body weight" on public.body_weight_logs
+  for insert to authenticated with check (user_id = auth.uid());
+create policy "Users update their own body weight" on public.body_weight_logs
+  for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "Users delete their own body weight" on public.body_weight_logs
   for delete to authenticated using (user_id = auth.uid());
 
