@@ -14,26 +14,26 @@ The findings come from two independent passes: an Opus review of the frozen snap
 | H2 | High | No decline/cancel/unfriend; usernames enumerable | Fixed: delete policy + UI, exact-match find_profile(), profiles readable only by related users, 20 requests/day limit |
 | H3 | High | Next account absorbs previous user's data | Fixed: account-switch prompt (replace keeps a local backup), optional data removal on sign-out; e2e test |
 | H4 | High | supabase-js from CDN, floating version, no SRI | Fixed: vendored pinned 2.118.0 (vendor/supabase.js); CSP blocks remote scripts |
-| H5 | High | Signing key committed with public passwords | Open: needs a new secret release key and one reinstall for every user; owner decision (README → Android signing) |
+| H5 | High | Signing key committed with public passwords | Fixed: committed key removed; releases signed with a private key from GitHub secrets, signer verified at build and again before publishing. Owner must create the key once (README → Android signing); users reinstall once |
 | H6 | High | CI write token exposed to unpinned install scripts | Fixed: read-only build job, separate publish job on main only, actions pinned by SHA, Capacitor from a lockfile with --ignore-scripts, pillow pinned |
 | M1 | Medium | Deletions resurrected by sync | Fixed: synced session tombstones and cleared dates (the format upstream adopted on 2026-10-23), weigh-in delete queue, plan tombstones resolved by the newer side; unit + e2e tests incl. interop with upstream's format |
-| M2 | Medium | Whole-document last-writer-wins uploads | Fixed: every upload is read-merge-write; plans merge per routine with timestamps. Residual: concurrent writes within one round trip can still race (single-row JSON design) |
+| M2 | Medium | Whole-document last-writer-wins uploads | Fixed: every upload is read-merge-write with compare-and-set on updated_at (retried up to 3 times); plans merge per routine and weekday against the last-synced base |
 | M3 | Medium | One bad weigh-in breaks weight sync | Fixed: input limited to 20–350 kg, sanitized list, only changed rows upserted |
 | M4 | Medium | Crash when the active workout was deleted | Fixed: exercise list snapshot at open; rebuilds from draft/log; stale active state cleared |
 | M5 | Medium | Unvalidated copied workouts (freeze/crash/overwrite) | Fixed: sanitizeWorkout clamps all fields; copy asks for a name and refuses existing names; DB size check |
 | M6 | Medium | hydrate runs repeatedly with UI side-effects | Fixed: one sync per sign-in (not on token refresh); editors don't re-render while typing |
 | M7 | Medium | Friends can read full weight history and plans | Fixed: friend_summaries() returns latest weight (opt-in) and counts only; raw tables owner-only |
 | M8 | Medium | Taken username creates an account that can't sync | Fixed: profile created by trigger with fallback name; username can be changed in Settings |
-| M9 | Medium | Password reset never sets a new password | Fixed: PASSWORD_RECOVERY opens a new-password dialog. Residual: the email link opens the web app, not the APK |
-| M10 | Medium | Published APK is a debuggable debug build | Open: tied to H5 (release signing); the emulator tests rely on the debug build |
+| M9 | Medium | Password reset never sets a new password | Fixed: PASSWORD_RECOVERY asks for a new password, and the app accepts the code from the reset email (needs {{ .Token }} in the email template, README) |
+| M10 | Medium | Published APK is a debuggable debug build | Fixed: release builds are non-debuggable (webContentsDebuggingEnabled false, assembleRelease); debug builds are only for tests |
 | M11 | Medium | Delete removes the whole day; 'log again' overwrites | Fixed: per-session delete; re-opening a logged workout is labelled 'View or edit' / 'Save changes' |
 | M12 | Medium | Backup misses plans; restore unvalidated | Fixed: all keys, versioned format, JSON validated, data sanitized on load; old format still accepted |
 | M13 | Medium | Weights silently rounded to 5 kg | Fixed: exact by default; rounding step selectable in Settings |
 | M14 | Medium | README privacy claims wrong | Fixed: README rewritten to match behaviour |
-| M15 | Medium | No self-service deletion / privacy notice for minors | Partly fixed: delete account, unshare, stop sharing stats, privacy text, weight opt-in. Open: age/consent policy is the owner's decision |
+| M15 | Medium | No self-service deletion / privacy notice for minors | Fixed: sign-up requires confirming age 14+ or parental permission (recorded with the account), in-app privacy notice, self-service account deletion, block, weight opt-in |
 | L1 | Low | Usernames derived from email | Fixed: no email-derived names; random fallback |
-| L2 | Low | Self-reported leaderboard; 'Refresh' publishes | Partly fixed: buttons say 'Share/Update my stats' and 'Stop sharing'. Values remain self-reported (friends-only) |
-| L3 | Low | Fragile update detection | Fixed: web check only offers newer versions; exact-URL updater check. Residual: APK version still read from the release title |
+| L2 | Low | Self-reported leaderboard; 'Refresh' publishes | Fixed: friends' totals (workouts, kg × reps, time) are computed in the database from synced history; only the streak is app-reported. Buttons say Share/Update/Stop sharing |
+| L3 | Low | Fragile update detection | Fixed: the updater compares build numbers (release title carries the run number, the app reads its versionCode); the web check only offers newer versions |
 | L4 | Low | Stale assetlinks.json | Fixed: removed |
 | L5 | Low | Version string in five places | Fixed: js/version.js + Version + sw.js, checked by a unit test |
 | L6 | Low | Start-up normalisation overrides edits | Fixed: one-time upgrade; defaults only for missing fields |
@@ -41,10 +41,64 @@ The findings come from two independent passes: an Opus review of the frozen snap
 | L8 | Low | Prototype-key workout names | Fixed: __proto__ rejected; Object.hasOwn checks |
 | L9 | Low | Oversized DOM, always-on timers, chatty sync | Fixed: 14-day upcoming list (expandable), calendar to +6 months, active-bar timer only while a workout runs, debounced sync with skip-if-unchanged |
 | L10 | Low | Dead code, duplication, CSS overrides | Fixed: monkey-patch layer removed; one stylesheet; one escaper |
-| L11 | Low | Schema hygiene | Fixed: baseline migration, idempotent new migrations, index on shared_workouts(owner_id), size check. Not done: (select auth.uid()) wrapping in the original policies |
+| L11 | Low | Schema hygiene | Fixed: original policies re-created with (select auth.uid()) (20261024000003), new tables follow the same pattern |
 | L12 | Low | Tests fail and only grep strings | Fixed: unit, RLS integration, browser e2e and Android emulator suites |
 
-Open items need a decision by the app's owner, not more code: the signing key (H5/M10) and an age/consent policy (M15).
+All findings are fixed in code. One step remains for the app's owner: create the private release key and add it as GitHub secrets (README → Android signing).
+
+## Critique rounds
+
+After the rework, three independent Opus reviews (security/privacy, data correctness, UX/accessibility/tests) rated the branch and listed findings. Every critical, major and minor finding and every nit was fixed and re-reviewed.
+
+### Round 1 (security 6/10, correctness 5/10, UX/tests 5/10)
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| S-01 | Major | Realtime broadcast DELETEs of reply/invite rows (who joined which date) to every subscriber | Only gym_dates is published; reply/invite changes bump gym_dates.activity_at; dates are cancelled, never deleted; test checks the publication |
+| S-02 | Major | Background sync ran before the account-switch question was answered | account.ready gate on every sync entry point; e2e test fires online/visibility events while the question is open |
+| S-03 | Major | After "Delete my account" the next account absorbed the data silently | Deleted marker keeps the question; optional (default on) removal from the phone; e2e test |
+| S-04 | Minor | Friend-request limit bypassable via client created_at | Trigger sets created_at to server time; limit counts all requests per day; test |
+| S-05 | Minor | No blocking | friend_blocks table, enforced on requests and username lookup; block from Crew, unblock in Settings; tests |
+| S-06 | Minor | Check-ins could be moved to another date | Trigger rejects date/user changes on replies; test |
+| S-07 | Minor | "Remove my data" left gyms, photo, switch backup | All personal keys removed; switch backup can be saved as a file |
+| S-08 | Minor | Unthrottled username lookup | 30 lookups/hour in find_profile; blocked users hidden; test |
+| S-09 | Minor | Late crew results shown to the next user | Results dropped unless still the same user; state cleared on any account change |
+| S-10 | Minor | CSP allowed any *.supabase.co | CSP lists the project host only; test servers/builds add the local address; unit test |
+| S-11 | Minor | Unverified Pillow/Gradle downloads in the APK build | Icons pre-rendered and committed (no pip); Gradle dependency verification metadata; publish job re-checks checksum and signer |
+| S-N1..N6 | Nit | anon grants, exposed helpers, plan counts without opt-in, broad file provider, weak download checks, wrong comment | anon revoked, helpers in an unexposed schema, counts only with published stats, cache-path only, content-type/size cap/signer check, comment corrected |
+| CR-1 | Critical | Fresh device wiped the weekly schedule | Three-way per-item merge with a last-synced base; untouched local items never overwrite the cloud; test with full schedules |
+| MA-1 | Major | Whole-plan timestamp reverted edits to other routines | Per-routine and per-weekday edit times |
+| MA-2 | Major | Mixed old/new app use never converged | Base hashes detect changes from the old app (no timestamps needed) |
+| MA-3/MA-4, UX-M2 | Major | Second session of a routine overwrote the first; one global draft slot | Session keys in drafts and the running-workout state; drafts per session; confirm before replacing a running timer; e2e test |
+| MA-5, UX-M1 | Major | Future dates could be logged from Today | Future days open a preview; openSession refuses future dates; e2e test |
+| MI-1 | Minor | Account switch carried old tombstones and weight bookkeeping | Bookkeeping reset on every account change |
+| MI-2 | Minor | Re-entered weigh-in lost during a sync | A new entry is never treated as already uploaded |
+| MI-3 | Minor | Old app re-uploaded deleted weigh-ins | Server-side tombstones ignore older re-uploads; test |
+| MI-4 | Minor | Rest image dropped from the cloud plan | Synced as a plan item |
+| MI-5 | Minor | Synced routines skipped the left/right upgrade | Upgrade runs when a plan is applied |
+| MI-6, N-3 | Minor/Nit | Editing a past session overwrote "last used"; clearing values resurrected | Only new workouts logged today update last-used values; cleared values sync as empty entries |
+| MI-7 | Minor | Editor threw when a sync removed the open routine | Editor closes when its routine disappears |
+| MI-8, UX-m12 | Minor | Plan editor back entry outlived a tab switch | Pages get a leave hook; the editor closes its layer; e2e test |
+| MI-9 | Minor | First service-worker install reloaded the page | Reload only for an update the user requested |
+| MI-10 | Minor | Restore kept keys missing from the backup | Restore replaces all backup keys and resets sync bookkeeping |
+| MI-11, N-1 | Minor/Nit | Postgres key order changed routine order and defeated equality checks | Routine order kept separately; comparisons use sorted-key JSON |
+| N-2 | Nit | Rest "Skip" cleared every muscle group | Only the selected group |
+| N-4 | Nit | Id-less, time-less sessions keyed differently from upstream | The upstream key is stored as the id |
+| N-5 | Nit | weightTrend off by one across DST | Local calendar arithmetic |
+| UX-M3 | Major | Keyboard sign-in left a stuck form | Settings re-renders on account changes regardless of focus; e2e test presses Enter |
+| UX-M4 | Major | Stats consent copy understated what is shared | Copy, privacy notice and README list every shared field |
+| UX-M5 | Major | "Remove my data" lost unsynced workouts | Removal only after a successful sync unless the user accepts the loss; network calls fail fast offline; e2e test |
+| UX-M6 | Major | E2E tests could hit the live project | Playwright refuses to start without local Supabase, uses its own port, never reuses servers, and asserts a local config |
+| UX-m1/m2 | Minor | Background refreshes dropped focus | render() patches the DOM in place (keyed rows); view changes replace; active bar updates in place; e2e test types during a background refresh |
+| UX-m3/m4 | Minor | Sheets/workout screen focus handling | Sheets focus themselves, make everything behind inert and keep visual = tab order; workout screen moves focus in and restores it |
+| UX-m5/m6/m7 | Minor | Double taps, stuck loading, no refetch | Pending states, optimistic replies with rollback, queued refresh, error with Try again, 60 s background refresh and reconnect catch-up |
+| UX-m8..m11 | Minor | Chip overflow/swipe, teaser wording, "Can't" styling, badge contrast | Chips wrap and are no-swipe, wording fixed, distinct selected style, dark text on orange |
+| UX-m13 | Minor | Ticking sets before Start | The first tick starts the timer |
+| UX-m14 | Minor | Who is going hidden from screen readers | Screen-reader summary of going/maybe/at the gym |
+| UX-m15 | Minor | Small destructive targets without undo | 44 px targets; Undo for removed exercises and weigh-ins |
+| UX-m16..m20 | Minor | Android CI green without device, no forbidOnly, weak assertions, coverage gaps, overclaiming cache test | Missing device fails; forbidOnly, no retries; assertions tightened; new e2e suites (crew, flows, router/back); cache test covers every loaded file |
+| UX-m21/m22 | Minor | Dev server path check, README setup | Separator-safe root check; README lists the Playwright install |
+| UX nits (20) | Nit | Dead code, arrow keys, ranking text, toast case, double minus, label markup, duplicated logic, streak label, 9 px text, toast overlap, developer messages, README quote, empty restore, sign-out cancel, test error tracking, fixed sleep, CI timeout/double runs/artifacts, build cwd/versionCode, vitest include | All addressed (arrow-key model for tabs/radios/listboxes, shared helpers, 10–11 px minimum, user-facing wording, storage-flush polling in the Android test, CI timeouts and artifacts, script-relative paths, time-based local versionCode, separate DB test config) |
 
 ---
 
