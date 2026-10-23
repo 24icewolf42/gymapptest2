@@ -55,9 +55,11 @@ create table if not exists public.body_weight_logs (
 create table if not exists public.workout_data (
   user_id uuid primary key references public.profiles(id) on delete cascade,
   logs jsonb not null default '{}'::jsonb check (jsonb_typeof(logs) = 'object'),
+  daily_summaries jsonb not null default '{}'::jsonb check (jsonb_typeof(daily_summaries) = 'object'),
   progress jsonb not null default '{}'::jsonb check (jsonb_typeof(progress) = 'object'),
   bypass_days jsonb not null default '{}'::jsonb check (jsonb_typeof(bypass_days) = 'object'),
   deleted_sessions jsonb not null default '[]'::jsonb check (jsonb_typeof(deleted_sessions) = 'array'),
+  deleted_dates jsonb not null default '{}'::jsonb check (jsonb_typeof(deleted_dates) = 'object'),
   legacy_stats jsonb not null default '{}'::jsonb check (jsonb_typeof(legacy_stats) = 'object'),
   stats_snapshot jsonb not null default '{}'::jsonb check (jsonb_typeof(stats_snapshot) = 'object'),
   updated_at timestamptz not null default now()

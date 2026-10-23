@@ -231,6 +231,7 @@
       .cal-cell.workout:active { background: var(--surface-3); }
       .cal-cell.logged { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 800; }
       .cal-cell.logged .cal-tag { color: #4a4945; }
+  .cal-cell .cal-done { font-size: 8px; line-height: 1; font-weight: 800; white-space: nowrap; color: inherit; }
       .cal-cell.today { border: 2px solid var(--accent); }
       .cal-cell.today.logged { border-color: #000; box-shadow: 0 0 0 2px var(--accent); }
       .cal-cell.rest { background: transparent; border-color: var(--border); color: var(--text-dim); }
@@ -575,7 +576,7 @@
     
     <script>
     // ---------- APP VERSION / AUTO UPDATE ----------
-    const APP_VERSION = "2.11.0";
+    const APP_VERSION = "2.12.0";
     document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
     
     function checkForUpdate() {
@@ -700,28 +701,70 @@
     function mondayIndex(jsDay) { return (jsDay + 6) % 7; }
     
     // ---------- STORAGE ----------
-    function loadLogs() { try { return JSON.parse(localStorage.getItem('gymLogs') || '{}'); } catch(e) { return {}; } }
-    function saveLogs(logs, silentCloud) { localStorage.setItem('gymLogs', JSON.stringify(logs)); if (!silentCloud) window.dispatchEvent(new Event('gym:logs-changed')); }
+    function canonicalLogDate(raw, session) {
+      const candidates = [raw, session && (session.date || session.dateStr || session.date_key), session && (session.time || session.timestamp || session.createdAt || session.created_at)];
+      for (const value of candidates) {
+        if (value == null || value === '') continue;
+        const s = String(value).trim();
+        let m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+        if (m) { const y = +m[1], mo = +m[2], d = +m[3]; const dt = new Date(y, mo - 1, d); if (dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d) return todayStr(dt); }
+        m = s.match(/^(\d{1,2})[/. -](\d{1,2})[/. -](\d{4})$/);
+        if (m) { let a = +m[1], b = +m[2], y = +m[3], mo = a, d = b; if (a > 12) { d = a; mo = b; } else if (b > 12) { mo = a; d = b; } else { d = a; mo = b; } const dt = new Date(y, mo - 1, d); if (dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d) return todayStr(dt); }
+        if (/^\d{10,13}$/.test(s)) { const dt = new Date(s.length === 10 ? +s * 1000 : +s); if (!isNaN(dt.getTime())) return todayStr(dt); }
+      }
+      return null;
+    }
+    function normalizeWorkoutLogs(source) {
+      const normalized = {}, entries = Array.isArray(source) ? source.map(function (session, index) { return [session && (session.date || session.dateStr || session.time) || 'undated-' + index, [session]]; }) : Object.keys(source || {}).map(function (date) { return [date, Array.isArray(source[date]) ? source[date] : []]; });
+      entries.forEach(function (entry) { const originalDate = entry[0]; (entry[1] || []).forEach(function (session) { if (!session || typeof session !== 'object') return; const date = canonicalLogDate(originalDate, session) || String(originalDate); if (!normalized[date]) normalized[date] = []; normalized[date].push(session); }); });
+      Object.keys(normalized).forEach(function (date) { normalized[date].sort(function (a, b) { return (Date.parse(a.time || '') || 0) - (Date.parse(b.time || '') || 0); }); });
+      return normalized;
+    }
+    function loadLogs() { try { const raw = JSON.parse(localStorage.getItem('gymLogs') || '{}'), normalized = normalizeWorkoutLogs(raw); localStorage.setItem('gymLogs', JSON.stringify(normalized)); return normalized; } catch(e) { return {}; } }
+    function saveLogs(nextLogs, silentCloud) { logs = normalizeWorkoutLogs(nextLogs); localStorage.setItem('gymLogs', JSON.stringify(logs)); if (!silentCloud) window.dispatchEvent(new Event('gym:logs-changed')); }
     let logs = loadLogs();
     window.getWorkoutLogsForCloud = () => logs;
     function sessionLogKey(date, session) { return session.id || (session.time ? date + '|' + session.day + '|' + session.time : date + '|' + session.day + '|' + JSON.stringify(session)); }
+    function dailyWorkoutSummary(source) {
+      const days = {};
+      Object.keys(source || {}).forEach(function (date) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+        const sessions = Array.isArray(source[date]) ? source[date] : [];
+        if (!sessions.length) return;
+        const summary = days[date] = { workouts: sessions.length, total_seconds: 0, volume_kg_reps: 0 };
+        sessions.forEach(function (session) { summary.total_seconds += Math.max(0, Number(session.duration) || 0); (session.exercises || []).forEach(function (exercise) { (exercise.sets || []).forEach(function (set) { summary.volume_kg_reps += (parseFloat(set.w) || 0) * (parseFloat(set.r) || 0); }); }); });
+        summary.volume_kg_reps = Math.round(summary.volume_kg_reps);
+      });
+      return days;
+    }
+    window.getWorkoutDailySummariesForCloud = () => dailyWorkoutSummary(logs);
     window.getDeletedWorkoutSessionsForCloud = () => { try { return JSON.parse(localStorage.getItem('gymDeletedSessions') || '[]'); } catch (e) { return []; } };
+    window.getWorkoutDeletedDatesForCloud = () => { try { return JSON.parse(localStorage.getItem('gymDeletedLogDates') || '{}'); } catch (e) { return {}; } };
     window.markWorkoutLogDateDeleted = date => {
       const deleted = new Set(window.getDeletedWorkoutSessionsForCloud());
       (logs[date] || []).forEach(session => deleted.add(sessionLogKey(date, session)));
       localStorage.setItem('gymDeletedSessions', JSON.stringify(Array.from(deleted)));
+      const deletedDates = window.getWorkoutDeletedDatesForCloud();
+      deletedDates[date] = Date.now();
+      localStorage.setItem('gymDeletedLogDates', JSON.stringify(deletedDates));
     };
-    window.mergeWorkoutLogsFromCloud = (remote, remoteDeleted) => {
+    window.mergeWorkoutLogsFromCloud = (remote, remoteDeleted, remoteDeletedDates) => {
       const merged = {};
       const deleted = new Set(window.getDeletedWorkoutSessionsForCloud().concat(remoteDeleted || []));
       localStorage.setItem('gymDeletedSessions', JSON.stringify(Array.from(deleted)));
-      Object.keys(remote || {}).concat(Object.keys(logs)).forEach(date => {
-        const sessions = (Array.isArray(remote && remote[date]) ? remote[date] : []).concat(Array.isArray(logs[date]) ? logs[date] : []);
+      const deletedDates = window.getWorkoutDeletedDatesForCloud();
+      Object.keys(remoteDeletedDates || {}).forEach(date => { deletedDates[date] = Math.max(Number(deletedDates[date]) || 0, Number(remoteDeletedDates[date]) || Date.parse(remoteDeletedDates[date]) || 0); });
+      localStorage.setItem('gymDeletedLogDates', JSON.stringify(deletedDates));
+      const localLogs = normalizeWorkoutLogs(logs), remoteLogs = normalizeWorkoutLogs(remote || {});
+      Object.keys(remoteLogs).concat(Object.keys(localLogs)).forEach(date => {
+        const sessions = (Array.isArray(remoteLogs[date]) ? remoteLogs[date] : []).concat(Array.isArray(localLogs[date]) ? localLogs[date] : []);
         const byId = new Map();
         sessions.forEach(session => {
           if (!session || typeof session !== 'object') return;
           const key = sessionLogKey(date, session), old = byId.get(key);
           if (deleted.has(key)) return;
+          const deletedAt = Number(deletedDates[date]) || 0, sessionAt = Date.parse(session.time || session.timestamp || session.createdAt || session.created_at || '') || 0;
+          if (deletedAt && sessionAt <= deletedAt) return;
           const oldTime = old && Date.parse(old.time || '') || 0, newTime = Date.parse(session.time || '') || 0;
           if (!old || newTime >= oldTime) byId.set(key, session);
         });
@@ -1531,6 +1574,7 @@
 <script>
 (function () {
   var MN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var calendarSummaries = {};
   var UNI = ['Single-Arm Cable Lateral Raises', 'Single-Arm Tricep Pushdowns', 'Reverse Chest Fly Machine']; // legacy one-sided exercise names
   function isUnilateral(ex) { return !!(ex && (ex.sides === 'both' || UNI.indexOf(ex.name) >= 0 || /single[- ]arm|one[- ]arm|single[- ]leg|one[- ]leg|unilateral/i.test(ex.name || ''))); }
   var REST = {
@@ -1542,7 +1586,7 @@
     "Hip Abduction Machine": 75, "Hip Adduction Machine": 75, "Standing Calf Raises": 60
   };
   var SWITCH_GAP = 30, GROUP = { forearms: 'biceps' };
-  var KEYS = ['gymLogs', 'gymDeletedSessions', 'gymLastUsed', 'gymBypass', 'gymBypassState', 'gymLegacyStats', 'bodyWeightLogs', 'gymCustomWorkouts', 'gymPlanSchedule', 'gymDeletedWorkouts', 'gymRestoredWorkouts', 'gymRestImage', 'gymDraft', 'gymActive'];
+  var KEYS = ['gymLogs', 'gymDeletedSessions', 'gymDeletedLogDates', 'gymLastUsed', 'gymBypass', 'gymBypassState', 'gymLegacyStats', 'bodyWeightLogs', 'gymCustomWorkouts', 'gymPlanSchedule', 'gymDeletedWorkouts', 'gymRestoredWorkouts', 'gymRestImage', 'gymDraft', 'gymActive'];
 
   function $(id) { return document.getElementById(id); }
   function grp(c) { return GROUP[c] || c; }
@@ -1938,10 +1982,12 @@
   // ================= calendar: every month, 24 months ahead =================
   function mkCell(y, m, d, byp) {
     var ds = ymd(y, m, d), sch = SCHEDULE[mondayIndex(new Date(y, m, d).getDay())];
-    var isL = !!(logs[ds] && logs[ds].length), isB = !!byp[ds] && !isL;
+    var summary = calendarSummaries[ds], isL = !!(summary && summary.workouts), isB = !!byp[ds] && !isL;
     var c = document.createElement('div');
     c.className = 'cal-cell' + (sch ? ' workout' : ' rest') + (isL ? ' logged' : '') + (isB ? ' bypass' : '') + (ds === todayStr() ? ' today' : '');
-    c.innerHTML = '<span>' + d + '</span><span class="cal-tag">' + (isB ? 'Bypass' : sch ? (sch === 'Full Body' ? 'Full' : sch) : 'Rest') + '</span>';
+    var seconds = summary ? summary.total_seconds : 0, minutes = Math.round(seconds / 60), timeText = minutes >= 60 ? Math.floor(minutes / 60) + 'h' + (minutes % 60 ? String(minutes % 60).padStart(2, '0') : '') : minutes + 'm';
+    c.innerHTML = '<span>' + d + '</span><span class="cal-tag">' + (isL ? 'Done' : isB ? 'Bypass' : sch ? (sch === 'Full Body' ? 'Full' : sch) : 'Rest') + '</span>' + (isL ? '<span class="cal-done">' + (summary.workouts > 1 ? summary.workouts + ' · ' : '') + timeText + '</span>' : '');
+    if (isL) c.title = summary.workouts + (summary.workouts === 1 ? ' workout · ' : ' workouts · ') + dur(seconds);
     c.onclick = function () { if (isL) showDayLogs(ds, sch); else if (sch) openDa(ds, sch, true); };
     return c;
   }
@@ -1959,13 +2005,14 @@
     }
     var st = streak();
     cs.textContent = 'Streak · ' + st + (st === 1 ? ' training day' : ' training days');
-    var keys = Object.keys(logs).filter(function (k) { return logs[k] && logs[k].length; }).sort();
+    calendarSummaries = window.getWorkoutDailySummariesForCloud ? window.getWorkoutDailySummariesForCloud() : {};
+    var keys = Object.keys(calendarSummaries).sort();
     var now = new Date(), s = keys.length ? parseDateStr(keys[0]) : now;
     if (s > now) s = now;
     var y = s.getFullYear(), m = s.getMonth(), endIdx = now.getFullYear() * 12 + now.getMonth() + 24, cur = null;
     while (y * 12 + m <= endIdx) {
       var days = new Date(y, m + 1, 0).getDate(), first = mondayIndex(new Date(y, m, 1).getDay()), n = 0, sec = 0;
-      for (var d = 1; d <= days; d++) { var l = logs[ymd(y, m, d)]; if (l) l.forEach(function (x) { n++; sec += x.duration || 0; }); }
+      for (var d = 1; d <= days; d++) { var daily = calendarSummaries[ymd(y, m, d)]; if (daily) { n += daily.workouts; sec += daily.total_seconds; } }
       var wrap = document.createElement('div');
       wrap.className = 'cal-month';
       wrap.innerHTML = '<div class="cal-month-head">' + MN[m] + ' ' + y + '<span>' + (n ? n + ' workouts · ' + dur(sec) : '–') + '</span></div>' +
@@ -2146,7 +2193,7 @@
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./cloud-config.js?v=2.11.0"></script>
-<script src="./cloud.js?v=2.11.0"></script>
-<script src="./plan.js?v=2.11.0"></script>
+<script src="./cloud-config.js?v=2.12.0"></script>
+<script src="./cloud.js?v=2.12.0"></script>
+<script src="./plan.js?v=2.12.0"></script>
     </html>
