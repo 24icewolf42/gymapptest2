@@ -1,2 +1,5 @@
 build-apk/
 node_modules/
+test-results/
+playwright-report/
+.android-e2e/
