@@ -303,6 +303,26 @@ describe('hardening', () => {
     expect((await u.client.from('body_weight_logs').select('weight_kg').eq('log_date', '2026-01-02')).data).toEqual([{ weight_kg: 71 }]);
   });
 
+  it('saves weigh-ins with server time, and only fresh ones override a deletion', async () => {
+    const u = await makeUser(uniqueName('sw'));
+    const r1 = await u.client.rpc('save_my_weights', { entries: [{ log_date: '2026-03-01', weight_kg: 70, fresh: true }] });
+    expect(r1.error).toBeNull();
+    expect(r1.data).toHaveLength(1);
+    expect(r1.data[0].log_date).toBe('2026-03-01');
+    expect(Math.abs(Date.parse(r1.data[0].updated_at) - Date.now())).toBeLessThan(60000);
+    await u.client.from('body_weight_logs').delete().eq('user_id', u.id).eq('log_date', '2026-03-01');
+    // A copy another phone still holds does not bring it back...
+    const r2 = await u.client.rpc('save_my_weights', { entries: [{ log_date: '2026-03-01', weight_kg: 70, fresh: false }, { log_date: '2026-03-02', weight_kg: 71 }] });
+    expect(r2.data.map((x) => x.log_date)).toEqual(['2026-03-02']);
+    expect((await u.client.from('body_weight_logs').select('weight_kg').eq('log_date', '2026-03-01')).data).toEqual([]);
+    // ...but an entry made again on a phone does.
+    const r3 = await u.client.rpc('save_my_weights', { entries: [{ log_date: '2026-03-01', weight_kg: 72, fresh: true }] });
+    expect(r3.data).toHaveLength(1);
+    expect((await u.client.from('body_weight_logs').select('weight_kg').eq('log_date', '2026-03-01')).data).toEqual([{ weight_kg: 72 }]);
+    const many = Array.from({ length: 401 }, (_, i) => ({ log_date: `2025-01-01`, weight_kg: 70 + (i % 10) }));
+    expect((await u.client.rpc('save_my_weights', { entries: many })).error).not.toBeNull();
+  });
+
   it('does not let a reply move to another date or a host delete a date', async () => {
     const host = await makeUser(uniqueName('h'));
     const fr = await makeUser(uniqueName('f'));

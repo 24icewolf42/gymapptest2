@@ -178,17 +178,22 @@ drop trigger if exists body_weight_before_write on public.body_weight_logs;
 create trigger body_weight_before_write before insert or update on public.body_weight_logs
   for each row execute function private.body_weight_before_write();
 
--- Weigh-ins entered on a phone running this version: stored with server time,
--- so a phone with a wrong clock can't lose a new entry to an older deletion.
-create or replace function public.save_my_weights(entries jsonb)
-returns integer
+-- Weigh-ins uploaded by a phone running this version, stored with server time.
+-- An entry marked fresh was changed on that phone since its last upload and
+-- overrides a deletion made elsewhere; any other entry is only a copy the phone
+-- still holds, so a deletion recorded here wins and the entry is skipped.
+-- Returns the rows written, with their server time.
+drop function if exists public.save_my_weights(jsonb);
+create function public.save_my_weights(entries jsonb)
+returns table (log_date date, updated_at timestamptz)
 language plpgsql
 security definer
 set search_path = ''
 as $$
+#variable_conflict use_column
 declare
   e jsonb;
-  n integer := 0;
+  d date;
 begin
   if auth.uid() is null then
     raise exception 'Not signed in' using errcode = '42501';
@@ -197,13 +202,19 @@ begin
     raise exception 'Send up to 400 weigh-ins at a time' using errcode = '22023';
   end if;
   for e in select value from jsonb_array_elements(entries) loop
-    delete from private.body_weight_tombstones where user_id = auth.uid() and log_date = (e ->> 'log_date')::date;
-    insert into public.body_weight_logs (user_id, log_date, weight_kg, updated_at)
-    values (auth.uid(), (e ->> 'log_date')::date, (e ->> 'weight_kg')::numeric, now())
+    d := (e ->> 'log_date')::date;
+    if coalesce((e ->> 'fresh')::boolean, false) then
+      delete from private.body_weight_tombstones t where t.user_id = auth.uid() and t.log_date = d;
+    elsif exists (select 1 from private.body_weight_tombstones t where t.user_id = auth.uid() and t.log_date = d) then
+      continue;
+    end if;
+    insert into public.body_weight_logs as b (user_id, log_date, weight_kg, updated_at)
+    values (auth.uid(), d, (e ->> 'weight_kg')::numeric, now())
     on conflict (user_id, log_date) do update set weight_kg = excluded.weight_kg, updated_at = now();
-    n := n + 1;
+    log_date := d;
+    updated_at := now();
+    return next;
   end loop;
-  return n;
 end;
 $$;
 revoke all on function public.save_my_weights(jsonb) from public, anon;
