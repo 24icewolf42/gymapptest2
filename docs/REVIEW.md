@@ -1,6 +1,8 @@
 # Code review and status
 
-Review of the app at commit `108ba0b` (v2.9.1), with the status of every finding after the v3.0.0 rework on the `modernize` branch.
+Review of the app at commit `108ba0b` (v2.9.1), with the status of every finding after the v3.0.0 rework on the `modernize` branch (rebased onto upstream `a30a7ff`, v2.12.0).
+
+Upstream v2.12.0 also starts publishing leaderboard stats automatically on every sync; v3.0.0 keeps sharing opt-in. Which behaviour the app should have is the owner's call.
 The findings come from two independent passes: an Opus review of the frozen snapshot (full report below), cross-checked against my own read. Each was re-verified against the code.
 
 ## Status
@@ -14,7 +16,7 @@ The findings come from two independent passes: an Opus review of the frozen snap
 | H4 | High | supabase-js from CDN, floating version, no SRI | Fixed: vendored pinned 2.118.0 (vendor/supabase.js); CSP blocks remote scripts |
 | H5 | High | Signing key committed with public passwords | Open: needs a new secret release key and one reinstall for every user; owner decision (README → Android signing) |
 | H6 | High | CI write token exposed to unpinned install scripts | Fixed: read-only build job, separate publish job on main only, actions pinned by SHA, Capacitor from a lockfile with --ignore-scripts, pillow pinned |
-| M1 | Medium | Deletions resurrected by sync | Fixed: pending-delete tombstones + synced-key bookkeeping for logs and weigh-ins; plan tombstones resolved by the newer side; unit + e2e tests |
+| M1 | Medium | Deletions resurrected by sync | Fixed: synced session tombstones and cleared dates (the format upstream adopted on 2026-10-23), weigh-in delete queue, plan tombstones resolved by the newer side; unit + e2e tests incl. interop with upstream's format |
 | M2 | Medium | Whole-document last-writer-wins uploads | Fixed: every upload is read-merge-write; plans merge per routine with timestamps. Residual: concurrent writes within one round trip can still race (single-row JSON design) |
 | M3 | Medium | One bad weigh-in breaks weight sync | Fixed: input limited to 20–350 kg, sanitized list, only changed rows upserted |
 | M4 | Medium | Crash when the active workout was deleted | Fixed: exercise list snapshot at open; rebuilds from draft/log; stale active state cleared |

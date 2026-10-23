@@ -28,7 +28,7 @@ The app has **no build step**. Edit a file, reload, done. npm is only needed for
 ## Data and privacy
 
 - **Without an account,** everything stays on the phone: workouts, plan, weigh-ins and settings.
-- **With an account,** your plan, workout history, last-used weights and weigh-ins sync to your account so you can use several devices. Only you can read them.
+- **With an account,** your plan, workout history (with each set, date and duration), last-used weights, bypass days and weigh-ins sync to your account so you can use several devices. Only you can read them. Deletions sync too. The format is shared with the previous app version, so old and new versions can be used on the same account.
 - **Friends** are people whose request you accepted. You find someone by their exact username, so the list of users can't be browsed. Friends can see:
   - your username;
   - gym dates you post, and your replies to their dates;
@@ -49,7 +49,10 @@ All of this is enforced by row-level security in the database, not just by the a
 Then put the project URL and the publishable key in `cloud-config.js`, and set the
 Auth Site URL and redirect URL to the deployed web address.
 
-**Existing project (the live app):** run these, in order, in the SQL Editor. Each one is safe to run twice.
+**Existing project (the live app):** the workout-sync migrations
+`20261023000003_complete_workout_sync.sql` (formerly `20261023_complete_workout_sync.sql`, renamed
+so it sorts after the table it alters) and `20261023190000_daily_workout_summaries.sql` are
+already live. Then run these, in order, in the SQL Editor. Each one is safe to run twice.
 
 1. `supabase/migrations/20261024000000_friendships.sql` closes a security hole and lets people unfriend:
    - It **fixes a hole that let anyone make themselves an accepted friend of any user** and read their data.
