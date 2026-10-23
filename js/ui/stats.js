@@ -2,7 +2,8 @@
 import { $, html, render, on, toast } from '../core/dom.js';
 import { ymd, fmtShort, fmtDuration } from '../core/dates.js';
 import { state, setWeight, deleteWeight } from '../state.js';
-import { totals, exerciseNames, liftPoints, streak } from '../domain/logs.js';
+import { totals, exerciseNames, liftPoints, streak, bestStreak } from '../domain/logs.js';
+import { KEYS, read } from '../core/store.js';
 import { weightTrend } from '../domain/weights.js';
 import { lineChart } from './graph.js';
 import { icons } from './icons.js';
@@ -14,8 +15,9 @@ let showAllLifts = false;
 function tiles() {
   const t = totals(state.logs, ymd().slice(0, 7));
   const st = streak(state.logs, state.bypass, state.schedule);
+  const best = Math.max(bestStreak(state.logs, state.bypass, state.schedule), Number((read(KEYS.legacyStats, {}) || {}).best_streak) || 0);
   const tile = (value, label) => html`<div class="tile"><b>${value}</b><span>${label}</span></div>`;
-  return html`<div class="tiles">${tile(t.workouts, 'Workouts')}${tile(t.month, 'This month')}${tile(t.seconds ? fmtDuration(t.seconds) : '–', 'Total time')}${tile(st, 'Streak')}</div>`;
+  return html`<div class="tiles">${tile(t.workouts, 'Workouts')}${tile(t.month, 'This month')}${tile(t.seconds ? fmtDuration(t.seconds) : '–', 'Total time')}${tile(st + (best > st ? ' / ' + best : ''), best > st ? 'Streak / best' : 'Streak')}</div>`;
 }
 
 function weightCard() {

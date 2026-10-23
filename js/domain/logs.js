@@ -1,8 +1,54 @@
 // Workout history: { "YYYY-MM-DD": [ { day, exercises: [{ name, target, sets: [{ w, r, done }] }], time, duration } ] }
 // Pure functions, no DOM or storage.
-import { isYmd, mondayIndex, addDays, ymd } from '../core/dates.js';
+import { mondayIndex, addDays, ymd } from '../core/dates.js';
 
-export const sessionKey = (date, day) => date + '|' + day;
+/**
+ * Identity of a logged session, shared with the original app so deletions
+ * sync between both versions: the session id, or date|workout|time for
+ * sessions saved before ids existed.
+ */
+export function sessionKey(date, s) {
+  if (s.id) return s.id;
+  return s.time ? date + '|' + s.day + '|' + s.time : date + '|' + s.day + '|' + JSON.stringify(s);
+}
+
+/** New session id. */
+export function newSessionId() {
+  return globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+}
+
+const validDate = (y, m, d) => {
+  const dt = new Date(y, m - 1, d);
+  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d ? ymd(dt) : null;
+};
+
+/**
+ * Turns the date formats older versions and imports produced ("2026-10-23",
+ * "23.10.2026", "10/23/2026", epoch timestamps, ISO times) into YYYY-MM-DD.
+ * Falls back to the session's own date or time. Returns null if nothing fits.
+ */
+export function canonicalLogDate(raw, session) {
+  const candidates = [raw, session && (session.date || session.dateStr || session.date_key), session && (session.time || session.timestamp || session.createdAt || session.created_at)];
+  for (const value of candidates) {
+    if (value == null || value === '') continue;
+    const str = String(value).trim();
+    let m = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+    if (m) { const r = validDate(+m[1], +m[2], +m[3]); if (r) return r; }
+    m = str.match(/^(\d{1,2})[/. -](\d{1,2})[/. -](\d{4})$/);
+    if (m) {
+      const a = +m[1], b = +m[2];
+      // Day first unless that is impossible (matches the original app).
+      const [d, mo] = b > 12 ? [b, a] : [a, b];
+      const r = validDate(+m[3], mo, d);
+      if (r) return r;
+    }
+    if (/^\d{10,13}$/.test(str)) {
+      const dt = new Date(str.length === 10 ? +str * 1000 : +str);
+      if (!Number.isNaN(dt.getTime())) return ymd(dt);
+    }
+  }
+  return null;
+}
 
 function cleanSet(s) {
   if (!s || typeof s !== 'object') return null;
@@ -15,57 +61,76 @@ function cleanSession(s) {
     .filter((e) => e && typeof e.name === 'string')
     .map((e) => ({ name: e.name.slice(0, 80), target: String(e.target ?? '').slice(0, 20), sets: (Array.isArray(e.sets) ? e.sets : []).map(cleanSet).filter(Boolean) }));
   const out = { day: s.day.slice(0, 40), exercises, time: typeof s.time === 'string' ? s.time : '' };
-  if (Number.isFinite(s.duration) && s.duration >= 0) out.duration = Math.round(s.duration);
+  if (typeof s.id === 'string' && s.id) out.id = s.id.slice(0, 64);
+  if (Number.isFinite(+s.duration) && +s.duration >= 0) out.duration = Math.round(+s.duration);
   return out;
 }
 
-/** Drops anything that is not a well-formed log (e.g. from a hand-edited backup). */
-export function sanitizeLogs(obj) {
+const byTime = (a, b) => (Date.parse(a.time) || 0) - (Date.parse(b.time) || 0);
+
+/**
+ * Validates and normalises history: well-formed sessions only, keyed by a real
+ * calendar date, oldest first. Accepts the object form and the array form
+ * some older backups used.
+ */
+export function sanitizeLogs(source) {
   const out = {};
-  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return out;
-  Object.keys(obj).forEach((date) => {
-    if (!isYmd(date) || !Array.isArray(obj[date])) return;
-    const sessions = obj[date].map(cleanSession).filter(Boolean);
-    if (sessions.length) out[date] = sessions;
-  });
+  if (!source || typeof source !== 'object') return out;
+  const entries = Array.isArray(source)
+    ? source.map((s, i) => [s && (s.date || s.dateStr || s.time) || 'undated-' + i, [s]])
+    : Object.keys(source).map((date) => [date, Array.isArray(source[date]) ? source[date] : []]);
+  entries.forEach(([raw, sessions]) => sessions.forEach((s) => {
+    const clean = cleanSession(s);
+    const date = clean && canonicalLogDate(raw, s);
+    if (date) (out[date] || (out[date] = [])).push(clean);
+  }));
+  Object.values(out).forEach((list) => list.sort(byTime));
   return out;
 }
 
 export function allKeys(logs) {
   const keys = [];
-  Object.keys(logs).forEach((date) => (logs[date] || []).forEach((s) => keys.push(sessionKey(date, s.day))));
+  Object.keys(logs).forEach((date) => (logs[date] || []).forEach((s) => keys.push(sessionKey(date, s))));
   return keys;
 }
 
 /**
- * Merges cloud history into this phone's history.
- * - Same workout on the same day: the most recently saved copy wins.
- * - pendingDeletes: sessions deleted here but not yet uploaded; the cloud copy is ignored.
- * - syncedKeys: sessions this phone had already uploaded. If one of them is now
- *   missing from the cloud, another device deleted it, so it is dropped here too.
- *   Sessions recorded offline are not in syncedKeys and are kept.
+ * Merges two histories. The same session (same key) keeps its most recently
+ * saved copy. Sessions listed in `deleted`, or saved on a date before that date
+ * was cleared (`deletedDates`, ms or ISO), are dropped. Tombstones come from
+ * both this phone and the cloud, so a deletion on any device sticks.
  */
-export function mergeLogs(remote, local, { pendingDeletes = {}, syncedKeys = [] } = {}) {
-  remote = sanitizeLogs(remote);
-  local = sanitizeLogs(local);
-  const synced = new Set(syncedKeys);
-  const remoteKeys = new Set(allKeys(remote));
+export function mergeLogs(remote, local, { deleted = [], deletedDates = {} } = {}) {
+  const gone = new Set(deleted);
   const merged = {};
-  const add = (date, session) => {
+  [sanitizeLogs(remote), sanitizeLogs(local)].forEach((logs) => Object.keys(logs).forEach((date) => logs[date].forEach((s) => {
+    const key = sessionKey(date, s);
+    if (gone.has(key)) return;
+    const clearedAt = Number(deletedDates[date]) || Date.parse(deletedDates[date]) || 0;
+    if (clearedAt && (Date.parse(s.time) || 0) <= clearedAt) return;
     const list = merged[date] || (merged[date] = []);
-    const i = list.findIndex((s) => s.day === session.day);
-    if (i < 0) list.push(session);
-    else if ((Date.parse(session.time) || 0) >= (Date.parse(list[i].time) || 0)) list[i] = session;
-  };
-  Object.keys(remote).forEach((date) => remote[date].forEach((s) => {
-    if (!pendingDeletes[sessionKey(date, s.day)]) add(date, s);
-  }));
-  Object.keys(local).forEach((date) => local[date].forEach((s) => {
-    const key = sessionKey(date, s.day);
-    if (synced.has(key) && !remoteKeys.has(key)) return;
-    add(date, s);
-  }));
+    const i = list.findIndex((x) => sessionKey(date, x) === key);
+    if (i < 0) list.push(s);
+    else if ((Date.parse(s.time) || 0) >= (Date.parse(list[i].time) || 0)) list[i] = s;
+  })));
+  Object.values(merged).forEach((list) => list.sort(byTime));
   return merged;
+}
+
+/** Per-day totals, written to the cloud for the original app's calendar. */
+export function dailySummaries(logs) {
+  const days = {};
+  Object.keys(logs).forEach((date) => {
+    const sessions = logs[date] || [];
+    if (!sessions.length) return;
+    const d = days[date] = { workouts: sessions.length, total_seconds: 0, volume_kg_reps: 0 };
+    sessions.forEach((s) => {
+      d.total_seconds += Math.max(0, Number(s.duration) || 0);
+      (s.exercises || []).forEach((e) => (e.sets || []).forEach((x) => { d.volume_kg_reps += (parseFloat(x.w) || 0) * (parseFloat(x.r) || 0); }));
+    });
+    d.volume_kg_reps = Math.round(d.volume_kg_reps);
+  });
+  return days;
 }
 
 export function eachSession(logs, fn) {
@@ -108,12 +173,13 @@ export function exerciseNames(logs) {
 
 /** Aggregates published to the friends leaderboard. */
 export function leaderboardStats(logs) {
-  let workouts = 0, volume = 0;
+  let workouts = 0, volume = 0, seconds = 0;
   eachSession(logs, (s) => {
     workouts++;
+    seconds += Math.max(0, Number(s.duration) || 0);
     (s.exercises || []).forEach((e) => (e.sets || []).forEach((x) => { volume += num(x.w) * num(x.r); }));
   });
-  return { workouts_count: workouts, volume_kg_reps: Math.round(volume) };
+  return { workouts_count: workouts, volume_kg_reps: Math.round(volume), total_seconds: seconds };
 }
 
 /**
@@ -131,6 +197,21 @@ export function streak(logs, bypass, schedule, today = new Date()) {
     else break;
   }
   return count;
+}
+
+/** Longest run of scheduled days that were trained or bypassed, up to today. */
+export function bestStreak(logs, bypass, schedule, today = new Date()) {
+  const active = new Set([...Object.keys(logs).filter((d) => logs[d] && logs[d].length), ...Object.keys(bypass).filter((d) => bypass[d])]);
+  const first = [...active].sort()[0];
+  if (!first) return 0;
+  let best = 0, run = 0;
+  const [y, m, d] = first.split('-').map(Number);
+  for (let day = new Date(y, m - 1, d); day <= today; day = addDays(day, 1)) {
+    if (!schedule[mondayIndex(day.getDay())]) continue;
+    if (active.has(ymd(day))) best = Math.max(best, ++run);
+    else if (ymd(day) !== ymd(today)) run = 0;
+  }
+  return best;
 }
 
 /** Last-used kg/reps per exercise, without trailing empty rows. */
@@ -155,14 +236,45 @@ export function upgradeLastUsed(lastUsed, logs, draft) {
   return { lastUsed: out, changed: true };
 }
 
+/**
+ * Last-used values from two devices: per exercise the most recently changed
+ * entry wins (updatedAt, as the original app stores it); ties keep this phone's.
+ */
 export function mergeProgress(remote, local) {
   const out = {};
-  const add = (src) => Object.keys(src || {}).forEach((k) => {
-    if (k.includes('||')) return;
-    const v = src[k];
-    if (v && Array.isArray(v.sets)) out[k] = { sets: trimSets(v.sets) };
+  const clean = (v) => (v && Array.isArray(v.sets) ? { sets: trimSets(v.sets), updatedAt: Number(v.updatedAt) || 0 } : null);
+  Object.keys(remote || {}).forEach((k) => { const v = clean(remote[k]); if (v && !k.includes('||')) out[k] = v; });
+  Object.keys(local || {}).forEach((k) => {
+    const v = clean(local[k]);
+    if (!v || k.includes('||')) return;
+    if (!out[k] || v.updatedAt >= out[k].updatedAt) out[k] = v;
   });
-  add(remote);
-  add(local);
+  return out;
+}
+
+/**
+ * Bypass days as stored by the original app: { date: { value, updatedAt } }.
+ * Older data is a plain { date: true } map. The newest change per day wins.
+ */
+export function normalizeBypass(state, legacy = {}) {
+  const out = {};
+  Object.keys(legacy || {}).forEach((d) => { if (legacy[d]) out[d] = { value: true, updatedAt: 0 }; });
+  Object.keys(state || {}).forEach((d) => {
+    const v = state[d];
+    out[d] = v === true ? { value: true, updatedAt: 0 } : { value: !!(v && v.value), updatedAt: Number(v && v.updatedAt) || 0 };
+  });
+  return out;
+}
+
+export function mergeBypass(remote, local) {
+  const out = normalizeBypass(remote);
+  const here = normalizeBypass(local);
+  Object.keys(here).forEach((d) => { if (!out[d] || here[d].updatedAt >= out[d].updatedAt) out[d] = here[d]; });
+  return out;
+}
+
+export function activeBypass(state) {
+  const out = {};
+  Object.keys(state).forEach((d) => { if (state[d].value) out[d] = true; });
   return out;
 }

@@ -83,7 +83,12 @@ export async function loadLeaderboard(friends) {
 }
 
 export async function publishStats(stats) {
-  const r = await supabase.from('leaderboard_stats').upsert({ user_id: account.user.id, ...stats, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+  const row = { user_id: account.user.id, ...stats, updated_at: new Date().toISOString() };
+  let r = await supabase.from('leaderboard_stats').upsert(row, { onConflict: 'user_id' });
+  if (isMissingSchema(r.error)) {
+    // Database without the streak/time columns.
+    r = await supabase.from('leaderboard_stats').upsert({ user_id: row.user_id, workouts_count: row.workouts_count, volume_kg_reps: row.volume_kg_reps, updated_at: row.updated_at }, { onConflict: 'user_id' });
+  }
   return r.error ? fail(r.error) : ok(true);
 }
 

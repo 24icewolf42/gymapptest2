@@ -18,6 +18,11 @@ export const KEYS = Object.freeze({
   planUpdatedAt: 'gymPlanUpdatedAt',
   sync: 'gymSyncState',
   gyms: 'gymFavoriteGyms',
+  // Shared with the original app's sync format:
+  deletedSessions: 'gymDeletedSessions',
+  deletedDates: 'gymDeletedLogDates',
+  bypassState: 'gymBypassState',
+  legacyStats: 'gymLegacyStats',
 });
 
 export function read(key, fallback) {

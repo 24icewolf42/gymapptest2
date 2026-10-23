@@ -156,7 +156,6 @@ async function restoreFrom(text) {
     : 'Everything on this phone is replaced by the backup.', { title: 'Restore this backup?', ok: 'Restore', danger: true });
   if (!ok) return;
   Object.entries(data).forEach(([k, v]) => localStorage.setItem(k, v));
-  state.sync.syncedKeys = [];
   state.sync.syncedWeightDates = [];
   localStorage.setItem('gymSyncState', JSON.stringify(state.sync));
   loadState();

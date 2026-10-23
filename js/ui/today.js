@@ -101,6 +101,6 @@ export function initToday() {
   on(page, 'click', '[data-more]', () => { upcomingDays += 14; renderToday(); });
   on(page, 'click', '[data-log-any]', async () => {
     const name = await pickWorkout(ymd());
-    if (name) openSession(name, ymd());
+    if (name) openSession(name, ymd(), { fresh: true });
   });
 }

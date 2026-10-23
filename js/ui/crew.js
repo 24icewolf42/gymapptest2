@@ -11,7 +11,7 @@ import * as api from '../cloud/gym-dates.js';
 import {
   DURATIONS, QUICK_STARTS, phase, canCheckIn, quickStartTime, validateDraft, groupDates, unanswered, rememberGym, startOf,
 } from '../domain/gym-dates.js';
-import { leaderboardStats } from '../domain/logs.js';
+import { leaderboardStats, streak, bestStreak } from '../domain/logs.js';
 import { sanitizeWorkoutName, workoutSummary } from '../domain/plan.js';
 import { openSheet, confirmDialog, promptDialog } from './sheet.js';
 import { icons } from './icons.js';
@@ -265,7 +265,7 @@ function rankingPanel() {
         <div class="row${r.user_id === me() ? ' me' : ''}">
           <span class="rank">${i + 1}</span>${avatar(r.username)}
           <div class="row-main"><b>@${r.username}${r.user_id === me() ? ' (you)' : ''}</b>
-            <small>${r.workouts_count == null ? 'Not shared' : r.workouts_count + ' workouts · ' + Number(r.volume_kg_reps || 0).toLocaleString() + ' kg·reps'}${r.routines != null ? ' · ' + r.routines + ' routines' : ''}</small></div>
+            <small>${r.workouts_count == null ? 'Not shared' : [r.workouts_count + ' workouts', Number(r.volume_kg_reps || 0).toLocaleString() + ' kg·reps', r.total_seconds ? Math.round(r.total_seconds / 3600) + ' h' : '', r.current_streak ? r.current_streak + ' streak' : ''].filter(Boolean).join(' · ')}${r.routines != null ? ' · ' + r.routines + ' routines' : ''}</small></div>
           <span class="row-end">${r.weight_kg == null ? '' : html`<b>${Number(r.weight_kg).toFixed(1)} kg</b><small>${r.weight_date || ''}</small>`}</span>
         </div>`)}
     </div>
@@ -424,7 +424,13 @@ export function initCrew() {
     if (await act(social.deleteSharedWorkout(b.dataset.unshare), 'Removed.')) loadTabData();
   });
   on(page, 'click', '[data-publish]', async () => {
-    if (await act(social.publishStats(leaderboardStats(state.logs)), 'Your stats are shared.')) loadTabData();
+    const legacy = read(KEYS.legacyStats, {}) || {};
+    const stats = {
+      ...leaderboardStats(state.logs),
+      current_streak: streak(state.logs, state.bypass, state.schedule),
+      best_streak: Math.max(bestStreak(state.logs, state.bypass, state.schedule), Number(legacy.best_streak) || 0),
+    };
+    if (await act(social.publishStats(stats), 'Your stats are shared.')) loadTabData();
   });
   on(page, 'click', '[data-unpublish]', async () => {
     if (await act(social.unpublishStats(), 'Stats removed.')) loadTabData();

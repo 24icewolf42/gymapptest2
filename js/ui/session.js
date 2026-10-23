@@ -3,9 +3,9 @@ import { $, html, render, on, toast, haptic } from '../core/dom.js';
 import { KEYS, read, write, remove, emit } from '../core/store.js';
 import { ymd, fmtLong, fmtClock, fmtShort } from '../core/dates.js';
 import { pushLayer } from '../core/router.js';
-import { state, saveLogs, saveLastUsed } from '../state.js';
+import { state, saveLogs, saveLastUsed, markSessionsDeleted } from '../state.js';
 import { sanitizeWorkout, rowCount } from '../domain/plan.js';
-import { bestWeight, trimSets } from '../domain/logs.js';
+import { bestWeight, trimSets, sessionKey, newSessionId } from '../domain/logs.js';
 import { restState, roundToStep, muscleGroup } from '../domain/rest-timer.js';
 import { categoryLabel } from '../domain/catalog.js';
 import { confirmDialog } from './sheet.js';
@@ -35,9 +35,14 @@ function readDraft() { return read(KEYS.draft, null); }
 
 export function isOpen() { return !!s; }
 
-/** Opens a workout for a date (defaults to today). */
-export function openSession(day, date = ymd()) {
-  const existing = (state.logs[date] || []).find((x) => x.day === day) || null;
+/**
+ * Opens a workout for a date (defaults to today). If that workout was already
+ * logged on that date, the latest copy opens for editing, unless `fresh` asks
+ * for a new session or `key` picks a specific one.
+ */
+export function openSession(day, date = ymd(), { key = null, fresh = false } = {}) {
+  const sameDay = (state.logs[date] || []).filter((x) => x.day === day);
+  const existing = fresh ? null : key ? sameDay.find((x) => sessionKey(date, x) === key) || null : sameDay[sameDay.length - 1] || null;
   const draft = readDraft();
   const resume = draft && draft.day === day && draft.date === date && draft.ex ? draft : null;
   let exercises = state.workouts[day] ? sanitizeWorkout(state.workouts[day]) : null;
@@ -183,7 +188,7 @@ function autosave(card) {
   if (!s) return;
   const e = s.exercises[+card.dataset.index];
   const sets = trimSets(collectSets(card));
-  if (sets.length) state.lastUsed[e.name] = { sets }; else delete state.lastUsed[e.name];
+  if (sets.length) state.lastUsed[e.name] = { sets, updatedAt: Date.now() }; else delete state.lastUsed[e.name];
   saveLastUsed();
   const tag = card.querySelector('.ex-saved');
   tag.classList.add('show');
@@ -291,13 +296,19 @@ async function finish() {
     { title: s.existing ? 'Save your changes?' : 'Finish and save this workout?', ok: 'Save workout' },
   );
   if (!ok || !s) return;
-  const record = { day: s.day, exercises: entry, time: new Date().toISOString() };
+  const record = { id: s.existing?.id || newSessionId(), day: s.day, exercises: entry, time: new Date().toISOString() };
   if (duration) record.duration = duration;
-  const list = (state.logs[s.date] || []).filter((x) => x.day !== s.day);
+  let list = state.logs[s.date] || [];
+  if (s.existing) {
+    const oldKey = sessionKey(s.date, s.existing);
+    list = list.filter((x) => sessionKey(s.date, x) !== oldKey);
+    // Sessions saved before ids existed are keyed by their time, which changes now.
+    if (oldKey !== record.id) markSessionsDeleted([oldKey]);
+  }
   state.logs[s.date] = [...list, record];
   all.forEach(({ e, sets }) => {
     const filled = trimSets(sets);
-    if (filled.length) state.lastUsed[e.name] = { sets: filled };
+    if (filled.length) state.lastUsed[e.name] = { sets: filled, updatedAt: Date.now() };
   });
   saveLogs();
   saveLastUsed();

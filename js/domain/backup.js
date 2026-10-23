@@ -6,6 +6,7 @@ export const BACKUP_KEYS = [
   'gymLogs', 'gymLastUsed', 'bodyWeightLogs', 'gymBypass',
   'gymCustomWorkouts', 'gymPlanSchedule', 'gymDeletedWorkouts', 'gymRestoredWorkouts',
   'gymPlanUpdatedAt', 'gymSettings', 'gymSidesFrom', 'gymFavoriteGyms',
+  'gymDeletedSessions', 'gymDeletedLogDates', 'gymBypassState', 'gymLegacyStats',
 ];
 
 export function makeBackup(getItem, version) {

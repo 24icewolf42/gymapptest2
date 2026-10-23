@@ -1,42 +1,72 @@
 import { describe, it, expect } from 'vitest';
 import {
   sanitizeLogs, mergeLogs, totals, liftPoints, bestWeight, exerciseNames, leaderboardStats,
-  streak, trimSets, upgradeLastUsed, mergeProgress, sessionKey,
+  streak, bestStreak, trimSets, upgradeLastUsed, mergeProgress, sessionKey, canonicalLogDate,
+  dailySummaries, mergeBypass, normalizeBypass, activeBypass,
 } from '../../js/domain/logs.js';
 
 const session = (day, time, w = '50', r = '8') => ({ day, time, duration: 3600, exercises: [{ name: 'Bench', target: '8', sets: [{ w, r, done: true }] }] });
 
 describe('sanitizeLogs', () => {
-  it('drops malformed dates, sessions and sets', () => {
-    const out = sanitizeLogs({ 'not-a-date': [session('A', 't')], '2026-01-01': 'x', '2026-01-02': [null, { day: 'Push', exercises: [{ name: 'Bench', sets: [null, { w: 5 }] }] }] });
+  it('drops malformed sessions and sets', () => {
+    const out = sanitizeLogs({ '2026-01-01': 'x', '2026-01-02': [null, { day: 'Push', exercises: [{ name: 'Bench', sets: [null, { w: 5 }] }] }] });
     expect(Object.keys(out)).toEqual(['2026-01-02']);
     expect(out['2026-01-02'][0].exercises[0].sets).toEqual([{ w: '5', r: '', done: false }]);
+  });
+
+  it('repairs dates written in other formats, like the original app does', () => {
+    const s = session('Push', '2026-10-05T18:00:00Z');
+    const out = sanitizeLogs({ '05.10.2026': [s], '1760000000': [session('Pull', 'x')], nonsense: [{ ...s, day: 'Legs', time: '2026-10-07T10:00:00Z' }], never: [{ day: 'X', exercises: [] }] });
+    expect(Object.keys(out).sort()).toEqual(['2025-10-09', '2026-10-05', '2026-10-07'].sort());
+    expect(canonicalLogDate('10/23/2026')).toBe('2026-10-23');
+    expect(canonicalLogDate('31.02.2026')).toBeNull();
+  });
+
+  it('keeps session ids and accepts the array form', () => {
+    const out = sanitizeLogs([{ id: 'a1', day: 'Push', time: '2026-03-01T10:00:00Z', exercises: [] }]);
+    expect(out['2026-03-01'][0].id).toBe('a1');
   });
 });
 
 describe('mergeLogs', () => {
-  it('keeps the most recently saved copy of the same workout on the same day', () => {
-    const remote = { '2026-10-01': [session('Push', '2026-10-01T18:00:00Z', '60')] };
-    const local = { '2026-10-01': [session('Push', '2026-10-01T17:00:00Z', '50')] };
-    expect(mergeLogs(remote, local)['2026-10-01'][0].exercises[0].sets[0].w).toBe('60');
+  it('keeps the most recently saved copy of the same session', () => {
+    const remote = { '2026-10-01': [{ ...session('Push', '2026-10-01T18:00:00Z', '60'), id: 's1' }] };
+    const local = { '2026-10-01': [{ ...session('Push', '2026-10-01T17:00:00Z', '50'), id: 's1' }] };
+    const m = mergeLogs(remote, local);
+    expect(m['2026-10-01']).toHaveLength(1);
+    expect(m['2026-10-01'][0].exercises[0].sets[0].w).toBe('60');
   });
 
-  it('unions different workouts and days', () => {
-    const m = mergeLogs({ '2026-10-01': [session('Push', 'a')] }, { '2026-10-01': [session('Abs', 'b')], '2026-10-02': [session('Pull', 'c')] });
-    expect(m['2026-10-01'].map((s) => s.day).sort()).toEqual(['Abs', 'Push']);
-    expect(m['2026-10-02']).toHaveLength(1);
+  it('keeps two different sessions of the same workout on one day', () => {
+    const m = mergeLogs({ '2026-10-01': [{ ...session('Push', '2026-10-01T08:00:00Z'), id: 'a' }] }, { '2026-10-01': [{ ...session('Push', '2026-10-01T18:00:00Z'), id: 'b' }] });
+    expect(m['2026-10-01'].map((x) => x.id)).toEqual(['a', 'b']);
   });
 
-  it('does not bring back a session deleted here but not yet uploaded', () => {
-    const remote = { '2026-10-01': [session('Push', 'a')] };
-    const m = mergeLogs(remote, {}, { pendingDeletes: { [sessionKey('2026-10-01', 'Push')]: 'now' } });
-    expect(m).toEqual({});
+  it('drops deleted sessions from either side', () => {
+    const s = session('Push', '2026-10-01T18:00:00Z');
+    const key = sessionKey('2026-10-01', s);
+    expect(key).toBe('2026-10-01|Push|2026-10-01T18:00:00Z');
+    expect(mergeLogs({ '2026-10-01': [s] }, {}, { deleted: [key] })).toEqual({});
   });
 
-  it('drops a session another device deleted, but keeps sessions recorded offline', () => {
-    const local = { '2026-10-01': [session('Push', 'a')], '2026-10-02': [session('Pull', 'b')] };
-    const m = mergeLogs({}, local, { syncedKeys: [sessionKey('2026-10-01', 'Push')] });
-    expect(Object.keys(m)).toEqual(['2026-10-02']);
+  it('drops sessions saved before a date was cleared, but keeps later ones', () => {
+    const before = session('Push', '2026-10-01T08:00:00Z'), after = session('Pull', '2026-10-01T20:00:00Z');
+    const m = mergeLogs({ '2026-10-01': [before, after] }, {}, { deletedDates: { '2026-10-01': Date.parse('2026-10-01T12:00:00Z') } });
+    expect(m['2026-10-01'].map((x) => x.day)).toEqual(['Pull']);
+  });
+});
+
+describe('daily summaries and bypass', () => {
+  it('sums sessions per day', () => {
+    expect(dailySummaries({ '2026-10-01': [session('A', 'a', '10', '5'), session('B', 'b', '20', '1')] }))
+      .toEqual({ '2026-10-01': { workouts: 2, total_seconds: 7200, volume_kg_reps: 70 } });
+  });
+
+  it('merges bypass days by their latest change and reads the old plain format', () => {
+    const local = normalizeBypass({}, { '2026-10-01': true });
+    expect(local).toEqual({ '2026-10-01': { value: true, updatedAt: 0 } });
+    const merged = mergeBypass({ '2026-10-01': { value: false, updatedAt: 5 }, '2026-10-02': { value: true, updatedAt: 1 } }, local);
+    expect(activeBypass(merged)).toEqual({ '2026-10-02': true });
   });
 });
 
@@ -58,7 +88,7 @@ describe('stats', () => {
   });
 
   it('computes leaderboard aggregates', () => {
-    expect(leaderboardStats(logs)).toEqual({ workouts_count: 3, volume_kg_reps: 800 });
+    expect(leaderboardStats(logs)).toEqual({ workouts_count: 3, volume_kg_reps: 800, total_seconds: 5400 });
   });
 });
 
@@ -70,6 +100,7 @@ describe('streak', () => {
     const logs = { '2026-10-21': [session('Pull', 'a')], '2026-10-19': [session('Push', 'b')] };
     expect(streak(logs, { '2026-10-16': true }, schedule, today)).toBe(3);
     expect(streak(logs, {}, schedule, today)).toBe(2);
+    expect(bestStreak(logs, { '2026-10-16': true }, schedule, today)).toBe(3);
   });
 });
 
@@ -85,8 +116,11 @@ describe('last-used values', () => {
     expect(upgradeLastUsed({ Bench: { sets: [] } }, {}, null).changed).toBe(false);
   });
 
-  it('merges progress with this phone winning', () => {
-    expect(mergeProgress({ A: { sets: [{ w: '1', r: '1' }] }, B: { sets: [] }, 'X||Y': {} }, { A: { sets: [{ w: '2', r: '2' }] } }))
-      .toEqual({ A: { sets: [{ w: '2', r: '2' }] }, B: { sets: [] } });
+  it('merges progress by the latest change', () => {
+    const merged = mergeProgress(
+      { A: { sets: [{ w: '1', r: '1' }], updatedAt: 10 }, B: { sets: [], updatedAt: 1 }, 'X||Y': {} },
+      { A: { sets: [{ w: '2', r: '2' }], updatedAt: 5 }, B: { sets: [{ w: '3', r: '3' }], updatedAt: 2 } },
+    );
+    expect(merged).toEqual({ A: { sets: [{ w: '1', r: '1' }], updatedAt: 10 }, B: { sets: [{ w: '3', r: '3' }], updatedAt: 2 } });
   });
 });

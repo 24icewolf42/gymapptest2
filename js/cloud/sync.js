@@ -2,12 +2,12 @@
 // reads the cloud copy and merges, so two devices can't silently wipe each other.
 import { supabase, SITE_URL, errorText, isMissingSchema } from './client.js';
 import {
-  state, localPlan, applyPlan, saveLogs, saveLastUsed, saveWeights, saveSync, hasLocalData, clearLocalData,
+  state, localPlan, applyPlan, saveLogs, saveLastUsed, saveWeights, saveSync, saveBypass, saveTombstones, hasLocalData, clearLocalData,
 } from '../state.js';
 import { mergePlans } from '../domain/plan.js';
-import { mergeLogs, mergeProgress, allKeys } from '../domain/logs.js';
+import { mergeLogs, mergeProgress, mergeBypass, dailySummaries } from '../domain/logs.js';
 import { mergeWeights } from '../domain/weights.js';
-import { emit, listen, writeText } from '../core/store.js';
+import { emit, listen, writeText, read, write, KEYS } from '../core/store.js';
 import { makeBackup } from '../domain/backup.js';
 
 export const account = {
@@ -130,6 +130,21 @@ function queue(area) {
 
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
+// Newest schema first; daily_summaries/deleted_dates and bypass/tombstone/legacy columns
+// arrive with the 2026-10-23 workout-sync migrations.
+const DATA_COLUMNS = [
+  ['logs', 'progress', 'bypass_days', 'deleted_sessions', 'legacy_stats', 'stats_snapshot', 'daily_summaries', 'deleted_dates'],
+  ['logs', 'progress', 'bypass_days', 'deleted_sessions', 'legacy_stats', 'stats_snapshot'],
+  ['logs', 'progress'],
+];
+
+/** Element-wise maximum of stat snapshots, so published totals never shrink. */
+function maxMetrics(...sources) {
+  const out = {};
+  sources.forEach((src) => Object.keys(src || {}).forEach((k) => { out[k] = Math.max(Number(out[k]) || 0, Number(src[k]) || 0); }));
+  return out;
+}
+
 const SYNC = {
   async plan() {
     const uid = account.user.id;
@@ -145,20 +160,40 @@ const SYNC = {
 
   async data() {
     const uid = account.user.id;
-    const r = await supabase.from('workout_data').select('logs,progress').eq('user_id', uid).maybeSingle();
+    // Databases that have not applied every migration lack some columns; use what exists.
+    let columns = null, r = null;
+    for (const set of DATA_COLUMNS) {
+      r = await supabase.from('workout_data').select(set.join(',')).eq('user_id', uid).maybeSingle();
+      if (!isMissingSchema(r.error)) { columns = set; break; }
+    }
     if (r.error) throw r.error;
-    const pending = { ...state.sync.pendingDeletes };
-    const logs = mergeLogs(r.data?.logs || {}, state.logs, { pendingDeletes: pending, syncedKeys: state.sync.syncedKeys });
-    const progress = mergeProgress(r.data?.progress, state.lastUsed);
+    const remote = r.data || {};
+    const has = (c) => columns.includes(c);
+
+    const deleted = [...new Set([...state.deletedSessions, ...(Array.isArray(remote.deleted_sessions) ? remote.deleted_sessions : [])])];
+    const deletedDates = { ...(remote.deleted_dates || {}) };
+    Object.keys(state.deletedDates).forEach((d) => { deletedDates[d] = Math.max(Number(deletedDates[d]) || Date.parse(deletedDates[d]) || 0, Number(state.deletedDates[d]) || 0); });
+    const logs = mergeLogs(remote.logs || {}, state.logs, { deleted, deletedDates });
+    const progress = mergeProgress(remote.progress, state.lastUsed);
+    const bypass = mergeBypass(remote.bypass_days, state.bypassState);
+    const legacy = maxMetrics(read(KEYS.legacyStats, {}), remote.legacy_stats, remote.stats_snapshot);
+
+    state.deletedSessions = deleted;
+    state.deletedDates = deletedDates;
+    saveTombstones();
+    write(KEYS.legacyStats, legacy);
     if (!same(logs, state.logs)) { state.logs = logs; saveLogs({ silent: true }); }
     if (!same(progress, state.lastUsed)) { state.lastUsed = progress; saveLastUsed({ silent: true }); }
-    if (!r.data || !same(r.data.logs, logs) || !same(r.data.progress, progress)) {
-      const up = await supabase.from('workout_data').upsert({ user_id: uid, logs, progress, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+    if (!same(bypass, state.bypassState)) { state.bypassState = bypass; saveBypass({ silent: true }); }
+
+    const row = { user_id: uid, logs, progress, updated_at: new Date().toISOString() };
+    if (has('bypass_days')) Object.assign(row, { bypass_days: bypass, deleted_sessions: deleted, legacy_stats: legacy });
+    if (has('deleted_dates')) Object.assign(row, { deleted_dates: deletedDates, daily_summaries: dailySummaries(logs) });
+    const changed = !r.data || Object.keys(row).some((k) => k !== 'updated_at' && k !== 'user_id' && !same(remote[k] ?? null, row[k]));
+    if (changed) {
+      const up = await supabase.from('workout_data').upsert(row, { onConflict: 'user_id' });
       if (up.error) throw up.error;
     }
-    state.sync.syncedKeys = allKeys(logs);
-    Object.keys(pending).forEach((k) => { if (state.sync.pendingDeletes[k] === pending[k]) delete state.sync.pendingDeletes[k]; });
-    saveSync();
     return true;
   },
 
@@ -170,12 +205,17 @@ const SYNC = {
       delete state.sync.pendingWeightDeletes[date];
       saveSync();
     }
-    const r = await supabase.from('body_weight_logs').select('log_date,weight_kg').eq('user_id', uid);
+    let withStamp = true;
+    let r = await supabase.from('body_weight_logs').select('log_date,weight_kg,updated_at').eq('user_id', uid);
+    if (isMissingSchema(r.error)) { withStamp = false; r = await supabase.from('body_weight_logs').select('log_date,weight_kg').eq('user_id', uid); }
     if (r.error) throw r.error;
     const merged = mergeWeights(r.data, state.weights, state.sync.syncedWeightDates);
     if (!same(merged, state.weights)) { state.weights = merged; saveWeights({ silent: true }); }
     const remote = new Map((r.data || []).map((x) => [x.log_date, Number(x.weight_kg)]));
-    const changed = merged.filter((x) => remote.get(x.date) !== x.weight).map((x) => ({ user_id: uid, log_date: x.date, weight_kg: x.weight }));
+    const stamps = new Map((r.data || []).map((x) => [x.log_date, Date.parse(x.updated_at || '') || 0]));
+    const changed = merged
+      .filter((x) => remote.get(x.date) !== x.weight || (withStamp && x.updatedAt && x.updatedAt > (stamps.get(x.date) || 0)))
+      .map((x) => ({ user_id: uid, log_date: x.date, weight_kg: x.weight, ...(withStamp ? { updated_at: new Date(x.updatedAt || Date.now()).toISOString() } : {}) }));
     if (changed.length) {
       const up = await supabase.from('body_weight_logs').upsert(changed, { onConflict: 'user_id,log_date' });
       if (up.error) throw up.error;
@@ -225,7 +265,7 @@ export async function signOut({ removeLocalData = false } = {}) {
   if (account.user) await syncAll();
   await supabase.auth.signOut();
   if (removeLocalData) clearLocalData();
-  else { state.sync.syncedKeys = []; state.sync.syncedWeightDates = []; saveSync(); }
+  else { state.sync.syncedWeightDates = []; saveSync(); }
 }
 
 export async function changeUsername(name) {
@@ -250,7 +290,7 @@ export async function setShareWeight(on) {
 export async function deleteAccount() {
   const r = await supabase.rpc('delete_my_account');
   if (r.error) return isMissingSchema(r.error) ? 'This needs the latest database update.' : errorText(r.error);
-  state.sync = { ...state.sync, accountId: null, syncedKeys: [], syncedWeightDates: [], pendingDeletes: {}, pendingWeightDeletes: {} };
+  state.sync = { ...state.sync, accountId: null, syncedWeightDates: [], pendingWeightDeletes: {} };
   saveSync();
   await supabase.auth.signOut();
   return '';

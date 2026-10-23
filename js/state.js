@@ -3,7 +3,7 @@
 import { KEYS, read, write, readText, writeText, remove, emit } from './core/store.js';
 import { ymd } from './core/dates.js';
 import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule } from './domain/plan.js';
-import { sanitizeLogs, upgradeLastUsed, sessionKey, mergeProgress } from './domain/logs.js';
+import { sanitizeLogs, upgradeLastUsed, sessionKey, mergeProgress, normalizeBypass, activeBypass } from './domain/logs.js';
 import { sanitizeWeights, upsertWeight } from './domain/weights.js';
 
 // weightStep 0 = keep exactly what was typed. Older versions always rounded to
@@ -17,9 +17,13 @@ export const state = {
   lastUsed: {},
   weights: [],
   bypass: {},
+  bypassState: {},
+  // Deletion records shared with other devices: session keys, and dates cleared at a time (ms).
+  deletedSessions: [],
+  deletedDates: {},
   settings: { ...DEFAULT_SETTINGS },
   // Cloud bookkeeping: what this phone last uploaded, and deletions not yet uploaded.
-  sync: { accountId: null, syncedKeys: [], pendingDeletes: {}, syncedWeightDates: [], pendingWeightDeletes: {} },
+  sync: { accountId: null, syncedWeightDates: [], pendingWeightDeletes: {} },
 };
 
 export function loadState() {
@@ -34,14 +38,21 @@ export function loadState() {
   state.schedule = sanitizeSchedule(read(KEYS.schedule, {}), state.workouts);
   if (planChanged) persistPlan();
 
-  state.logs = sanitizeLogs(read(KEYS.logs, {}));
+  const rawLogs = read(KEYS.logs, {});
+  state.logs = sanitizeLogs(rawLogs);
+  // Persist the normalised form (fixed dates, sorted sessions) once.
+  if (JSON.stringify(rawLogs) !== JSON.stringify(state.logs)) write(KEYS.logs, state.logs);
+  state.deletedSessions = read(KEYS.deletedSessions, []);
+  if (!Array.isArray(state.deletedSessions)) state.deletedSessions = [];
+  state.deletedDates = read(KEYS.deletedDates, {}) || {};
   const upgraded = upgradeLastUsed(read(KEYS.lastUsed, {}), state.logs, read(KEYS.draft, null));
   state.lastUsed = mergeProgress({}, upgraded.lastUsed);
   if (upgraded.changed) write(KEYS.lastUsed, state.lastUsed);
   state.weights = sanitizeWeights(read(KEYS.weights, []));
-  state.bypass = read(KEYS.bypass, {}) || {};
+  state.bypassState = normalizeBypass(read(KEYS.bypassState, {}), read(KEYS.bypass, {}));
+  state.bypass = activeBypass(state.bypassState);
   state.settings = { ...DEFAULT_SETTINGS, ...(read(KEYS.settings, {}) || {}) };
-  state.sync = { accountId: null, syncedKeys: [], pendingDeletes: {}, syncedWeightDates: [], pendingWeightDeletes: {}, ...(read(KEYS.sync, {}) || {}) };
+  state.sync = { accountId: null, syncedWeightDates: [], pendingWeightDeletes: {}, ...(read(KEYS.sync, {}) || {}) };
   if (!readText(KEYS.sidesFrom)) writeText(KEYS.sidesFrom, ymd());
 }
 
@@ -102,13 +113,23 @@ export function saveLogs({ silent = false } = {}) {
   if (!silent) emit('gym:logs-changed');
 }
 
-export function deleteSession(date, day) {
-  const list = (state.logs[date] || []).filter((s) => s.day !== day);
+/** Deletes one logged session everywhere (the key is recorded so other devices drop it too). */
+export function deleteSession(date, key) {
+  const list = (state.logs[date] || []).filter((s) => sessionKey(date, s) !== key);
   if (list.length) state.logs[date] = list;
   else delete state.logs[date];
-  state.sync.pendingDeletes[sessionKey(date, day)] = new Date().toISOString();
-  saveSync();
+  markSessionsDeleted([key]);
   saveLogs();
+}
+
+export function markSessionsDeleted(keys) {
+  state.deletedSessions = [...new Set([...state.deletedSessions, ...keys])];
+  write(KEYS.deletedSessions, state.deletedSessions);
+}
+
+export function saveTombstones() {
+  write(KEYS.deletedSessions, state.deletedSessions);
+  write(KEYS.deletedDates, state.deletedDates);
 }
 
 export function saveLastUsed({ silent = false } = {}) {
@@ -135,9 +156,18 @@ export function deleteWeight(date) {
   saveWeights();
 }
 
-export function saveBypass() {
+export function setBypass(date, on) {
+  state.bypassState[date] = { value: !!on, updatedAt: Date.now() };
+  saveBypass();
+}
+
+/** Writes both the timestamped state and the plain map older versions read. */
+export function saveBypass({ silent = false } = {}) {
+  state.bypass = activeBypass(state.bypassState);
+  write(KEYS.bypassState, state.bypassState);
   write(KEYS.bypass, state.bypass);
   emit('gym:logs-updated');
+  if (!silent) emit('gym:progress-changed');
 }
 
 export function saveSettings() {
@@ -148,8 +178,9 @@ export function saveSync() {
   write(KEYS.sync, state.sync);
 }
 
-const LOCAL_DATA_KEYS = [KEYS.logs, KEYS.lastUsed, KEYS.weights, KEYS.bypass, KEYS.workouts, KEYS.schedule,
-  KEYS.deletedWorkouts, KEYS.restoredWorkouts, KEYS.planUpdatedAt, KEYS.draft, KEYS.active, KEYS.sync];
+const LOCAL_DATA_KEYS = [KEYS.logs, KEYS.lastUsed, KEYS.weights, KEYS.bypass, KEYS.bypassState, KEYS.workouts, KEYS.schedule,
+  KEYS.deletedWorkouts, KEYS.restoredWorkouts, KEYS.planUpdatedAt, KEYS.draft, KEYS.active, KEYS.sync,
+  KEYS.deletedSessions, KEYS.deletedDates, KEYS.legacyStats];
 
 export function hasLocalData() {
   return Object.keys(state.logs).length > 0 || Object.keys(state.workouts).length > 0 || state.weights.length > 0;
@@ -158,7 +189,7 @@ export function hasLocalData() {
 /** Removes this phone's training data (used when another account signs in, or on request at sign-out). */
 export function clearLocalData() {
   LOCAL_DATA_KEYS.forEach(remove);
-  state.sync = { accountId: null, syncedKeys: [], pendingDeletes: {}, syncedWeightDates: [], pendingWeightDeletes: {} };
+  state.sync = { accountId: null, syncedWeightDates: [], pendingWeightDeletes: {} };
   loadState();
   emit('gym:plan-updated');
   emit('gym:logs-updated');

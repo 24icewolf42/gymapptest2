@@ -33,7 +33,11 @@ test('workouts sync between two devices, including deletions', async ({ browser 
   await a.locator('.sheet [data-del]').click();
   await sheetAction(a, 'Delete');
   await expect(a.locator(`[data-day="${today}"]`)).not.toHaveClass(/logged/);
-  await expect.poll(async () => a.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('gymSyncState')).pendingDeletes).length), { timeout: 10000 }).toBe(0);
+  const { adminClient } = await import('../integration/helpers.js');
+  await expect.poll(async () => {
+    const r = await adminClient().from('workout_data').select('logs,profiles!inner(username)').eq('profiles.username', user.username).maybeSingle();
+    return r.data && Object.keys(r.data.logs).length;
+  }, { timeout: 10000 }).toBe(0);
   await b.locator('.page.active [data-open-settings]').first().click();
   await b.locator('[data-sync]').click();
   await expect(b.locator('#page-settings .status')).toHaveText(/Synced/);
@@ -116,4 +120,40 @@ test('a different account signing in does not absorb the previous data', async (
   const workouts = await p.evaluate(() => JSON.parse(localStorage.getItem('gymCustomWorkouts') || '{}'));
   expect(Object.keys(workouts)).toEqual([]);
   expect(await p.evaluate(() => !!localStorage.getItem('gymBackupBeforeSwitch'))).toBe(true);
+});
+
+test('reads and writes the sync format of the original app version', async ({ page }) => {
+  const { adminClient } = await import('../integration/helpers.js');
+  const user = newUser('interop');
+  await open(page);
+  await signUp(page, user);
+  const admin = adminClient();
+  const uid = (await admin.from('profiles').select('id').eq('username', user.username).single()).data.id;
+  const day = (o) => { const d = new Date(); d.setDate(d.getDate() + o); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  const old = { day: 'Legs', time: new Date(Date.now() - 3 * 86400e3).toISOString(), duration: 1800, exercises: [{ name: 'Leg Press', target: '10', sets: [{ w: '100', r: '10', done: true }] }] };
+  const gone = { id: 'deleted-elsewhere', day: 'Pull', time: new Date(Date.now() - 2 * 86400e3).toISOString(), exercises: [] };
+  await admin.from('workout_data').upsert({
+    user_id: uid,
+    logs: { [day(-3)]: [old], [day(-2)]: [gone] },
+    progress: { 'Leg Press': { sets: [{ w: '100', r: '10' }], updatedAt: Date.now() } },
+    deleted_sessions: ['deleted-elsewhere'],
+    bypass_days: { [day(-1)]: { value: true, updatedAt: Date.now() } },
+  });
+  await page.locator('[data-sync]').click();
+  await expect(page.locator('#page-settings .status')).toHaveText(/Synced/);
+  const local = await page.evaluate(() => ({ logs: JSON.parse(localStorage.getItem('gymLogs')), bypass: JSON.parse(localStorage.getItem('gymBypass')) }));
+  expect(Object.keys(local.logs)).toEqual([day(-3)]);
+  expect(local.bypass[day(-1)]).toBe(true);
+
+  // Deleting here is recorded in the shared format so the original app drops it too.
+  await closeSettings(page);
+  await tab(page, 'calendar');
+  await page.locator(`[data-day="${day(-3)}"]`).click();
+  await page.locator('.sheet [data-del]').click();
+  await sheetAction(page, 'Delete');
+  const key = `${day(-3)}|Legs|${old.time}`;
+  await expect.poll(async () => (await admin.from('workout_data').select('deleted_sessions,daily_summaries,logs').eq('user_id', uid).single()).data.deleted_sessions, { timeout: 10000 }).toContain(key);
+  const row = (await admin.from('workout_data').select('logs,daily_summaries').eq('user_id', uid).single()).data;
+  expect(row.logs).toEqual({});
+  expect(row.daily_summaries).toEqual({});
 });

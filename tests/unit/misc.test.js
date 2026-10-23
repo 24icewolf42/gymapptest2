@@ -12,14 +12,23 @@ describe('weights', () => {
       .toEqual([{ date: '2026-01-02', weight: 71 }]);
   });
 
-  it('merges cloud rows, drops entries deleted elsewhere, keeps new local ones', () => {
-    const remote = [{ log_date: '2026-01-01', weight_kg: '70.00' }];
-    const local = [{ date: '2026-01-01', weight: 69 }, { date: '2026-01-02', weight: 68 }, { date: '2026-01-03', weight: 67 }];
-    expect(mergeWeights(remote, local, ['2026-01-01', '2026-01-02'])).toEqual([{ date: '2026-01-01', weight: 69 }, { date: '2026-01-03', weight: 67 }]);
+  it('merges cloud rows by latest change, drops entries deleted elsewhere, keeps new local ones', () => {
+    const remote = [{ log_date: '2026-01-01', weight_kg: '70.00', updated_at: '2026-01-05T00:00:00Z' }, { log_date: '2026-01-04', weight_kg: '66', updated_at: '2026-01-05T00:00:00Z' }];
+    const local = [
+      { date: '2026-01-01', weight: 69, updatedAt: Date.parse('2026-01-02') },
+      { date: '2026-01-02', weight: 68 },
+      { date: '2026-01-03', weight: 67 },
+      { date: '2026-01-04', weight: 65 },
+    ];
+    expect(mergeWeights(remote, local, ['2026-01-01', '2026-01-02'])).toEqual([
+      { date: '2026-01-01', weight: 70, updatedAt: Date.parse('2026-01-05T00:00:00Z') },
+      { date: '2026-01-03', weight: 67 },
+      { date: '2026-01-04', weight: 65 },
+    ]);
   });
 
   it('upserts by day', () => {
-    expect(upsertWeight([{ date: '2026-01-01', weight: 1 }], '2026-01-01', 2)).toEqual([{ date: '2026-01-01', weight: 2 }]);
+    expect(upsertWeight([{ date: '2026-01-01', weight: 1 }], '2026-01-01', 2, 99)).toEqual([{ date: '2026-01-01', weight: 2, updatedAt: 99 }]);
   });
 });
 
@@ -94,6 +103,8 @@ describe('catalog', () => {
   it('searches by name and muscle', () => {
     expect(searchCatalog('squat').every((x) => /squat/i.test(x.name))).toBe(true);
     expect(searchCatalog('biceps').length).toBeGreaterThan(3);
-    expect(searchCatalog('', [{ name: 'Bench Press Custom', cat: 'chest' }]).some((x) => x.name === 'Bench Press Custom')).toBe(true);
+    expect(searchCatalog('', 'Arms').every((x) => ['biceps', 'triceps', 'forearms'].includes(x.cat))).toBe(true);
+    expect(searchCatalog('').length).toBeGreaterThan(250);
+    expect(searchCatalog('Single-Arm Cable Curl')[0].unilateral).toBe(true);
   });
 });
