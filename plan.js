@@ -42,6 +42,7 @@
   function setImage(data) {
     localStorage.setItem('gymRestImage', data);
     document.querySelectorAll('.rest-pic,.up-thumb').forEach(function (img) { img.src = data; });
+    window.dispatchEvent(new Event('gym:plan-changed'));
   }
   function dayRows() {
     return days.map(function (day, i) {

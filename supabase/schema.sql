@@ -28,6 +28,9 @@ create table if not exists public.leaderboard_stats (
   user_id uuid primary key references public.profiles(id) on delete cascade,
   workouts_count integer not null check (workouts_count >= 0),
   volume_kg_reps bigint not null check (volume_kg_reps >= 0),
+  total_seconds bigint not null default 0 check (total_seconds >= 0),
+  current_streak integer not null default 0 check (current_streak >= 0),
+  best_streak integer not null default 0 check (best_streak >= 0),
   updated_at timestamptz not null default now()
 );
 
@@ -44,6 +47,7 @@ create table if not exists public.body_weight_logs (
   log_date date not null,
   weight_kg numeric(6,2) not null check (weight_kg > 0 and weight_kg < 1000),
   created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
   primary key (user_id, log_date)
 );
 
@@ -52,6 +56,10 @@ create table if not exists public.workout_data (
   user_id uuid primary key references public.profiles(id) on delete cascade,
   logs jsonb not null default '{}'::jsonb check (jsonb_typeof(logs) = 'object'),
   progress jsonb not null default '{}'::jsonb check (jsonb_typeof(progress) = 'object'),
+  bypass_days jsonb not null default '{}'::jsonb check (jsonb_typeof(bypass_days) = 'object'),
+  deleted_sessions jsonb not null default '[]'::jsonb check (jsonb_typeof(deleted_sessions) = 'array'),
+  legacy_stats jsonb not null default '{}'::jsonb check (jsonb_typeof(legacy_stats) = 'object'),
+  stats_snapshot jsonb not null default '{}'::jsonb check (jsonb_typeof(stats_snapshot) = 'object'),
   updated_at timestamptz not null default now()
 );
 

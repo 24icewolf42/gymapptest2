@@ -575,7 +575,7 @@
     
     <script>
     // ---------- APP VERSION / AUTO UPDATE ----------
-    const APP_VERSION = "2.9.1";
+    const APP_VERSION = "2.10.0";
     document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
     
     function checkForUpdate() {
@@ -704,16 +704,28 @@
     function saveLogs(logs, silentCloud) { localStorage.setItem('gymLogs', JSON.stringify(logs)); if (!silentCloud) window.dispatchEvent(new Event('gym:logs-changed')); }
     let logs = loadLogs();
     window.getWorkoutLogsForCloud = () => logs;
-    window.mergeWorkoutLogsFromCloud = remote => {
+    function sessionLogKey(date, session) { return session.id || (session.time ? date + '|' + session.day + '|' + session.time : date + '|' + session.day + '|' + JSON.stringify(session)); }
+    window.getDeletedWorkoutSessionsForCloud = () => { try { return JSON.parse(localStorage.getItem('gymDeletedSessions') || '[]'); } catch (e) { return []; } };
+    window.markWorkoutLogDateDeleted = date => {
+      const deleted = new Set(window.getDeletedWorkoutSessionsForCloud());
+      (logs[date] || []).forEach(session => deleted.add(sessionLogKey(date, session)));
+      localStorage.setItem('gymDeletedSessions', JSON.stringify(Array.from(deleted)));
+    };
+    window.mergeWorkoutLogsFromCloud = (remote, remoteDeleted) => {
       const merged = {};
-      Object.keys(remote || {}).forEach(date => { merged[date] = Array.isArray(remote[date]) ? remote[date].slice() : []; });
-      Object.keys(logs).forEach(date => {
-        const byDay = {};
-        (merged[date] || []).concat(logs[date] || []).forEach(session => {
-          const old = byDay[session.day], oldTime = old && Date.parse(old.time || '') || 0, newTime = Date.parse(session.time || '') || 0;
-          if (!old || newTime >= oldTime) byDay[session.day] = session;
+      const deleted = new Set(window.getDeletedWorkoutSessionsForCloud().concat(remoteDeleted || []));
+      localStorage.setItem('gymDeletedSessions', JSON.stringify(Array.from(deleted)));
+      Object.keys(remote || {}).concat(Object.keys(logs)).forEach(date => {
+        const sessions = (Array.isArray(remote && remote[date]) ? remote[date] : []).concat(Array.isArray(logs[date]) ? logs[date] : []);
+        const byId = new Map();
+        sessions.forEach(session => {
+          if (!session || typeof session !== 'object') return;
+          const key = sessionLogKey(date, session), old = byId.get(key);
+          if (deleted.has(key)) return;
+          const oldTime = old && Date.parse(old.time || '') || 0, newTime = Date.parse(session.time || '') || 0;
+          if (!old || newTime >= oldTime) byId.set(key, session);
         });
-        merged[date] = Object.keys(byDay).map(day => byDay[day]);
+        merged[date] = Array.from(byId.values()).sort((a, b) => (Date.parse(a.time || '') || 0) - (Date.parse(b.time || '') || 0));
       });
       Object.keys(logs).forEach(date => delete logs[date]);
       Object.keys(merged).forEach(date => { logs[date] = merged[date]; });
@@ -725,7 +737,20 @@
     };
     
     function loadLastUsed() { try { return JSON.parse(localStorage.getItem('gymLastUsed') || '{}'); } catch(e) { return {}; } }
-  function saveLastUsed(lu, silentCloud) { localStorage.setItem('gymLastUsed', JSON.stringify(lu)); if (!silentCloud) window.dispatchEvent(new Event('gym:progress-changed')); }
+  function saveLastUsed(lu, silentCloud) {
+    let previous = {}; try { previous = JSON.parse(localStorage.getItem('gymLastUsed') || '{}'); } catch (e) {}
+    const plain = {};
+    Object.keys(lu || {}).forEach(key => {
+      const value = lu[key];
+      const priorKey = Object.keys(previous).find(k => k === key || (k.indexOf('||') >= 0 && k.slice(k.indexOf('||') + 2) === key));
+      const prior = priorKey && previous[priorKey];
+      const withoutTime = item => { if (!item || typeof item !== 'object') return item; const copy = Object.assign({}, item); delete copy.updatedAt; return copy; };
+      const changed = JSON.stringify(withoutTime(value)) !== JSON.stringify(withoutTime(prior));
+      plain[key] = Object.assign({}, value, { updatedAt: changed ? Date.now() : (value.updatedAt || prior && prior.updatedAt || 0) });
+    });
+    localStorage.setItem('gymLastUsed', JSON.stringify(plain));
+    if (!silentCloud) window.dispatchEvent(new Event('gym:progress-changed'));
+  }
     let lastUsed = loadLastUsed();
     
     function todayStr(d = new Date()) {
@@ -1098,11 +1123,8 @@
       if (entry.length === 0) { showToast('Log at least one set first'); return; }
       const duration = Math.round((Date.now() - sessionStartedAt) / 1000);
       if (!logs[date]) logs[date] = [];
-      const existingIdx = logs[date].findIndex(s => s.day === currentSessionDay);
-      const record = { day: currentSessionDay, exercises: entry, time: new Date().toISOString(), duration };
-    
-      if (existingIdx >= 0) logs[date][existingIdx] = record;
-      else logs[date].push(record);
+      const record = { id: (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2)), day: currentSessionDay, exercises: entry, time: new Date().toISOString(), duration };
+      logs[date].push(record);
     
       saveLogs(logs);
       saveLastUsed(lastUsed);
@@ -1143,8 +1165,8 @@
       const list = loadBodyWeights();
       const today = todayStr();
       const existingIdx = list.findIndex(e => e.date === today);
-      if (existingIdx >= 0) list[existingIdx].weight = val;
-      else list.push({ date: today, weight: val });
+      if (existingIdx >= 0) { list[existingIdx].weight = val; list[existingIdx].updatedAt = Date.now(); }
+      else list.push({ date: today, weight: val, updatedAt: Date.now() });
       saveBodyWeights(list);
       input.value = '';
       renderBodyWeightList();
@@ -1269,6 +1291,7 @@
     
       const delBtn = document.getElementById('deleteLogBtn');
       delBtn.style.display = 'block'; delBtn.onclick = () => {
+        if (window.markWorkoutLogDateDeleted) window.markWorkoutLogDateDeleted(dateStr);
         delete logs[dateStr]; saveLogs(logs); closeOverviewModal();
         renderCalendar(); renderToday();
       };
@@ -1518,15 +1541,41 @@
     "Hip Abduction Machine": 75, "Hip Adduction Machine": 75, "Standing Calf Raises": 60
   };
   var SWITCH_GAP = 30, GROUP = { forearms: 'biceps' };
-  var KEYS = ['gymLogs', 'gymLastUsed', 'bodyWeightLogs', 'gymBypass'];
+  var KEYS = ['gymLogs', 'gymDeletedSessions', 'gymLastUsed', 'gymBypass', 'gymBypassState', 'gymLegacyStats', 'bodyWeightLogs', 'gymCustomWorkouts', 'gymPlanSchedule', 'gymDeletedWorkouts', 'gymRestoredWorkouts', 'gymRestImage', 'gymDraft', 'gymActive'];
 
   function $(id) { return document.getElementById(id); }
   function grp(c) { return GROUP[c] || c; }
   function fmt(s) { return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
   function dur(sec) { var h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return h > 0 ? h + 'h ' + m + 'm' : m + 'm'; }
   function ymd(y, m, d) { return y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0'); }
-  function getByp() { try { return JSON.parse(localStorage.getItem('gymBypass') || '{}'); } catch (e) { return {}; } }
-  function setByp(o) { try { localStorage.setItem('gymBypass', JSON.stringify(o)); } catch (e) {} }
+  function getBypState() {
+    try {
+      var saved = JSON.parse(localStorage.getItem('gymBypassState') || '{}');
+      if (Object.keys(saved).length) return saved;
+      var legacy = JSON.parse(localStorage.getItem('gymBypass') || '{}'), converted = {};
+      Object.keys(legacy).forEach(function (date) { if (legacy[date]) converted[date] = { value: true, updatedAt: 0 }; });
+      return converted;
+    } catch (e) { return {}; }
+  }
+  function getByp() { var active = {}; Object.keys(getBypState()).forEach(function (date) { var item = getBypState()[date]; if (item === true || item && item.value) active[date] = true; }); return active; }
+  function setByp(o, silentCloud) {
+    try {
+      var state = getBypState(), dates = new Set(Object.keys(state).concat(Object.keys(o || {})));
+      dates.forEach(function (date) { var was = state[date] === true || !!(state[date] && state[date].value), now = !!(o && o[date]); if (was !== now) state[date] = { value: now, updatedAt: Date.now() }; });
+      localStorage.setItem('gymBypassState', JSON.stringify(state));
+      localStorage.setItem('gymBypass', JSON.stringify(o || {}));
+      if (!silentCloud) window.dispatchEvent(new Event('gym:progress-changed'));
+    } catch (e) {}
+  }
+  window.getWorkoutBypassForCloud = getBypState;
+  window.mergeWorkoutBypassFromCloud = function (remote) {
+    var local = getBypState(), merged = Object.assign({}, remote || {});
+    Object.keys(local).forEach(function (date) { var cloud = merged[date], here = local[date]; if (!cloud || (Number(here && here.updatedAt) || 0) >= (Number(cloud && cloud.updatedAt) || 0)) merged[date] = here; });
+    var active = {}; Object.keys(merged).forEach(function (date) { var item = merged[date]; if (item === true || item && item.value) active[date] = true; });
+    localStorage.setItem('gymBypassState', JSON.stringify(merged));
+    setByp(active, true);
+    return merged;
+  };
   function getActive() {
     try {
       var a = JSON.parse(localStorage.getItem('gymActive') || 'null');
@@ -1575,7 +1624,10 @@
   window.getWorkoutProgressForCloud = function () { return lastUsed; };
   window.mergeWorkoutProgressFromCloud = function (remote) {
     var base = Object.assign({}, remote || {});
-    Object.keys(lastUsed).forEach(function (k) { base[k] = lastUsed[k]; });
+    Object.keys(lastUsed).forEach(function (k) {
+      var localValue = lastUsed[k], remoteValue = base[k];
+      if (!remoteValue || (Number(localValue && localValue.updatedAt) || 0) >= (Number(remoteValue && remoteValue.updatedAt) || 0)) base[k] = localValue;
+    });
     lastUsed = new Proxy(base, {
       get: function (t, k) { return t[bare(k)]; },
       set: function (t, k, v) { t[bare(k)] = v; return true; },
@@ -2093,7 +2145,7 @@
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./cloud-config.js?v=2.9.1"></script>
-<script src="./cloud.js?v=2.9.1"></script>
-<script src="./plan.js?v=2.9.1"></script>
+<script src="./cloud-config.js?v=2.10.0"></script>
+<script src="./cloud.js?v=2.10.0"></script>
+<script src="./plan.js?v=2.10.0"></script>
     </html>
