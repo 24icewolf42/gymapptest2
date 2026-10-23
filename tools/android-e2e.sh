@@ -15,7 +15,7 @@ if ! java -version 2>&1 | grep -q '"21'; then
   for j in "$HOME"/.local/jdk/jdk-21*; do [ -d "$j" ] && export JAVA_HOME="$j" && export PATH="$j/bin:$PATH"; done
 fi
 
-ANON_KEY="$(npx supabase status -o env | sed -n 's/^ANON_KEY="\(.*\)"/\1/p')"
+ANON_KEY="$( (npx supabase status -o env 2>/dev/null || true) | sed -n 's/^ANON_KEY="\(.*\)"/\1/p')"
 [ -n "$ANON_KEY" ] || { echo "Local Supabase is not running. Start it with: npx supabase start" >&2; exit 1; }
 
 # The emulator reaches the host's Supabase through `adb reverse`, so the app

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Builds the Android app (Capacitor wrapper around the web app) into build-apk/rat-tracker.apk.
+# Builds the Android app (Capacitor wrapper around the web app).
 #
-# Release build (GitHub Actions): set ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
-# ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD and ANDROID_CERT_SHA256. The APK is signed with
-# that private key, is not debuggable, and the build fails unless the signer matches.
-# Without those variables it makes a debug build (tests, local use) signed with the
-# machine's own debug key; such a build never installs over the published app.
+# Default: a debug build (tests, local use) in build-apk/rat-tracker.apk, signed
+# with this machine's own debug key; it never installs over the published app.
+# ANDROID_UNSIGNED_RELEASE=1: a non-debuggable release build, left unsigned in
+# build-apk/rat-tracker-unsigned.apk. Signing happens in a separate CI job
+# (tools/sign-apk.sh) that never runs any of the build's third-party code.
 #
 # GYM_CLOUD_URL / GYM_CLOUD_KEY point a test build at another Supabase project.
 # SKIP_GRADLE=1 stops after preparing the Android project.
@@ -15,12 +15,7 @@ APP_NAME="Tracker"
 APP_ID="com.roguelineage.rattracker"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/build-apk"
-RELEASE=0
-if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then RELEASE=1; fi
-if [ "$RELEASE" = 1 ] && [ -z "${ANDROID_CERT_SHA256:-}" ]; then
-  echo "ERROR: ANDROID_CERT_SHA256 must be set for a release build" >&2
-  exit 1
-fi
+RELEASE="${ANDROID_UNSIGNED_RELEASE:-0}"
 
 cd "$ROOT"
 rm -rf "$OUT" && mkdir -p "$OUT/www"
@@ -202,18 +197,24 @@ public class ApkUpdaterPlugin extends Plugin {
         }).start();
     }
 
+    // Accepts the same signer, or a newer key that the installed key rotated to
+    // (APK signature scheme v3 lineage).
     private boolean sameSigner(File apk) throws Exception {
         PackageManager pm = getContext().getPackageManager();
         String self = getContext().getPackageName();
-        PackageInfo downloaded, installed;
         if (Build.VERSION.SDK_INT >= 28) {
-            downloaded = pm.getPackageArchiveInfo(apk.getPath(), PackageManager.GET_SIGNING_CERTIFICATES);
-            installed = pm.getPackageInfo(self, PackageManager.GET_SIGNING_CERTIFICATES);
+            PackageInfo downloaded = pm.getPackageArchiveInfo(apk.getPath(), PackageManager.GET_SIGNING_CERTIFICATES);
+            PackageInfo installed = pm.getPackageInfo(self, PackageManager.GET_SIGNING_CERTIFICATES);
             if (downloaded == null || downloaded.signingInfo == null || !self.equals(downloaded.packageName)) return false;
-            return signatureSet(downloaded.signingInfo.getApkContentsSigners()).equals(signatureSet(installed.signingInfo.getApkContentsSigners()));
+            Set<String> current = signatureSet(installed.signingInfo.getApkContentsSigners());
+            Set<String> next = signatureSet(downloaded.signingInfo.getApkContentsSigners());
+            if (next.equals(current)) return true;
+            if (downloaded.signingInfo.hasMultipleSigners()) return false;
+            Set<String> history = signatureSet(downloaded.signingInfo.getSigningCertificateHistory());
+            return history.containsAll(current);
         }
-        downloaded = pm.getPackageArchiveInfo(apk.getPath(), PackageManager.GET_SIGNATURES);
-        installed = pm.getPackageInfo(self, PackageManager.GET_SIGNATURES);
+        PackageInfo downloaded = pm.getPackageArchiveInfo(apk.getPath(), PackageManager.GET_SIGNATURES);
+        PackageInfo installed = pm.getPackageInfo(self, PackageManager.GET_SIGNATURES);
         if (downloaded == null || downloaded.signatures == null || !self.equals(downloaded.packageName)) return false;
         return signatureSet(downloaded.signatures).equals(signatureSet(installed.signatures));
     }
@@ -258,32 +259,16 @@ cat > "$RES/xml/file_paths.xml" <<'XML'
 </paths>
 XML
 
-# --- Signing ---
-if [ "$RELEASE" = 1 ]; then
-  KEYSTORE="$OUT/release.keystore"
-  printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
-  python3 - "$KEYSTORE" <<'PY'
-import re, sys
-path = "android/app/build.gradle"
-src = open(path).read()
-block = '''android {
-    signingConfigs {
-        release {
-            storeFile file("%s")
-            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
-            keyAlias System.getenv("ANDROID_KEY_ALIAS")
-            keyPassword System.getenv("ANDROID_KEY_PASSWORD")
-        }
-    }
-''' % sys.argv[1]
-new, n = re.subn(r"^android \{\n", lambda m: block, src, count=1, flags=re.M)
-assert n == 1, "could not find the android { block in build.gradle"
-new, n = re.subn(r"(buildTypes \{\s*release \{)", r"\1\n            signingConfig signingConfigs.release", new, count=1)
-assert n == 1, "could not find the release build type"
-open(path, "w").write(new)
-print("release signing configured")
-PY
-fi
+# --- No cloud or device-to-device backup: the WebView storage holds the session and health data ---
+cat > "$RES/xml/data_extraction_rules.xml" <<'XML'
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup><exclude domain="root" /><exclude domain="file" /><exclude domain="database" /><exclude domain="sharedpref" /><exclude domain="external" /></cloud-backup>
+    <device-transfer><exclude domain="root" /><exclude domain="file" /><exclude domain="database" /><exclude domain="sharedpref" /><exclude domain="external" /></device-transfer>
+</data-extraction-rules>
+XML
+sed -i 's#android:allowBackup="true"#android:allowBackup="false" android:dataExtractionRules="@xml/data_extraction_rules"#' "$MANIFEST"
+grep -q 'android:allowBackup="false"' "$MANIFEST" || { echo "ERROR: could not turn off backups in the manifest" >&2; exit 1; }
 
 # --- Version numbers: versionCode goes up with every CI build ---
 APP_VER="$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).version)" "$ROOT/Version")"
@@ -292,11 +277,15 @@ CODE="${GITHUB_RUN_NUMBER:-$(( ( $(date +%s) - 1767225600 ) / 60 ))}"
 sed -i "s/versionCode [0-9]*/versionCode $CODE/; s/versionName \"[^\"]*\"/versionName \"$APP_VER\"/" android/app/build.gradle
 grep -n "versionCode\|versionName" android/app/build.gradle
 
-# Dependency checksums: Gradle refuses artifacts whose SHA-256 differs from the committed list.
-if [ -f "$ROOT/tools/android/verification-metadata.xml" ]; then
-  mkdir -p android/gradle
-  cp "$ROOT/tools/android/verification-metadata.xml" android/gradle/verification-metadata.xml
-fi
+# Dependency checksums: Gradle refuses artifacts whose SHA-256 differs from the
+# committed list, and the wrapper refuses a Gradle download with another checksum.
+mkdir -p android/gradle
+cp "$ROOT/tools/android/verification-metadata.xml" android/gradle/verification-metadata.xml
+read -r DIST_NAME DIST_SHA < "$ROOT/tools/android/gradle-distribution.sha256"
+WRAPPER=android/gradle/wrapper/gradle-wrapper.properties
+grep -q "distributions/$DIST_NAME" "$WRAPPER" || { echo "ERROR: Gradle wrapper is not $DIST_NAME; update tools/android/gradle-distribution.sha256" >&2; exit 1; }
+sed -i '/^distributionSha256Sum=/d' "$WRAPPER"
+echo "distributionSha256Sum=$DIST_SHA" >> "$WRAPPER"
 
 if [ "${SKIP_GRADLE:-0}" = "1" ]; then echo "SKIP_GRADLE set, stopping before the Android build"; exit 0; fi
 
@@ -304,22 +293,10 @@ cd android
 chmod +x gradlew
 if [ "$RELEASE" = 1 ]; then
   ./gradlew assembleRelease --no-daemon --console=plain
-  cp app/build/outputs/apk/release/app-release.apk "$OUT/rat-tracker.apk"
+  cp app/build/outputs/apk/release/app-release-unsigned.apk "$OUT/rat-tracker-unsigned.apk"
+  ls -la "$OUT/rat-tracker-unsigned.apk"
 else
   ./gradlew assembleDebug --no-daemon --console=plain
   cp app/build/outputs/apk/debug/app-debug.apk "$OUT/rat-tracker.apk"
-fi
-ls -la "$OUT/rat-tracker.apk"
-sha256sum "$OUT/rat-tracker.apk" | cut -d' ' -f1 > "$OUT/rat-tracker.apk.sha256"
-
-# --- Safety check: a release must be signed with the expected key ---
-# (a different key would make updates refuse to install over the old app)
-if [ "$RELEASE" = 1 ]; then
-  have="$(keytool -printcert -jarfile "$OUT/rat-tracker.apk" 2>/dev/null | grep -m1 'SHA256:' | sed 's/.*SHA256: *//' | tr -d ' :' | tr 'a-f' 'A-F')"
-  want="$(printf '%s' "$ANDROID_CERT_SHA256" | tr -d ' :' | tr 'a-f' 'A-F')"
-  echo "expected signer: $want"
-  echo "apk signer     : $have"
-  [ -n "$have" ] && [ "$want" = "$have" ] || { echo "ERROR: APK is not signed with the release key" >&2; exit 1; }
-  echo "signing key check passed"
-  rm -f "$OUT/release.keystore"
+  ls -la "$OUT/rat-tracker.apk"
 fi

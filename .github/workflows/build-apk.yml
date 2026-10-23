@@ -1,26 +1,36 @@
 name: Build Android APK
 
+# Runs after the Tests workflow passed on main (or by hand). Three jobs, so the
+# signing key never shares a job with third-party build code:
+#   build   – builds an unsigned release APK (npm/Gradle code runs here, no secrets)
+#   sign    – signs it with the release key (only apksigner from the runner image)
+#   publish – re-verifies the APK and updates the "latest" release (write token)
+# One-time setup: run "Set up Android release signing" (android-signing-setup.yml).
+
 on:
-  push:
+  workflow_run:
+    workflows: [Tests]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
-# The build runs third-party install code, so it gets a read-only token. Only
-# the publish job, which runs no dependency code, can write releases.
 permissions:
   contents: read
 
 concurrency:
   group: build-apk
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -31,27 +41,19 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      # Release signing: the private key lives only in repository secrets. Without
-      # them the build fails instead of publishing a debug-signed app.
-      - name: Build APK
+      - name: Build unsigned release APK
         run: |
           set -o pipefail
-          test -n "$ANDROID_KEYSTORE_BASE64" || { echo "::error::Add the ANDROID_* signing secrets first (see README)"; exit 1; }
           bash tools/build-apk.sh 2>&1 | tee "$RUNNER_TEMP/build.log"
         env:
+          ANDROID_UNSIGNED_RELEASE: '1'
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: rat-tracker-apk
-          path: |
-            build-apk/rat-tracker.apk
-            build-apk/rat-tracker.apk.sha256
+          name: unsigned-apk
+          path: build-apk/rat-tracker-unsigned.apk
+          retention-days: 3
 
       - name: Keep the build log on failure
         if: failure()
@@ -60,10 +62,49 @@ jobs:
           name: build-log
           path: ${{ runner.temp }}/build.log
 
-  publish:
+  sign:
     needs: build
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      # Full history: the old, public debug key is read from the commit that removed it.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: unsigned-apk
+          path: build-apk
+
+      - name: Sign
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_SIGNING_LINEAGE_BASE64: ${{ secrets.ANDROID_SIGNING_LINEAGE_BASE64 }}
+          ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64" || { echo "::error::Run the 'Set up Android release signing' workflow first"; exit 1; }
+          git show 108ba0b:android-signing/debug.keystore > "$RUNNER_TEMP/legacy.keystore"
+          LEGACY_KEYSTORE="$RUNNER_TEMP/legacy.keystore" bash tools/sign-apk.sh build-apk/rat-tracker-unsigned.apk build-apk/rat-tracker.apk
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rat-tracker-apk
+          path: |
+            build-apk/rat-tracker.apk
+            build-apk/rat-tracker.apk.sha256
+
+  publish:
+    needs: sign
+    if: github.event_name == 'workflow_run' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -71,33 +112,39 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: Version
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: rat-tracker-apk
           path: build-apk
 
-      # Re-check what the build job produced before it reaches every phone.
       - name: Verify the APK
         env:
           ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
         run: |
           test "$(sha256sum build-apk/rat-tracker.apk | cut -d' ' -f1)" = "$(cat build-apk/rat-tracker.apk.sha256)"
           APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
-          "$APKSIGNER" verify --print-certs build-apk/rat-tracker.apk | tee "$RUNNER_TEMP/certs.txt"
-          have="$(grep -m1 'certificate SHA-256 digest' "$RUNNER_TEMP/certs.txt" | sed 's/.*: //' | tr 'a-f' 'A-F')"
-          want="$(printf '%s' "$ANDROID_CERT_SHA256" | tr -d ' :' | tr 'a-f' 'A-F')"
-          test -n "$want" && test "$have" = "$want"
+          "$APKSIGNER" verify --verbose --print-certs build-apk/rat-tracker.apk | tee "$RUNNER_TEMP/certs.txt"
+          want="$(printf '%s' "$ANDROID_CERT_SHA256" | tr -d ' :' | tr 'A-F' 'a-f')"
+          test -n "$want"
+          grep -i 'certificate SHA-256 digest' "$RUNNER_TEMP/certs.txt" | tr -d ' :' | grep -qi "$want"
 
+      # The release is updated in place (never deleted first), so the install
+      # link and the in-app updater always find an APK.
       - name: Publish APK as the "latest" release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           VER="$(node -e "console.log(JSON.parse(require('fs').readFileSync('Version', 'utf8')).version)")"
-          gh release delete latest --cleanup-tag --yes || true
           # The app compares the build number (versionCode = run number) to its own.
-          gh release create latest build-apk/rat-tracker.apk \
-            --title "Tracker v$VER (build ${{ github.run_number }})" \
-            --notes "Installable Android build of the app (built from commit ${GITHUB_SHA::7})." \
-            --target "$GITHUB_SHA" --latest
+          TITLE="Tracker v$VER (build ${{ github.run_number }})"
+          NOTES="Installable Android build of the app (built from commit ${SHA::7})."
+          if gh release view latest >/dev/null 2>&1; then
+            gh release upload latest build-apk/rat-tracker.apk --clobber
+            gh release edit latest --title "$TITLE" --notes "$NOTES" --latest
+          else
+            gh release create latest build-apk/rat-tracker.apk --title "$TITLE" --notes "$NOTES" --target "$SHA" --latest
+          fi
