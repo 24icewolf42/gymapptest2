@@ -12,13 +12,15 @@ test('workouts sync between two devices, including deletions', async ({ browser 
   await tab(a, 'today');
   await a.locator('#startToday').click();
   await a.locator('#session .r').first().fill('20');
+  // Ticking the first set starts the timer, so the main button now finishes.
   await a.locator('#session .check').first().click();
-  await a.locator('#sessionMain').click();
+  await expect(a.locator('#sessionMain')).toHaveText('Finish workout');
   await a.locator('#sessionMain').click();
   await sheetAction(a, 'Save workout');
   await signUp(a, user);
 
   const b = await (await browser.newContext()).newPage();
+  const errorsB = trackErrors(b);
   await open(b);
   await signIn(b, user);
   await closeSettings(b);
@@ -30,7 +32,7 @@ test('workouts sync between two devices, including deletions', async ({ browser 
   await tab(a, 'calendar');
   const today = await a.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('gymLogs')))[0]);
   await a.locator(`[data-day="${today}"]`).click();
-  await a.locator('.sheet [data-del]').click();
+  await a.locator('.sheet-backdrop.open [data-del]').click();
   await sheetAction(a, 'Delete');
   await expect(a.locator(`[data-day="${today}"]`)).not.toHaveClass(/logged/);
   const { adminClient } = await import('../integration/helpers.js');
@@ -44,6 +46,7 @@ test('workouts sync between two devices, including deletions', async ({ browser 
   await closeSettings(b);
   await expect(b.locator('.hero-card.done')).toHaveCount(0);
   expect(errors).toEqual([]);
+  expect(errorsB).toEqual([]);
 });
 
 test('friends plan a gym date and reply to it', async ({ browser }) => {
@@ -63,7 +66,8 @@ test('friends plan a gym date and reply to it', async ({ browser }) => {
   await tab(s, 'crew');
   await s.locator('[data-crew-tab="friends"]').click();
   await s.locator('[data-accept]').click();
-  await expect(s.getByText('@' + alex.username)).toBeVisible();
+  await expect(s.locator(`[data-key^="friend-"]`).filter({ hasText: '@' + alex.username })).toBeVisible();
+  await expect(s.locator('[data-accept]')).toHaveCount(0);
 
   // Alex is heading to the gym in 30 minutes.
   await a.locator('[data-crew-tab="dates"]').click();
@@ -94,7 +98,7 @@ test('friends plan a gym date and reply to it', async ({ browser }) => {
   // Unfriend: Sam no longer sees Alex.
   await s.locator('[data-crew-tab="friends"]').click();
   await s.locator('[data-unfriend]').click();
-  await sheetAction(s, 'Remove');
+  await sheetAction(s, 'Remove friend');
   await expect(s.getByText('No friends yet.')).toBeVisible();
   expect(errors.flat()).toEqual([]);
 });
@@ -113,6 +117,7 @@ test('a different account signing in does not absorb the previous data', async (
   await form.locator('[name=email]').fill(second.email);
   await form.locator('[name=password]').fill(second.password);
   await form.locator('[name=username]').fill(second.username);
+  await form.locator('[name=consent]').check();
   await form.locator('[type=submit]').click();
   await expect(p.getByText('Someone else used this phone')).toBeVisible({ timeout: 15000 });
   await sheetAction(p, 'Replace with my account’s data');
@@ -149,7 +154,7 @@ test('reads and writes the sync format of the original app version', async ({ pa
   await closeSettings(page);
   await tab(page, 'calendar');
   await page.locator(`[data-day="${day(-3)}"]`).click();
-  await page.locator('.sheet [data-del]').click();
+  await page.locator('.sheet-backdrop.open [data-del]').click();
   await sheetAction(page, 'Delete');
   const key = `${day(-3)}|Legs|${old.time}`;
   await expect.poll(async () => (await admin.from('workout_data').select('deleted_sessions,daily_summaries,logs').eq('user_id', uid).single()).data.deleted_sessions, { timeout: 10000 }).toContain(key);

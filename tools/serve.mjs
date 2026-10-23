@@ -1,9 +1,10 @@
 // Minimal static server for local testing: `npm run serve` -> http://127.0.0.1:4173
 // With GYM_CLOUD_URL and GYM_CLOUD_KEY set, /cloud-config.js points the app at
-// that Supabase project instead (used by the end-to-end tests).
+// that Supabase project instead, and the page's CSP allows exactly that address
+// (used by the end-to-end tests against the local database).
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { extname, join, normalize, resolve } from 'node:path';
+import { extname, join, normalize, resolve, sep } from 'node:path';
 
 const root = resolve('.');
 const port = Number(process.env.PORT || 4173);
@@ -18,9 +19,13 @@ createServer(async (req, res) => {
     return;
   }
   const file = normalize(join(root, path === '/' ? 'index.html' : path));
-  if (!file.startsWith(root) || blocked.test(path)) { res.writeHead(404).end(); return; }
+  if (!file.startsWith(root + sep) || blocked.test(path)) { res.writeHead(404).end(); return; }
   try {
-    const body = await readFile(file);
+    let body = await readFile(file);
+    if (file.endsWith(sep + 'index.html') && process.env.GYM_CLOUD_URL) {
+      const url = process.env.GYM_CLOUD_URL, ws = url.replace(/^http/, 'ws');
+      body = Buffer.from(body.toString('utf8').replace("connect-src 'self'", `connect-src 'self' ${url} ${ws}`));
+    }
     res.writeHead(200, { 'content-type': types[extname(file)] || 'application/octet-stream', 'cache-control': 'no-store' });
     res.end(body);
   } catch {
