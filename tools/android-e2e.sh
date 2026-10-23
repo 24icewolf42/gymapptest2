@@ -40,6 +40,10 @@ adb shell settings put global window_animation_scale 0
 adb shell settings put global transition_animation_scale 0
 adb shell settings put global animator_duration_scale 0
 adb reverse tcp:54321 tcp:54321
-adb install -r -t build-apk/rat-tracker.apk
+if ! adb install -r -t build-apk/rat-tracker.apk; then
+  # A test device may hold a build signed with another key: start clean.
+  adb uninstall com.roguelineage.rattracker || true
+  adb install -t build-apk/rat-tracker.apk
+fi
 
 npx playwright test --project=android "$@"

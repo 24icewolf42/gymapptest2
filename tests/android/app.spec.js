@@ -23,8 +23,20 @@ const back = () => device.shell('input keyevent KEYCODE_BACK');
 
 test.beforeAll(async () => {
   [device] = await android.devices();
-  test.skip(!device, 'No Android device or emulator connected');
+  // A missing emulator is a failure (CI must not pass green without running);
+  // set ANDROID_E2E_ALLOW_SKIP=1 to skip deliberately.
+  if (!device && process.env.ANDROID_E2E_ALLOW_SKIP === '1') test.skip(true, 'No Android device or emulator connected');
+  if (!device) throw new Error('No Android device or emulator connected');
 });
+
+/** Waits until the WebView has written localStorage to disk (it does so shortly after a change). */
+async function waitForStorageFlush(sinceSeconds) {
+  const dir = 'app_webview/Default/Local\\ Storage/leveldb';
+  await expect.poll(async () => {
+    const out = await device.shell(`run-as ${PKG} sh -c 'stat -c %Y ${dir}/*.log 2>/dev/null | sort -n | tail -1'`);
+    return Number(String(out).trim()) || 0;
+  }, { timeout: 15000, message: 'WebView storage was not written to disk' }).toBeGreaterThanOrEqual(sinceSeconds);
+}
 
 test.afterAll(async () => { await device?.close(); });
 
@@ -60,10 +72,9 @@ test('logs a workout offline and keeps it after the app restarts', async () => {
   await expect(page.locator('#session .w').first()).toHaveValue('60');
   await page.locator('#sessionMain').click();
   await page.locator('.sheet').getByRole('button', { name: 'Save workout' }).click();
+  const savedAt = Math.floor(Date.now() / 1000) - 1;
   await expect(page.locator('.hero-card.done')).toBeVisible();
-  // The WebView writes localStorage to disk shortly after a change; give it a moment
-  // before killing the process, as a user switching apps would.
-  await page.waitForTimeout(2000);
+  await waitForStorageFlush(savedAt);
 
   page = await launch();
   await expect(page.locator('.hero-card.done')).toBeVisible();
@@ -78,6 +89,7 @@ test('signs up and posts a gym date to the cloud', async () => {
   await page.locator('#authForm [name=email]').fill(user.email);
   await page.locator('#authForm [name=password]').fill(user.password);
   await page.locator('#authForm [name=username]').fill(user.username);
+  await page.locator('#authForm [name=consent]').check();
   await page.locator('#authForm [type=submit]').click();
   await expect(page.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 30000 });
 
