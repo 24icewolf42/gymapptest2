@@ -10,16 +10,15 @@ The existing single-file workout tracker remains usable offline. This update add
 - **Publish my stats** explicitly shares only workout count and lifted volume (kg × reps) with accepted friends. It does not upload session details or body weight.
 - To remove a shared workout or stats, use Supabase's table editor (or add a delete control before production use). Deleting the account in Supabase removes related rows through cascading foreign keys.
 
-## Turn on online accounts
+## Online account setup
 
-1. Create a Supabase project.
-2. In Supabase SQL Editor, run [`supabase/schema.sql`](supabase/schema.sql).
-3. Edit `cloud-config.js` and enter the project's URL and public anon/publishable key. Never use a `service_role` secret in browser code. The file is included with blank values; the anon key is designed to be public in a browser app.
-4. In Supabase Authentication settings, set the site's URL and allowed redirect URLs to the deployed app origin. Choose whether email confirmation is required.
-5. Deploy the whole folder as a static site over HTTPS. `index.html`, `cloud.js`, and `cloud-config.js` must be served from the same directory.
-6. Open **Friends**, create accounts, and exchange usernames to send friend requests.
+The live app is connected to the Supabase project in Central EU (Frankfurt). Its schema and row-level security policies have been applied, and Supabase Authentication is configured for the GitHub Pages URL.
 
-The credentials in `cloud-config.js` are public browser credentials; database row-level security in `schema.sql` is what protects user data. Review those policies before changing the tables.
+- `cloud-config.js` contains the project URL and a browser-safe publishable key. The publishable key is public by design; never put a secret or `service_role` key in browser code.
+- The deployed app is available at https://roguelineageaccmanager.github.io/gymapptest2/.
+- Workout logs and body-weight records stay in browser storage. Users choose whether to share a workout or publish aggregate stats.
+
+To connect a different Supabase project, run [`supabase/schema.sql`](supabase/schema.sql) in its SQL Editor, then replace the URL and publishable key in `cloud-config.js`. Set the Supabase Authentication Site URL and allowed redirect URL to the deployed app address.
 
 ## Exercise data attribution
 
@@ -29,9 +28,7 @@ The code changes in this repository do not declare an overall project license. C
 
 ## Deployment
 
-The repository already contains GitHub Pages assets and a GitHub Actions workflow for building the Android package. To publish the website, use the repository's configured GitHub Pages branch/action and check deployment status in GitHub. For account-enabled use, configure Supabase first and set the public project URL and anon key in `cloud-config.js`. A browser app necessarily exposes this key; RLS is mandatory.
-
-No deployment was performed as part of this change: this workspace has no authenticated Git remote credentials, and no Supabase project credentials were provided.
+The repository already contains GitHub Pages assets and a GitHub Actions workflow for building the Android package. The website is deployed at https://roguelineageaccmanager.github.io/gymapptest2/. GitHub Pages updates automatically when changes are pushed to `main`; the Android package builds through its GitHub Actions workflow. Row-level security is enabled on all app tables.
 
 ## Verification
 
