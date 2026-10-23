@@ -575,7 +575,7 @@
     
     <script>
     // ---------- APP VERSION / AUTO UPDATE ----------
-    const APP_VERSION = "2.10.0";
+    const APP_VERSION = "2.11.0";
     document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
     
     function checkForUpdate() {
@@ -1531,7 +1531,8 @@
 <script>
 (function () {
   var MN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  var UNI = ['Single-Arm Cable Lateral Raises', 'Single-Arm Tricep Pushdowns', 'Reverse Chest Fly Machine']; // get left/right sets
+  var UNI = ['Single-Arm Cable Lateral Raises', 'Single-Arm Tricep Pushdowns', 'Reverse Chest Fly Machine']; // legacy one-sided exercise names
+  function isUnilateral(ex) { return !!(ex && (ex.sides === 'both' || UNI.indexOf(ex.name) >= 0 || /single[- ]arm|one[- ]arm|single[- ]leg|one[- ]leg|unilateral/i.test(ex.name || ''))); }
   var REST = {
     "Smith Machine Incline Bench Press": 180, "Chest Press Machine": 150, "Shoulder Press Machine": 150,
     "Single-Arm Cable Lateral Raises": 90, "Single-Arm Tricep Pushdowns": 90, "Abdominal Crunch Machine": 90,
@@ -1589,7 +1590,7 @@
   Object.keys(WORKOUTS).forEach(function (d) {
     WORKOUTS[d].forEach(function (e) {
       if (REST[e.name]) e.rest = REST[e.name];
-      if (UNI.indexOf(e.name) >= 0) e.sets = 4;
+      if (isUnilateral(e)) e.sets = 4;
     });
   });
   var sidesFrom = localStorage.getItem('gymSidesFrom');
@@ -1771,7 +1772,7 @@
     pick(card);
     var isAdd = !!e.target.closest('.add-set'), isRem = !!e.target.closest('.remove-set');
     if (!isAdd && !isRem) return;
-    if (UNI.indexOf(card.dataset.exName) >= 0) {   // keep L and R in pairs
+    if (isUnilateral(meta(card.dataset.exName))) {   // keep L and R in pairs
       var n = card.querySelectorAll('.sets-table tr').length - 1;
       if (n % 2) { if (isAdd || n === 1) card.querySelector('.add-set').onclick(); else card.querySelector('.remove-set').onclick(); }
       relabel(card);
@@ -1860,7 +1861,7 @@
       t.className = 'ex-cat';
       t.textContent = ((CATEGORY_META[ex.cat] || {}).label || ex.cat) + ' · ' + fmt(ex.rest) + ' rest';
       card.insertBefore(t, card.firstChild);
-      if (UNI.indexOf(ex.name) >= 0) relabel(card);
+      if (isUnilateral(ex)) relabel(card);
     });
     renderRest();
     clearInterval(timer);
@@ -1881,7 +1882,7 @@
     _sd(ds, sch);
     if (ds < sidesFrom) return;   // older logs were not logged per side
     document.querySelectorAll('#overviewBody .log-ex').forEach(function (ex) {
-      if (UNI.indexOf(ex.querySelector('.log-ex-name').textContent) < 0) return;
+      if (!isUnilateral({ name: ex.querySelector('.log-ex-name').textContent })) return;
       ex.querySelectorAll('.log-set').forEach(function (r, i) { r.firstElementChild.textContent = (i % 2 ? 'R' : 'L') + (Math.floor(i / 2) + 1); });
     });
   };
@@ -1915,7 +1916,7 @@
     $('daTitle').textContent = fmtLong(ds);
     $('daSub').textContent = w + (isB ? ' · bypass day' : '');
     $('daList').innerHTML = (WORKOUTS[w] || []).map(function (e) {
-      var n = UNI.indexOf(e.name) >= 0 ? (e.sets / 2) + ' sets · L/R' : e.sets + ' sets';
+      var n = isUnilateral(e) ? (e.sets / 2) + ' sets · L/R' : e.sets + ' sets';
       return '<div class="pv-row"><div><b>' + e.name + '</b><small>' + ((CATEGORY_META[e.cat] || {}).label || e.cat) + '</small></div><span>' + n + '</span></div>';
     }).join('');
     $('daByp').style.display = allowByp ? '' : 'none';
@@ -2145,7 +2146,7 @@
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./cloud-config.js?v=2.10.0"></script>
-<script src="./cloud.js?v=2.10.0"></script>
-<script src="./plan.js?v=2.10.0"></script>
+<script src="./cloud-config.js?v=2.11.0"></script>
+<script src="./cloud.js?v=2.11.0"></script>
+<script src="./plan.js?v=2.11.0"></script>
     </html>
