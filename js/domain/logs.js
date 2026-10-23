@@ -82,7 +82,11 @@ export function sanitizeLogs(source) {
   entries.forEach(([raw, sessions]) => sessions.forEach((s) => {
     const clean = cleanSession(s);
     const date = clean && canonicalLogDate(raw, s);
-    if (date) (out[date] || (out[date] = [])).push(clean);
+    if (!date) return;
+    // Without id or time the original app keys a session by its full JSON; keep
+    // that key as the id so deletions match between both versions.
+    if (!clean.id && !clean.time) clean.id = date + '|' + clean.day + '|' + JSON.stringify(s);
+    (out[date] || (out[date] = [])).push(clean);
   }));
   Object.values(out).forEach((list) => list.sort(byTime));
   return out;

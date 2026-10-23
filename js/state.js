@@ -2,8 +2,8 @@
 // `state` and call the save functions; cloud sync listens for the events.
 import { KEYS, read, write, readText, writeText, remove, emit } from './core/store.js';
 import { ymd } from './core/dates.js';
-import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule } from './domain/plan.js';
-import { sanitizeLogs, upgradeLastUsed, sessionKey, mergeProgress, normalizeBypass, activeBypass } from './domain/logs.js';
+import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule, planHashes } from './domain/plan.js';
+import { sanitizeLogs, upgradeLastUsed, sessionKey, mergeProgress, normalizeBypass, activeBypass, streak, bestStreak } from './domain/logs.js';
 import { sanitizeWeights, upsertWeight } from './domain/weights.js';
 
 // weightStep 0 = keep exactly what was typed. Older versions always rounded to
@@ -54,6 +54,7 @@ export function loadState() {
   state.settings = { ...DEFAULT_SETTINGS, ...(read(KEYS.settings, {}) || {}) };
   state.sync = { accountId: null, syncedWeightDates: [], pendingWeightDeletes: {}, ...(read(KEYS.sync, {}) || {}) };
   if (!readText(KEYS.sidesFrom)) writeText(KEYS.sidesFrom, ymd());
+  savedHashes = planHashes(localPlan());
 }
 
 function persistPlan() {
@@ -61,10 +62,30 @@ function persistPlan() {
   write(KEYS.schedule, state.schedule);
 }
 
+// Hashes of the plan as last saved, to find which routines/days an edit touched.
+let savedHashes = null;
+
+function stampChanges() {
+  const now = Date.now();
+  const times = read(KEYS.planTimes, {}) || {};
+  times.workouts = times.workouts || {};
+  times.schedule = times.schedule || {};
+  const next = planHashes(localPlan());
+  const prev = savedHashes || { workouts: {}, schedule: {} };
+  new Set([...Object.keys(next.workouts), ...Object.keys(prev.workouts)]).forEach((n) => {
+    if (next.workouts[n] !== prev.workouts[n]) times.workouts[n] = now;
+  });
+  Object.keys(next.schedule).forEach((d) => { if (next.schedule[d] !== prev.schedule[d]) times.schedule[d] = now; });
+  if (next.restImage !== prev.restImage) times.restImage = now;
+  write(KEYS.planTimes, times);
+  savedHashes = next;
+}
+
 /** Saves routines and schedule. `silent` skips the cloud upload (used when applying cloud data). */
 export function savePlan({ silent = false } = {}) {
   persistPlan();
-  if (!silent) write(KEYS.planUpdatedAt, new Date().toISOString());
+  if (silent) savedHashes = planHashes(localPlan());
+  else stampChanges();
   emit('gym:plan-updated');
   if (!silent) emit('gym:plan-changed');
 }
@@ -79,16 +100,37 @@ export function setPlanTombstones(deleted, restored) {
   write(KEYS.restoredWorkouts, restored);
 }
 
+/** The plan in the shared cloud format, with per-item edit times. */
 export function localPlan() {
   const { deleted, restored } = planTombstones();
-  return { workouts: state.workouts, schedule: state.schedule, deletedWorkouts: deleted, restoredWorkouts: restored, updatedAt: read(KEYS.planUpdatedAt, null) };
+  const img = readText(KEYS.restImage);
+  return {
+    workouts: state.workouts,
+    schedule: state.schedule,
+    deletedWorkouts: deleted.filter((n) => !state.workouts[n]),
+    restoredWorkouts: restored,
+    restImage: img || null,
+    itemUpdatedAt: read(KEYS.planTimes, {}) || {},
+  };
 }
 
+/** Hashes of the cloud plan at the last successful sync (null before the first). */
+export function planBase() {
+  return read(KEYS.planBase, null);
+}
+
+export function setPlanBase(base) {
+  write(KEYS.planBase, base);
+}
+
+/** Applies a merged plan from the cloud without marking anything as edited here. */
 export function applyPlan(plan) {
   state.workouts = plan.workouts;
+  upgradeExercises(state.workouts);
   state.schedule = plan.schedule;
   setPlanTombstones(plan.deletedWorkouts, plan.restoredWorkouts);
-  if (plan.updatedAt) write(KEYS.planUpdatedAt, plan.updatedAt);
+  write(KEYS.planTimes, plan.itemUpdatedAt || {});
+  if (plan.restImage) writeText(KEYS.restImage, plan.restImage); else remove(KEYS.restImage);
   savePlan({ silent: true });
 }
 
@@ -145,7 +187,10 @@ export function saveWeights({ silent = false } = {}) {
 
 export function setWeight(date, kg) {
   state.weights = upsertWeight(state.weights, date, kg);
-  if (state.sync.pendingWeightDeletes[date]) { delete state.sync.pendingWeightDeletes[date]; saveSync(); }
+  // A new entry is not "already uploaded", even if this day was synced and deleted before.
+  delete state.sync.pendingWeightDeletes[date];
+  state.sync.syncedWeightDates = state.sync.syncedWeightDates.filter((d) => d !== date);
+  saveSync();
   saveWeights();
 }
 
@@ -178,9 +223,11 @@ export function saveSync() {
   write(KEYS.sync, state.sync);
 }
 
+// Everything personal on this phone, removed on "Sign out and remove my data".
 const LOCAL_DATA_KEYS = [KEYS.logs, KEYS.lastUsed, KEYS.weights, KEYS.bypass, KEYS.bypassState, KEYS.workouts, KEYS.schedule,
-  KEYS.deletedWorkouts, KEYS.restoredWorkouts, KEYS.planUpdatedAt, KEYS.draft, KEYS.active, KEYS.sync,
-  KEYS.deletedSessions, KEYS.deletedDates, KEYS.legacyStats];
+  KEYS.deletedWorkouts, KEYS.restoredWorkouts, KEYS.planUpdatedAt, KEYS.planTimes, KEYS.planBase, KEYS.draft, KEYS.drafts,
+  KEYS.active, KEYS.sync, KEYS.deletedSessions, KEYS.deletedDates, KEYS.legacyStats, KEYS.gyms, KEYS.restImage,
+  KEYS.switchBackup, KEYS.settings];
 
 export function hasLocalData() {
   return Object.keys(state.logs).length > 0 || Object.keys(state.workouts).length > 0 || state.weights.length > 0;
@@ -201,7 +248,14 @@ export function restImage() {
 }
 
 export function setRestImage(dataUrl) {
-  if (dataUrl) return writeText(KEYS.restImage, dataUrl);
-  remove(KEYS.restImage);
+  if (dataUrl) { if (!writeText(KEYS.restImage, dataUrl)) return false; } else remove(KEYS.restImage);
+  savePlan();
   return true;
+}
+
+/** Current streak and the best ever, including a best kept from before this phone's history. */
+export function streaks() {
+  const current = streak(state.logs, state.bypass, state.schedule);
+  const legacy = Number((read(KEYS.legacyStats, {}) || {}).best_streak) || 0;
+  return { current, best: Math.max(current, bestStreak(state.logs, state.bypass, state.schedule), legacy) };
 }

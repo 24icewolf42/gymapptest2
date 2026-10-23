@@ -2,16 +2,20 @@
 // reads the cloud copy and merges, so two devices can't silently wipe each other.
 import { supabase, SITE_URL, errorText, isMissingSchema } from './client.js';
 import {
-  state, localPlan, applyPlan, saveLogs, saveLastUsed, saveWeights, saveSync, saveBypass, saveTombstones, hasLocalData, clearLocalData,
+  state, localPlan, applyPlan, planBase, setPlanBase, saveLogs, saveLastUsed, saveWeights, saveSync, saveBypass, saveTombstones,
+  hasLocalData, clearLocalData,
 } from '../state.js';
-import { mergePlans } from '../domain/plan.js';
+import { mergePlans, planHashes, stableStringify } from '../domain/plan.js';
 import { mergeLogs, mergeProgress, mergeBypass, dailySummaries } from '../domain/logs.js';
 import { mergeWeights } from '../domain/weights.js';
-import { emit, listen, writeText, read, write, KEYS } from '../core/store.js';
+import { emit, listen, writeText, read, write, remove, KEYS } from '../core/store.js';
 import { makeBackup } from '../domain/backup.js';
 
 export const account = {
   user: null,
+  // False until this phone's data is known to belong to the signed-in account
+  // (the "someone else used this phone" question is answered). Nothing syncs before.
+  ready: false,
   profile: null,
   status: '',
   statusTone: 'default',
@@ -38,9 +42,9 @@ export function initAccount() {
   listen('gym:logs-changed', () => queue('data'));
   listen('gym:progress-changed', () => queue('data'));
   listen('gym:weight-changed', () => queue('weights'));
-  window.addEventListener('online', () => { if (account.user) syncAll(); });
+  window.addEventListener('online', () => { if (account.user && account.ready) syncAll(); });
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && account.user && Date.now() - account.lastSync > 5 * 60 * 1000) syncAll();
+    if (!document.hidden && account.user && account.ready && Date.now() - account.lastSync > 5 * 60 * 1000) syncAll();
   });
 }
 
@@ -51,6 +55,7 @@ async function handleAuth(event, session) {
   if (!user) {
     account.user = null;
     account.profile = null;
+    account.ready = false;
     setStatus('');
     return;
   }
@@ -59,24 +64,42 @@ async function handleAuth(event, session) {
   // Only a new sign-in (or app start with a saved session) triggers a full sync;
   // hourly token refreshes do not.
   if (changed && !starting) {
+    account.ready = false;
     starting = startSession(user).finally(() => { starting = null; });
   } else {
     emit('gym:account');
   }
 }
 
+/** Forgets bookkeeping that belonged to the previous account on this phone. */
+function resetAccountBookkeeping() {
+  state.deletedSessions = [];
+  state.deletedDates = {};
+  saveTombstones();
+  remove(KEYS.legacyStats);
+  setPlanBase(null);
+  state.sync = { ...state.sync, syncedWeightDates: [], pendingWeightDeletes: {} };
+}
+
 async function startSession(user) {
-  if (state.sync.accountId && state.sync.accountId !== user.id && hasLocalData()) {
+  const owner = state.sync.accountId;
+  if (owner && owner !== user.id && hasLocalData()) {
     const choice = await accountSwitchHandler();
+    if (account.user?.id !== user.id) return;
     if (choice === 'cancel') { await supabase.auth.signOut(); return; }
     if (choice === 'replace') {
       // Keep a copy in case the other person had changes that never reached their account.
-      writeText('gymBackupBeforeSwitch', makeBackup((k) => localStorage.getItem(k), 'switch'));
+      const backup = makeBackup((k) => localStorage.getItem(k), 'switch');
       clearLocalData();
+      writeText(KEYS.switchBackup, backup);
     }
+    resetAccountBookkeeping();
+  } else if (owner && owner !== user.id) {
+    resetAccountBookkeeping();
   }
   state.sync.accountId = user.id;
   saveSync();
+  account.ready = true;
   await loadProfile();
   emit('gym:account');
   await syncAll();
@@ -102,7 +125,7 @@ async function loadProfile() {
 const running = {}, again = {}, timers = {};
 
 function run(area) {
-  if (!account.user) return Promise.resolve(false);
+  if (!account.user || !account.ready) return Promise.resolve(false);
   if (running[area]) { again[area] = true; return running[area]; }
   running[area] = (async () => {
     let ok;
@@ -123,12 +146,31 @@ function run(area) {
 }
 
 function queue(area) {
-  if (!account.user) return;
+  if (!account.user || !account.ready) return;
   clearTimeout(timers[area]);
   timers[area] = setTimeout(() => run(area), 800);
 }
 
-const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+// Postgres reorders JSON keys, so compare with sorted keys.
+const same = (a, b) => stableStringify(a) === stableStringify(b);
+const MAX_ATTEMPTS = 3;
+
+/**
+ * Writes a row only if nobody else wrote it since we read it (compare-and-set
+ * on updated_at). Returns false when another device got there first; the
+ * caller then reads, merges and tries again.
+ */
+async function casWrite(table, uid, readUpdatedAt, row) {
+  if (readUpdatedAt == null) {
+    const r = await supabase.from(table).insert(row);
+    if (r.error && r.error.code === '23505') return false;
+    if (r.error) throw r.error;
+    return true;
+  }
+  const r = await supabase.from(table).update(row).eq('user_id', uid).eq('updated_at', readUpdatedAt).select('user_id');
+  if (r.error) throw r.error;
+  return r.data.length === 1;
+}
 
 // Newest schema first; daily_summaries/deleted_dates and bypass/tombstone/legacy columns
 // arrive with the 2026-10-23 workout-sync migrations.
@@ -148,53 +190,57 @@ function maxMetrics(...sources) {
 const SYNC = {
   async plan() {
     const uid = account.user.id;
-    const r = await supabase.from('workout_plans').select('plan').eq('user_id', uid).maybeSingle();
-    if (r.error) throw r.error;
-    const merged = mergePlans(r.data?.plan, localPlan());
-    if (!same(merged.workouts, state.workouts) || !same(merged.schedule, state.schedule)) applyPlan(merged);
-    if (r.data && same(r.data.plan, merged)) return true;
-    const up = await supabase.from('workout_plans').upsert({ user_id: uid, plan: merged, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
-    if (up.error) throw up.error;
-    return true;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const r = await supabase.from('workout_plans').select('plan,updated_at').eq('user_id', uid).maybeSingle();
+      if (r.error) throw r.error;
+      const merged = mergePlans(r.data?.plan, localPlan(), planBase());
+      const local = localPlan();
+      if (!same(merged.workouts, local.workouts) || !same(merged.schedule, local.schedule) || merged.restImage !== local.restImage) applyPlan(merged);
+      const done = r.data && same(r.data.plan, merged);
+      if (done || await casWrite('workout_plans', uid, r.data?.updated_at ?? null, { user_id: uid, plan: merged, updated_at: new Date().toISOString() })) {
+        setPlanBase(planHashes(merged));
+        return true;
+      }
+    }
+    throw new Error('Your plan changed on another device at the same time. It will sync again shortly.');
   },
 
   async data() {
     const uid = account.user.id;
-    // Databases that have not applied every migration lack some columns; use what exists.
-    let columns = null, r = null;
-    for (const set of DATA_COLUMNS) {
-      r = await supabase.from('workout_data').select(set.join(',')).eq('user_id', uid).maybeSingle();
-      if (!isMissingSchema(r.error)) { columns = set; break; }
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      // Databases that have not applied every migration lack some columns; use what exists.
+      let columns = null, r = null;
+      for (const set of DATA_COLUMNS) {
+        r = await supabase.from('workout_data').select([...set, 'updated_at'].join(',')).eq('user_id', uid).maybeSingle();
+        if (!isMissingSchema(r.error)) { columns = set; break; }
+      }
+      if (r.error) throw r.error;
+      const remote = r.data || {};
+      const has = (c) => columns.includes(c);
+
+      const deleted = [...new Set([...state.deletedSessions, ...(Array.isArray(remote.deleted_sessions) ? remote.deleted_sessions : [])])];
+      const deletedDates = { ...(remote.deleted_dates || {}) };
+      Object.keys(state.deletedDates).forEach((d) => { deletedDates[d] = Math.max(Number(deletedDates[d]) || Date.parse(deletedDates[d]) || 0, Number(state.deletedDates[d]) || 0); });
+      const logs = mergeLogs(remote.logs || {}, state.logs, { deleted, deletedDates });
+      const progress = mergeProgress(remote.progress, state.lastUsed);
+      const bypass = mergeBypass(remote.bypass_days, state.bypassState);
+      const legacy = maxMetrics(read(KEYS.legacyStats, {}), remote.legacy_stats, remote.stats_snapshot);
+
+      state.deletedSessions = deleted;
+      state.deletedDates = deletedDates;
+      saveTombstones();
+      write(KEYS.legacyStats, legacy);
+      if (!same(logs, state.logs)) { state.logs = logs; saveLogs({ silent: true }); }
+      if (!same(progress, state.lastUsed)) { state.lastUsed = progress; saveLastUsed({ silent: true }); }
+      if (!same(bypass, state.bypassState)) { state.bypassState = bypass; saveBypass({ silent: true }); }
+
+      const row = { user_id: uid, logs, progress, updated_at: new Date().toISOString() };
+      if (has('bypass_days')) Object.assign(row, { bypass_days: bypass, deleted_sessions: deleted, legacy_stats: legacy });
+      if (has('deleted_dates')) Object.assign(row, { deleted_dates: deletedDates, daily_summaries: dailySummaries(logs) });
+      const changed = !r.data || Object.keys(row).some((k) => k !== 'updated_at' && k !== 'user_id' && !same(remote[k] ?? null, row[k]));
+      if (!changed || await casWrite('workout_data', uid, r.data?.updated_at ?? null, row)) return true;
     }
-    if (r.error) throw r.error;
-    const remote = r.data || {};
-    const has = (c) => columns.includes(c);
-
-    const deleted = [...new Set([...state.deletedSessions, ...(Array.isArray(remote.deleted_sessions) ? remote.deleted_sessions : [])])];
-    const deletedDates = { ...(remote.deleted_dates || {}) };
-    Object.keys(state.deletedDates).forEach((d) => { deletedDates[d] = Math.max(Number(deletedDates[d]) || Date.parse(deletedDates[d]) || 0, Number(state.deletedDates[d]) || 0); });
-    const logs = mergeLogs(remote.logs || {}, state.logs, { deleted, deletedDates });
-    const progress = mergeProgress(remote.progress, state.lastUsed);
-    const bypass = mergeBypass(remote.bypass_days, state.bypassState);
-    const legacy = maxMetrics(read(KEYS.legacyStats, {}), remote.legacy_stats, remote.stats_snapshot);
-
-    state.deletedSessions = deleted;
-    state.deletedDates = deletedDates;
-    saveTombstones();
-    write(KEYS.legacyStats, legacy);
-    if (!same(logs, state.logs)) { state.logs = logs; saveLogs({ silent: true }); }
-    if (!same(progress, state.lastUsed)) { state.lastUsed = progress; saveLastUsed({ silent: true }); }
-    if (!same(bypass, state.bypassState)) { state.bypassState = bypass; saveBypass({ silent: true }); }
-
-    const row = { user_id: uid, logs, progress, updated_at: new Date().toISOString() };
-    if (has('bypass_days')) Object.assign(row, { bypass_days: bypass, deleted_sessions: deleted, legacy_stats: legacy });
-    if (has('deleted_dates')) Object.assign(row, { deleted_dates: deletedDates, daily_summaries: dailySummaries(logs) });
-    const changed = !r.data || Object.keys(row).some((k) => k !== 'updated_at' && k !== 'user_id' && !same(remote[k] ?? null, row[k]));
-    if (changed) {
-      const up = await supabase.from('workout_data').upsert(row, { onConflict: 'user_id' });
-      if (up.error) throw up.error;
-    }
-    return true;
+    throw new Error('Your workouts changed on another device at the same time. They will sync again shortly.');
   },
 
   async weights() {
@@ -227,7 +273,7 @@ const SYNC = {
 };
 
 export async function syncAll() {
-  if (!account.user) return false;
+  if (!account.user || !account.ready) return false;
   setStatus('Syncing…');
   const results = [await run('plan'), await run('data'), await run('weights')];
   if (results.every(Boolean)) {
@@ -245,7 +291,9 @@ export async function signIn(email, password) {
 }
 
 export async function signUp(email, password, username) {
-  const r = await supabase.auth.signUp({ email, password, options: { data: { username }, emailRedirectTo: SITE_URL } });
+  // The age/permission confirmation is recorded with the account.
+  const data = { username, age_confirmed: true, age_confirmed_at: new Date().toISOString() };
+  const r = await supabase.auth.signUp({ email, password, options: { data, emailRedirectTo: SITE_URL } });
   if (r.error) return errorText(r.error);
   return r.data.session ? '' : 'confirm-email';
 }
@@ -255,17 +303,33 @@ export async function resetPassword(email) {
   return r.error ? errorText(r.error) : '';
 }
 
+/** Signs in with the code from a password-reset email; PASSWORD_RECOVERY then asks for a new password. */
+export async function verifyRecoveryCode(email, token) {
+  const r = await supabase.auth.verifyOtp({ email, token, type: 'recovery' });
+  if (r.error) return errorText(r.error, 'That code did not work. Request a new email and try again.');
+  emit('gym:password-recovery');
+  return '';
+}
+
 export async function updatePassword(password) {
   const r = await supabase.auth.updateUser({ password });
   return r.error ? errorText(r.error) : '';
 }
 
-export async function signOut({ removeLocalData = false } = {}) {
-  // Push pending changes first so nothing is lost when the data is removed.
-  if (account.user) await syncAll();
+/**
+ * Signs out. With removeLocalData, the phone's data is removed only after a
+ * successful final sync, unless `force` (the user accepted losing unsynced data).
+ * Returns '' on success or a message explaining why nothing was removed.
+ */
+export async function signOut({ removeLocalData = false, force = false } = {}) {
+  let synced = true;
+  if (account.user && account.ready) synced = await syncAll();
+  if (removeLocalData && !synced && !force) return 'not-synced';
+  account.ready = false;
   await supabase.auth.signOut();
   if (removeLocalData) clearLocalData();
   else { state.sync.syncedWeightDates = []; saveSync(); }
+  return '';
 }
 
 export async function changeUsername(name) {
@@ -287,11 +351,13 @@ export async function setShareWeight(on) {
 }
 
 /** Deletes the account and everything stored for it in the cloud. Data on this phone stays. */
-export async function deleteAccount() {
+export async function deleteAccount({ removeLocalData = false } = {}) {
   const r = await supabase.rpc('delete_my_account');
   if (r.error) return isMissingSchema(r.error) ? 'This needs the latest database update.' : errorText(r.error);
-  state.sync = { ...state.sync, accountId: null, syncedWeightDates: [], pendingWeightDeletes: {} };
+  // Whoever signs in next on this phone is asked before the remaining data joins their account.
+  state.sync = { ...state.sync, accountId: 'deleted:' + account.user.id, syncedWeightDates: [], pendingWeightDeletes: {} };
   saveSync();
   await supabase.auth.signOut();
+  if (removeLocalData) clearLocalData();
   return '';
 }

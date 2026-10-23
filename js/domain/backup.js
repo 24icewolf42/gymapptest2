@@ -6,7 +6,7 @@ export const BACKUP_KEYS = [
   'gymLogs', 'gymLastUsed', 'bodyWeightLogs', 'gymBypass',
   'gymCustomWorkouts', 'gymPlanSchedule', 'gymDeletedWorkouts', 'gymRestoredWorkouts',
   'gymPlanUpdatedAt', 'gymSettings', 'gymSidesFrom', 'gymFavoriteGyms',
-  'gymDeletedSessions', 'gymDeletedLogDates', 'gymBypassState', 'gymLegacyStats',
+  'gymDeletedSessions', 'gymDeletedLogDates', 'gymBypassState', 'gymLegacyStats', 'gymPlanItemTimes', 'gymRestImage',
 ];
 
 export function makeBackup(getItem, version) {
@@ -28,7 +28,7 @@ export function parseBackup(text) {
   BACKUP_KEYS.forEach((k) => {
     if (data[k] == null) return;
     const value = typeof data[k] === 'string' ? data[k] : JSON.stringify(data[k]);
-    if (k !== 'gymSidesFrom') {
+    if (k !== 'gymSidesFrom' && k !== 'gymRestImage') {
       try { JSON.parse(value); } catch { throw new Error('The backup is damaged (' + k + ').'); }
     }
     out[k] = value;

@@ -130,38 +130,124 @@ export function removeStockPresets(workouts) {
   return removed;
 }
 
+/** JSON with object keys sorted, so equal data compares equal after Postgres reorders it. */
+export function stableStringify(value) {
+  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
+  if (value && typeof value === 'object') {
+    return '{' + Object.keys(value).sort().filter((k) => value[k] !== undefined).map((k) => JSON.stringify(k) + ':' + stableStringify(value[k])).join(',') + '}';
+  }
+  return JSON.stringify(value ?? null);
+}
+
+/** Short content hash used to remember what the cloud looked like at the last sync. */
+export function hashOf(value) {
+  const s = stableStringify(value ?? null);
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(36) + ':' + s.length;
+}
+
+const listOf = (side, key) => (Array.isArray(side && side[key]) ? side[key] : []);
+
+/** Per-item view of a plan: routine name -> list|null, day -> name|null, restImage -> string|null. */
+export function planItems(plan) {
+  plan = plan || {};
+  const workouts = sanitizeWorkouts(plan.workouts);
+  const deleted = new Set(listOf(plan, 'deletedWorkouts').filter((n) => !listOf(plan, 'restoredWorkouts').includes(n)));
+  const items = { workouts: {}, schedule: {}, restImage: typeof plan.restImage === 'string' && plan.restImage ? plan.restImage : null };
+  Object.keys(workouts).forEach((n) => { if (!deleted.has(n)) items.workouts[n] = workouts[n]; });
+  deleted.forEach((n) => { items.workouts[n] = null; });
+  for (let i = 0; i < 7; i++) {
+    const v = plan.schedule && plan.schedule[i];
+    items.schedule[i] = typeof v === 'string' && v ? v : null;
+  }
+  return items;
+}
+
+/** Hashes of every item, the "base" remembered after a sync. */
+export function planHashes(plan) {
+  const items = planItems(plan);
+  const out = { workouts: {}, schedule: {}, restImage: hashOf(items.restImage) };
+  Object.keys(items.workouts).forEach((n) => { out.workouts[n] = hashOf(items.workouts[n]); });
+  Object.keys(items.schedule).forEach((d) => { out.schedule[d] = hashOf(items.schedule[d]); });
+  return out;
+}
+
 /**
- * Merges the cloud plan with this phone's plan. The side saved most recently
- * wins for routines and days that both have; routines only one side has are
- * kept unless they were deleted (tombstones). Plans written by older app
- * versions carry no timestamp, which makes this phone win, as before.
+ * Three-way merge of the cloud plan and this phone's plan, item by item
+ * (each routine, each weekday, the rest-day image).
+ *
+ * `base` holds the hashes of the cloud plan at this phone's last sync (null if
+ * it never synced). An item changed only on one side takes that side; changed
+ * on both, the newer edit wins (`itemUpdatedAt` timestamps; plans saved by
+ * older app versions have none, so this phone wins). Without a base, an item
+ * that only one side has is kept, and an untouched local item never
+ * overwrites the cloud, so a fresh phone can't wipe the weekly schedule.
  */
-export function mergePlans(remote, local) {
+export function mergePlans(remote, local, base = null) {
   remote = remote || {};
   local = local || {};
-  const remoteNewer = (Date.parse(remote.updatedAt || '') || 0) > (Date.parse(local.updatedAt || '') || 0);
-  const [newer, older] = remoteNewer ? [remote, local] : [local, remote];
-  const workouts = { ...sanitizeWorkouts(older.workouts), ...sanitizeWorkouts(newer.workouts) };
-  const list = (side, key) => (Array.isArray(side[key]) ? side[key] : []);
-  // Deleting and re-creating a name flips it between the two lists. When the
-  // sides disagree, the newer side's list decides; otherwise any deletion holds.
-  const names = new Set([...list(newer, 'deletedWorkouts'), ...list(older, 'deletedWorkouts'), ...list(newer, 'restoredWorkouts'), ...list(older, 'restoredWorkouts')]);
-  const deleted = [], restored = [];
-  names.forEach((name) => {
-    const isDeleted = list(newer, 'deletedWorkouts').includes(name) ||
-      (!list(newer, 'restoredWorkouts').includes(name) && list(older, 'deletedWorkouts').includes(name) && !list(older, 'restoredWorkouts').includes(name));
-    (isDeleted ? deleted : restored).push(name);
-  });
-  removeStockPresets(workouts).forEach((name) => { if (!deleted.includes(name)) deleted.push(name); });
-  deleted.forEach((name) => { delete workouts[name]; });
-  const schedule = sanitizeSchedule({ ...emptySchedule(), ...(older.schedule || {}), ...(newer.schedule || {}) }, workouts);
-  return {
-    workouts,
-    schedule,
-    deletedWorkouts: deleted,
-    restoredWorkouts: restored,
-    updatedAt: newer.updatedAt || older.updatedAt || null,
+  const R = planItems(remote), L = planItems(local);
+  const rTimes = remote.itemUpdatedAt || {}, lTimes = local.itemUpdatedAt || {};
+  const pick = (group, key, rv, lv) => {
+    const rh = hashOf(rv), lh = hashOf(lv);
+    if (rh === lh) return { value: lv, time: Math.max(Number(rTimes[group]?.[key]) || 0, Number(lTimes[group]?.[key]) || 0) };
+    const rt = Number(group === 'restImage' ? rTimes.restImage : rTimes[group]?.[key]) || 0;
+    const lt = Number(group === 'restImage' ? lTimes.restImage : lTimes[group]?.[key]) || 0;
+    const b = base ? (group === 'restImage' ? base.restImage : base[group]?.[key]) : undefined;
+    let takeLocal;
+    if (b !== undefined) {
+      if (lh === b) takeLocal = false;
+      else if (rh === b) takeLocal = true;
+      else takeLocal = lt >= rt;
+    } else if (lv == null && !lt) takeLocal = false;
+    // The cloud has nothing for it, unless it is an explicit deletion.
+    else if (rv == null && !(group === 'workouts' && listOf(remote, 'deletedWorkouts').includes(key))) takeLocal = true;
+    // Equal (or no) timestamps: this phone wins, except against an explicit deletion.
+    else takeLocal = lt > rt || (lt === rt && rv != null);
+    return takeLocal ? { value: lv, time: lt } : { value: rv, time: rt };
   };
+
+  const merged = { workouts: {}, schedule: {}, restImage: null };
+  const times = { workouts: {}, schedule: {}, restImage: 0 };
+  const names = new Set([...Object.keys(R.workouts), ...Object.keys(L.workouts)]);
+  names.forEach((n) => {
+    const r = pick('workouts', n, R.workouts[n] ?? null, L.workouts[n] ?? null);
+    merged.workouts[n] = r.value;
+    if (r.time) times.workouts[n] = r.time;
+  });
+  for (let i = 0; i < 7; i++) {
+    const r = pick('schedule', String(i), R.schedule[i], L.schedule[i]);
+    merged.schedule[i] = r.value;
+    if (r.time) times.schedule[i] = r.time;
+  }
+  const img = pick('restImage', 'restImage', R.restImage, L.restImage);
+  merged.restImage = img.value;
+  times.restImage = img.time || 0;
+
+  // Keep this phone's routine order (Postgres does not keep JSON key order).
+  const order = [...new Set([...Object.keys(local.workouts || {}), ...listOf(remote, 'workoutOrder'), ...Object.keys(remote.workouts || {})])];
+  const workouts = {};
+  order.forEach((n) => { if (merged.workouts[n]) workouts[n] = merged.workouts[n]; });
+  Object.keys(merged.workouts).forEach((n) => { if (merged.workouts[n] && !workouts[n]) workouts[n] = merged.workouts[n]; });
+  const removed = removeStockPresets(workouts);
+
+  // Tombstone lists in the format the original app reads: every name that is
+  // gone, and every present name that some old list still marks as deleted.
+  const everDeleted = new Set([...listOf(remote, 'deletedWorkouts'), ...listOf(local, 'deletedWorkouts')]);
+  const deletedWorkouts = [...new Set([...Object.keys(merged.workouts).filter((n) => !merged.workouts[n]), ...removed, ...[...everDeleted].filter((n) => !workouts[n])])];
+  const restoredWorkouts = Object.keys(workouts).filter((n) => everDeleted.has(n));
+
+  const plan = {
+    workouts,
+    schedule: sanitizeSchedule(merged.schedule, workouts),
+    deletedWorkouts,
+    restoredWorkouts,
+    restImage: merged.restImage,
+    workoutOrder: Object.keys(workouts),
+    itemUpdatedAt: times,
+  };
+  return plan;
 }
 
 /** Number of set rows a session shows for an exercise. */

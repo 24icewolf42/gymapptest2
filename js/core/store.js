@@ -16,6 +16,10 @@ export const KEYS = Object.freeze({
   sidesFrom: 'gymSidesFrom',
   settings: 'gymSettings',
   planUpdatedAt: 'gymPlanUpdatedAt',
+  planTimes: 'gymPlanItemTimes',
+  planBase: 'gymPlanBase',
+  drafts: 'gymDrafts',
+  switchBackup: 'gymBackupBeforeSwitch',
   sync: 'gymSyncState',
   gyms: 'gymFavoriteGyms',
   // Shared with the original app's sync format:

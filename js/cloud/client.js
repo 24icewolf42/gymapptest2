@@ -11,8 +11,21 @@ export function cloudConfigured() {
   return !!(window.supabase && cfg.url && cfg.anonKey && !/YOUR_|PASTE_/i.test(cfg.url + cfg.anonKey));
 }
 
+// Fail fast when offline and give up on a stuck request after 15 s, so a sync
+// never keeps the user waiting.
+function boundedFetch(input, init = {}) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return Promise.reject(new TypeError('Failed to fetch (offline)'));
+  const signals = [AbortSignal.timeout(15000), init.signal].filter(Boolean);
+  return fetch(input, { ...init, signal: signals.length > 1 ? AbortSignal.any(signals) : signals[0] });
+}
+
 export const supabase = cloudConfigured()
-  ? window.supabase.createClient(cfg.url, cfg.anonKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } })
+  ? window.supabase.createClient(cfg.url, cfg.anonKey, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+    global: { fetch: boundedFetch },
+    // Sync retries on its own schedule; built-in backoff (1+2+4 s per request) only delays errors.
+    db: { retry: false },
+  })
   : null;
 
 /** True when an error means a table or function from a newer migration is missing. */
@@ -23,7 +36,7 @@ export function isMissingSchema(error) {
 /** Short, friendly text for an error from Supabase or the network. */
 export function errorText(error, fallback = 'Something went wrong. Try again.') {
   if (!error) return fallback;
-  if (error.message && /Failed to fetch|NetworkError|Load failed/i.test(error.message)) return 'No connection. Try again when you are online.';
+  if (error.message && /Failed to fetch|NetworkError|Load failed|aborted|timed? ?out/i.test(error.message)) return 'No connection. Try again when you are online.';
   if (error.code === '23505') return 'That already exists.';
   if (error.code === '54000') return error.message;
   if (error.code === '22023') return error.message;

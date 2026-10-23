@@ -1,5 +1,5 @@
 // Body weight entries: [{ date: "YYYY-MM-DD", weight: number, updatedAt: ms }]. Pure functions.
-import { isYmd } from '../core/dates.js';
+import { isYmd, parseYmd, addDays, ymd } from '../core/dates.js';
 
 export function sanitizeWeights(list) {
   const byDate = {};
@@ -40,8 +40,8 @@ export function mergeWeights(remoteRows, local, syncedDates = []) {
 export function weightTrend(list) {
   if (!list.length) return null;
   const last = list[list.length - 1];
-  const cutoff = new Date(last.date);
-  cutoff.setDate(cutoff.getDate() - 30);
-  const base = list.find((x) => new Date(x.date) >= cutoff) || list[0];
+  // Local calendar dates, so a daylight-saving change can't shift the window.
+  const cutoff = ymd(addDays(parseYmd(last.date), -30));
+  const base = list.find((x) => x.date >= cutoff) || list[0];
   return { latest: last, change: Math.round((last.weight - base.weight) * 10) / 10, since: base.date };
 }

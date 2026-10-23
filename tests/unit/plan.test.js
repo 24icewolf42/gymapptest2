@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   sanitizeExercise, sanitizeWorkout, sanitizeWorkouts, sanitizeSchedule, upgradeExercises,
-  removeStockPresets, mergePlans, workoutSummary, displaySets, fingerprint, emptySchedule,
+  removeStockPresets, mergePlans, workoutSummary, displaySets, fingerprint, emptySchedule, planHashes, stableStringify,
 } from '../../js/domain/plan.js';
 
 describe('sanitizeExercise', () => {
@@ -61,50 +61,87 @@ describe('removeStockPresets', () => {
   });
 });
 
-describe('mergePlans', () => {
+describe('mergePlans (three-way, per routine and day)', () => {
   const ex = (name) => [{ name, cat: 'chest', sets: 3, target: '8', rest: 90, note: '' }];
+  const full = { 0: 'Push', 1: null, 2: 'Pull', 3: null, 4: 'Push', 5: null, 6: null };
+  const cloud = { workouts: { Push: ex('Bench'), Pull: ex('Row') }, schedule: full };
 
-  it('lets the newer side win for shared routines and keeps one-sided ones', () => {
-    const remote = { workouts: { Push: ex('Remote bench'), Pull: ex('Row') }, schedule: { 0: 'Push' }, updatedAt: '2026-10-02T00:00:00Z' };
-    const local = { workouts: { Push: ex('Local bench'), Legs: ex('Squat') }, schedule: { 1: 'Legs' }, updatedAt: '2026-10-01T00:00:00Z' };
-    const m = mergePlans(remote, local);
-    expect(m.workouts.Push[0].name).toBe('Remote bench');
-    expect(Object.keys(m.workouts).sort()).toEqual(['Legs', 'Pull', 'Push']);
-    expect(m.schedule[0]).toBe('Push');
-    expect(m.schedule[1]).toBe('Legs');
+  it('does not let a fresh phone wipe the weekly schedule', () => {
+    const fresh = { workouts: {}, schedule: emptySchedule(), itemUpdatedAt: {} };
+    const m = mergePlans(cloud, fresh, null);
+    expect(m.schedule).toEqual(full);
+    expect(Object.keys(m.workouts)).toEqual(['Push', 'Pull']);
   });
 
-  it('treats plans from older app versions (no timestamp) as older than this phone', () => {
-    const m = mergePlans({ workouts: { Push: ex('Remote') } }, { workouts: { Push: ex('Local') }, updatedAt: '2026-10-01T00:00:00Z' });
-    expect(m.workouts.Push[0].name).toBe('Local');
+  it('keeps edits to different routines made on two devices', () => {
+    const base = planHashes(cloud);
+    const remote = { ...cloud, workouts: { ...cloud.workouts, Pull: ex('Chin-up') } };
+    const local = { ...cloud, workouts: { ...cloud.workouts, Push: ex('Dips') }, itemUpdatedAt: { workouts: { Push: 5 } } };
+    const m = mergePlans(remote, local, base);
+    expect(m.workouts.Push[0].name).toBe('Dips');
+    expect(m.workouts.Pull[0].name).toBe('Chin-up');
+  });
+
+  it('takes a change from the old app version (no timestamps) when this phone did not touch that routine', () => {
+    const base = planHashes(cloud);
+    const remote = { ...cloud, workouts: { ...cloud.workouts, Push: ex('Incline') } };
+    expect(mergePlans(remote, { ...cloud, itemUpdatedAt: {} }, base).workouts.Push[0].name).toBe('Incline');
+  });
+
+  it('resolves a conflict on the same routine by the newer edit', () => {
+    const base = planHashes(cloud);
+    const remote = { ...cloud, workouts: { ...cloud.workouts, Push: ex('Remote') }, itemUpdatedAt: { workouts: { Push: 20 } } };
+    const local = { ...cloud, workouts: { ...cloud.workouts, Push: ex('Local') }, itemUpdatedAt: { workouts: { Push: 10 } } };
+    expect(mergePlans(remote, local, base).workouts.Push[0].name).toBe('Remote');
+    local.itemUpdatedAt.workouts.Push = 30;
+    expect(mergePlans(remote, local, base).workouts.Push[0].name).toBe('Local');
   });
 
   it('keeps a deletion even when the other device still has the routine', () => {
-    const m = mergePlans(
-      { workouts: { Push: ex('a'), Pull: ex('b') }, updatedAt: '2026-10-05T00:00:00Z' },
-      { workouts: { Pull: ex('b') }, deletedWorkouts: ['Push'], updatedAt: '2026-10-01T00:00:00Z' },
-    );
+    const base = planHashes(cloud);
+    const local = { workouts: { Pull: ex('Row') }, schedule: { ...full, 0: null, 4: null }, deletedWorkouts: ['Push'], itemUpdatedAt: { workouts: { Push: 9 } } };
+    const m = mergePlans(cloud, local, base);
     expect(m.workouts.Push).toBeUndefined();
     expect(m.deletedWorkouts).toContain('Push');
+    expect(m.schedule[0]).toBeNull();
   });
 
   it('deletes again after delete -> re-create -> delete (previously resurrected)', () => {
-    const remote = { workouts: { Push: ex('a') }, restoredWorkouts: ['Push'], updatedAt: '2026-10-01T00:00:00Z' };
-    const local = { workouts: {}, deletedWorkouts: ['Push'], restoredWorkouts: [], updatedAt: '2026-10-02T00:00:00Z' };
-    const m = mergePlans(remote, local);
+    const recreated = { ...cloud, restoredWorkouts: ['Push'] };
+    const base = planHashes(recreated);
+    const local = { workouts: { Pull: ex('Row') }, schedule: full, deletedWorkouts: ['Push'], restoredWorkouts: [], itemUpdatedAt: { workouts: { Push: 50 } } };
+    const m = mergePlans(recreated, local, base);
     expect(m.workouts.Push).toBeUndefined();
     expect(m.restoredWorkouts).not.toContain('Push');
   });
 
-  it('keeps a routine re-created on the newer side', () => {
-    const remote = { workouts: {}, deletedWorkouts: ['Push'], updatedAt: '2026-10-01T00:00:00Z' };
-    const local = { workouts: { Push: ex('new') }, restoredWorkouts: ['Push'], updatedAt: '2026-10-02T00:00:00Z' };
-    expect(mergePlans(remote, local).workouts.Push[0].name).toBe('new');
+  it('keeps routines made offline before the first sign-in', () => {
+    const local = { workouts: { Legs: ex('Squat') }, schedule: { ...emptySchedule(), 1: 'Legs' } };
+    const m = mergePlans({ workouts: {}, schedule: {} }, local, null);
+    expect(Object.keys(m.workouts)).toEqual(['Legs']);
+    expect(m.schedule[1]).toBe('Legs');
+  });
+
+  it('respects an explicit deletion from the cloud over an untouched local copy', () => {
+    const remote = { workouts: {}, schedule: {}, deletedWorkouts: ['Old'] };
+    expect(mergePlans(remote, { workouts: { Old: ex('x') }, schedule: {} }, null).workouts.Old).toBeUndefined();
+  });
+
+  it('keeps this phone\'s routine order and syncs the rest-day picture', () => {
+    const reordered = { workouts: { Pull: ex('Row'), Push: ex('Bench') }, schedule: full, restImage: 'data:image/jpeg;base64,AAA' };
+    const local = { workouts: { Push: ex('Bench'), Pull: ex('Row') }, schedule: full };
+    const m = mergePlans(reordered, local, planHashes(local));
+    expect(Object.keys(m.workouts)).toEqual(['Push', 'Pull']);
+    expect(m.restImage).toBe('data:image/jpeg;base64,AAA');
   });
 
   it('sanitizes routines coming from the cloud', () => {
-    const m = mergePlans({ workouts: { Bad: [null, { name: 'ok', sets: 1e9 }] } }, {});
+    const m = mergePlans({ workouts: { Bad: [null, { name: 'ok', sets: 1e9 }] } }, {}, null);
     expect(m.workouts.Bad).toEqual([{ name: 'ok', cat: 'other', sets: 40, target: '8–12', rest: 90, note: '' }]);
+  });
+
+  it('compares JSON regardless of key order', () => {
+    expect(stableStringify({ b: 1, a: [{ d: 2, c: 3 }] })).toBe(stableStringify({ a: [{ c: 3, d: 2 }], b: 1 }));
   });
 });
 
