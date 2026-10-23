@@ -575,7 +575,7 @@
     
     <script>
     // ---------- APP VERSION / AUTO UPDATE ----------
-    const APP_VERSION = "2.9.0";
+    const APP_VERSION = "2.9.1";
     document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
     
     function checkForUpdate() {
@@ -678,8 +678,8 @@
     window.SCHEDULE = SCHEDULE;
     try { Object.assign(SCHEDULE, JSON.parse(localStorage.getItem('gymPlanSchedule') || '{}')); } catch (e) {}
     (function removeUneditedPresets() {
-      const stock = { "Push + Abs": "08c00f89", "Push": "08c00f89", "Pull": "737bbac2", "Legs": "bb969241", "Full Body": "63145501" };
-      function fingerprint(value) { const s = JSON.stringify(value); let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(16).padStart(8, '0'); }
+      const stock = { "Push + Abs": "5422adf1", "Push": "5422adf1", "Pull": "4381bc68", "Legs": "7dbd6bbd", "Full Body": "f1647e8e" };
+      function fingerprint(value) { const s = JSON.stringify((value || []).map(e => [e.name, e.target || '', e.cat || '', e.note || ''])); let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(16).padStart(8, '0'); }
       const removed = [];
       Object.keys(WORKOUTS).forEach(name => { if (stock[name] && fingerprint(WORKOUTS[name]) === stock[name]) { delete WORKOUTS[name]; removed.push(name); } });
       if (removed.length) {
@@ -2093,7 +2093,7 @@
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./cloud-config.js?v=2.9.0"></script>
-<script src="./cloud.js?v=2.9.0"></script>
-<script src="./plan.js?v=2.9.0"></script>
+<script src="./cloud-config.js?v=2.9.1"></script>
+<script src="./cloud.js?v=2.9.1"></script>
+<script src="./plan.js?v=2.9.1"></script>
     </html>
