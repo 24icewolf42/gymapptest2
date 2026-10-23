@@ -1,7 +1,9 @@
 // The workout screen: log sets, smart rest timer, autosave, start/finish.
-import { $, html, render, on, toast, haptic } from '../core/dom.js';
+// Every opened session has its own draft, so editing an old workout never
+// touches the one that is running.
+import { $, html, replaceContent, on, toast, haptic } from '../core/dom.js';
 import { KEYS, read, write, remove, emit } from '../core/store.js';
-import { ymd, fmtLong, fmtClock, fmtShort } from '../core/dates.js';
+import { ymd, parseYmd, fmtLong, fmtClock, fmtShort, relativeDay } from '../core/dates.js';
 import { pushLayer } from '../core/router.js';
 import { state, saveLogs, saveLastUsed, markSessionsDeleted } from '../state.js';
 import { sanitizeWorkout, rowCount } from '../domain/plan.js';
@@ -12,17 +14,22 @@ import { confirmDialog } from './sheet.js';
 import { icons } from './icons.js';
 
 const DRAFT_STALE_MS = 4 * 3600 * 1000;
+const DRAFT_MAX_AGE_MS = 7 * 86400 * 1000;
 const ACTIVE_MAX_MS = 12 * 3600 * 1000;
+const NEW = 'new:';
 
 let s = null; // the open session
 let closeLayer = null;
 let tickTimer = null;
 let wakeLock = null;
 let audio = null;
+let returnFocus = null;
 
+/** The workout whose timer is running: { day, date, key, startedAt }. */
 export function getActive() {
   const a = read(KEYS.active, null);
-  if (a && Date.now() - a.startedAt > ACTIVE_MAX_MS) { remove(KEYS.active); return null; }
+  if (!a || typeof a !== 'object') return null;
+  if (Date.now() - a.startedAt > ACTIVE_MAX_MS) { remove(KEYS.active); return null; }
   return a;
 }
 
@@ -31,40 +38,86 @@ function setActive(a) {
   emit('gym:active-changed');
 }
 
-function readDraft() { return read(KEYS.draft, null); }
+const draftId = (day, date, key) => date + '|' + day + '|' + key;
+
+function readDrafts() {
+  const drafts = read(KEYS.drafts, {}) || {};
+  // The previous app version kept one draft for the open workout.
+  const legacy = read(KEYS.draft, null);
+  if (legacy && legacy.day && legacy.date && legacy.ex) {
+    const active = getActive();
+    const key = active && active.day === legacy.day && active.date === legacy.date && active.key ? active.key : NEW + 'legacy';
+    const id = draftId(legacy.day, legacy.date, key);
+    if (!drafts[id]) drafts[id] = { ...legacy, key };
+    write(KEYS.drafts, drafts);
+    remove(KEYS.draft);
+  }
+  return drafts;
+}
+
+function writeDraft(id, draft) {
+  const drafts = readDrafts();
+  if (draft) drafts[id] = draft; else delete drafts[id];
+  Object.keys(drafts).forEach((k) => { if (Date.now() - (drafts[k].active || 0) > DRAFT_MAX_AGE_MS) delete drafts[k]; });
+  write(KEYS.drafts, drafts);
+}
 
 export function isOpen() { return !!s; }
 
 /**
- * Opens a workout for a date (defaults to today). If that workout was already
- * logged on that date, the latest copy opens for editing, unless `fresh` asks
- * for a new session or `key` picks a specific one.
+ * Opens a workout. Without options it resumes the running session of that
+ * workout and date, else edits the latest logged one, else starts a new one.
+ * `key` edits a specific logged session; `fresh` always starts a new one.
+ * Future dates can be previewed in the calendar but not logged.
  */
 export function openSession(day, date = ymd(), { key = null, fresh = false } = {}) {
+  const today = ymd();
+  if (date > today) {
+    toast(`You can log ${day} on ${relativeDay(parseYmd(date))}.`);
+    return;
+  }
   const sameDay = (state.logs[date] || []).filter((x) => x.day === day);
-  const existing = fresh ? null : key ? sameDay.find((x) => sessionKey(date, x) === key) || null : sameDay[sameDay.length - 1] || null;
-  const draft = readDraft();
-  const resume = draft && draft.day === day && draft.date === date && draft.ex ? draft : null;
+  const active = getActive();
+  const activeHere = active && active.day === day && active.date === date ? active : null;
+  // The previous app version's running workout has no key: treat it as new.
+  if (activeHere && !activeHere.key) { activeHere.key = NEW + 'legacy'; write(KEYS.active, activeHere); }
+  let existing = null, sessionRef;
+  if (key) {
+    existing = sameDay.find((x) => sessionKey(date, x) === key) || null;
+    sessionRef = existing || key.startsWith(NEW) ? key : NEW + newSessionId();
+  } else if (!fresh && activeHere) {
+    existing = sameDay.find((x) => sessionKey(date, x) === activeHere.key) || null;
+    sessionRef = activeHere.key;
+  } else if (!fresh && sameDay.length) {
+    existing = sameDay[sameDay.length - 1];
+    sessionRef = sessionKey(date, existing);
+  } else {
+    sessionRef = NEW + newSessionId();
+  }
+  const id = draftId(day, date, sessionRef);
+  const saved = readDrafts()[id];
+  const resume = saved && saved.ex ? saved : null;
+
   let exercises = state.workouts[day] ? sanitizeWorkout(state.workouts[day]) : null;
   if (!exercises) {
     // The routine was deleted or renamed: rebuild from the draft or the log.
     const names = resume ? Object.keys(resume.ex) : existing ? existing.exercises.map((e) => e.name) : [];
     if (!names.length) {
-      if (getActive()?.day === day) setActive(null);
+      if (activeHere) setActive(null);
       toast('This workout no longer exists.');
       return;
     }
     exercises = names.map((name) => ({ name, cat: 'other', sets: Math.max(1, (resume?.ex[name] || existing?.exercises.find((e) => e.name === name)?.sets || []).length), target: '', rest: 90, note: '' }));
   }
-  const active = getActive();
-  const started = !!(active && active.day === day && active.date === date);
+  const started = !!(activeHere && activeHere.key === sessionRef);
   s = {
-    day, date, exercises, existing,
+    day, date, key: sessionRef, draftId: id, exercises, existing,
     started,
-    startedAt: started ? active.startedAt : (resume && Date.now() - (resume.active || 0) < DRAFT_STALE_MS ? resume.startedAt || 0 : 0),
-    retro: date < ymd() || !!existing,
+    startedAt: started ? activeHere.startedAt : (resume && Date.now() - (resume.active || 0) < DRAFT_STALE_MS ? resume.startedAt || 0 : 0),
+    retro: date < today || !!existing,
     doneAt: {}, anyAt: 0, selected: null, wasWaiting: false, prs: {},
   };
+  returnFocus = document.activeElement;
   renderSession(resume);
   $('session').hidden = false;
   document.body.classList.add('session-open');
@@ -75,8 +128,12 @@ export function openSession(day, date = ymd(), { key = null, fresh = false } = {
   tickTimer = setInterval(tick, 1000);
   tick();
   if (s.started) lockScreen();
+  $('sessionTitle').focus({ preventScroll: true });
   emit('gym:active-changed');
 }
+
+/** Only a new workout logged today updates the "last used" values. */
+const updatesLastUsed = () => !!s && !s.existing && s.date === ymd();
 
 function rowsFor(e, i, resume) {
   const lastUsed = state.lastUsed[e.name]?.sets || [];
@@ -89,7 +146,7 @@ function rowsFor(e, i, resume) {
   const rows = [];
   for (let r = 0; r < n; r++) {
     const src = source ? source[r] : lastUsed[r];
-    rows.push(setRow(e, i, r, src ? src.w : '', src ? src.r : '', !!(source && source[r] && source[r].done)));
+    rows.push(setRow(e, r, src ? src.w : '', src ? src.r : '', !!(source && source[r] && source[r].done)));
   }
   return rows;
 }
@@ -98,13 +155,13 @@ function setLabel(e, r) {
   return e.unilateral ? (r % 2 ? 'R' : 'L') + (Math.floor(r / 2) + 1) : String(r + 1);
 }
 
-function setRow(e, i, r, w, reps, done) {
+function setRow(e, r, w, reps, done) {
   const label = setLabel(e, r);
   return html`<tr class="set-row${done ? ' done' : ''}">
     <td class="set-label">${label}</td>
-    <td><input class="w" type="number" inputmode="decimal" step="any" min="0" value="${w}" placeholder="kg" aria-label="Set ${label} weight in kg"></td>
-    <td><input class="r" type="number" inputmode="numeric" step="1" min="0" value="${reps}" placeholder="reps" aria-label="Set ${label} reps"></td>
-    <td><label class="check"><input type="checkbox" class="d"${done ? ' checked' : ''} aria-label="Set ${label} done"><span aria-hidden="true">${icons.check}</span></label></td>
+    <td><input class="w" type="number" inputmode="decimal" step="any" min="0" value="${w}" placeholder="kg" aria-label="${e.name}, set ${label}, weight in kg"></td>
+    <td><input class="r" type="number" inputmode="numeric" step="1" min="0" value="${reps}" placeholder="reps" aria-label="${e.name}, set ${label}, reps"></td>
+    <td><label class="check"><input type="checkbox" class="d"${done ? ' checked' : ''} aria-label="${e.name}, set ${label} done"><span aria-hidden="true">${icons.check}</span></label></td>
   </tr>`;
 }
 
@@ -118,14 +175,14 @@ function lastText(name) {
 function renderSession(resume) {
   $('sessionTitle').textContent = s.day;
   $('sessionDate').textContent = s.date === ymd() ? 'Today' : fmtLong(s.date);
-  render($('sessionList'), html`
+  replaceContent($('sessionList'), html`
     ${s.existing ? html`<p class="banner-note">You are editing the workout saved on ${fmtShort(s.date)}. Saving replaces it.</p>` : ''}
     ${s.exercises.map((e, i) => html`
-      <article class="ex-card" data-index="${i}">
+      <article class="ex-card" data-index="${i}" aria-labelledby="ex-title-${i}">
         <div class="ex-head">
           <div class="ex-title">
             <p class="ex-cat">${categoryLabel(e.cat)}${e.rest ? ' · ' + fmtClock(e.rest) + ' rest' : ''}${e.unilateral ? ' · left/right' : ''}</p>
-            <h3>${e.name}</h3>
+            <h3 id="ex-title-${i}">${e.name}</h3>
             <p class="ex-meta">${[e.target ? 'Target ' + e.target : '', lastText(e.name)].filter(Boolean).join(' · ')}</p>
           </div>
           <span class="ex-saved" aria-hidden="true">Saved</span>
@@ -137,8 +194,8 @@ function renderSession(resume) {
           <tbody>${rowsFor(e, i, resume)}</tbody>
         </table>
         <div class="ex-actions">
-          <button type="button" class="btn btn-soft btn-sm" data-add>${icons.plus} Set</button>
-          <button type="button" class="btn btn-ghost btn-sm" data-remove>${icons.minus} Set</button>
+          <button type="button" class="btn btn-soft btn-sm" data-add aria-label="Add a set to ${e.name}">${icons.plus} Set</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-remove aria-label="Remove the last set of ${e.name}">${icons.minus} Set</button>
         </div>
       </article>`)}
     <div class="session-end-space"></div>`);
@@ -169,7 +226,9 @@ function updateProgress() {
     const boxes = card.querySelectorAll('.d');
     const n = [...boxes].filter((b) => b.checked).length;
     total += boxes.length; done += n;
-    card.querySelector('.ex-count').textContent = n + '/' + boxes.length;
+    const count = card.querySelector('.ex-count');
+    count.textContent = n + '/' + boxes.length;
+    count.setAttribute('aria-label', `${n} of ${boxes.length} sets done`);
     card.classList.toggle('complete', boxes.length > 0 && n === boxes.length);
   });
   $('sessionSets').textContent = done + '/' + total + ' sets';
@@ -181,14 +240,14 @@ function saveDraft() {
   if (!s) return;
   const ex = {};
   cards().forEach((card) => { ex[s.exercises[+card.dataset.index].name] = collectSets(card); });
-  write(KEYS.draft, { day: s.day, date: s.date, startedAt: s.startedAt, active: Date.now(), ex });
+  writeDraft(s.draftId, { day: s.day, date: s.date, key: s.key, startedAt: s.startedAt, active: Date.now(), ex });
 }
 
 function autosave(card) {
-  if (!s) return;
+  if (!updatesLastUsed()) return;
   const e = s.exercises[+card.dataset.index];
-  const sets = trimSets(collectSets(card));
-  if (sets.length) state.lastUsed[e.name] = { sets, updatedAt: Date.now() }; else delete state.lastUsed[e.name];
+  // An empty entry instead of a deletion, so clearing values also syncs.
+  state.lastUsed[e.name] = { sets: trimSets(collectSets(card)), updatedAt: Date.now() };
   saveLastUsed();
   const tag = card.querySelector('.ex-saved');
   tag.classList.add('show');
@@ -214,7 +273,7 @@ function renderRest() {
   $('restEx').textContent = e.name;
   $('restTime').textContent = r.ready ? 'GO' : fmtClock(r.remaining);
   $('restSub').textContent = r.ready ? 'Rested. You are good to go.' : r.reason === 'same' ? 'Same muscle, full ' + fmtClock(e.rest) + ' rest' : 'Different muscle, short break';
-  if (s.wasWaiting && r.ready) { haptic([200, 100, 200]); beep(); }
+  if (s.wasWaiting && r.ready) { haptic([200, 100, 200]); beep(); $('restAnnounce').textContent = 'Rest over for ' + e.name; }
   s.wasWaiting = !r.ready;
 }
 
@@ -257,7 +316,9 @@ function setBackgroundInert(on) {
 
 function closeSession(fromBack) {
   if (!s) return;
-  const hadInput = cards().some((c) => collectSets(c).some((x) => x.done));
+  const hadInput = cards().some((c) => collectSets(c).some((x) => x.done || x.w !== '' || x.r !== ''));
+  const kept = hadInput && !!readDrafts()[s.draftId];
+  cards().forEach((c) => clearTimeout(c._as));
   s = null;
   clearInterval(tickTimer);
   unlockScreen();
@@ -267,19 +328,28 @@ function closeSession(fromBack) {
   setBackgroundInert(false);
   if (!fromBack && closeLayer) closeLayer();
   closeLayer = null;
-  if (hadInput && readDraft()) toast('Workout kept. Open it again to continue.');
+  if (returnFocus && document.contains(returnFocus)) returnFocus.focus({ preventScroll: true });
+  returnFocus = null;
+  if (kept) toast('Workout kept. Open it again to continue.');
   emit('gym:active-changed');
 }
 
-function start() {
+async function start({ quiet = false } = {}) {
+  const other = getActive();
+  if (other && other.key !== s.key) {
+    const mins = Math.round((Date.now() - other.startedAt) / 60000);
+    const ok = await confirmDialog(`${other.day} has been running for ${mins} min. Its sets stay saved as a draft, but its timer stops.`, { title: 'Start this workout instead?', ok: 'Start this one', cancel: 'Keep the other' });
+    if (!ok || !s) return false;
+  }
   s.started = true;
   s.startedAt = Date.now();
-  setActive({ day: s.day, date: s.date, startedAt: s.startedAt });
+  setActive({ day: s.day, date: s.date, key: s.key, startedAt: s.startedAt });
   saveDraft();
   paintMain();
   tick();
   lockScreen();
-  toast('Workout started. Have a good one!');
+  toast(quiet ? 'Workout started. The timer is running.' : 'Workout started. Have a good one!');
+  return true;
 }
 
 async function finish() {
@@ -296,7 +366,8 @@ async function finish() {
     { title: s.existing ? 'Save your changes?' : 'Finish and save this workout?', ok: 'Save workout' },
   );
   if (!ok || !s) return;
-  const record = { id: s.existing?.id || newSessionId(), day: s.day, exercises: entry, time: new Date().toISOString() };
+  const id = s.existing?.id || (s.key.startsWith(NEW) && s.key !== NEW + 'legacy' ? s.key.slice(NEW.length) : newSessionId());
+  const record = { id, day: s.day, exercises: entry, time: new Date().toISOString() };
   if (duration) record.duration = duration;
   let list = state.logs[s.date] || [];
   if (s.existing) {
@@ -306,14 +377,17 @@ async function finish() {
     if (oldKey !== record.id) markSessionsDeleted([oldKey]);
   }
   state.logs[s.date] = [...list, record];
-  all.forEach(({ e, sets }) => {
-    const filled = trimSets(sets);
-    if (filled.length) state.lastUsed[e.name] = { sets: filled, updatedAt: Date.now() };
-  });
+  if (updatesLastUsed()) {
+    all.forEach(({ e, sets }) => {
+      const filled = trimSets(sets);
+      if (filled.length) state.lastUsed[e.name] = { sets: filled, updatedAt: Date.now() };
+    });
+    saveLastUsed();
+  }
   saveLogs();
-  saveLastUsed();
-  remove(KEYS.draft);
-  if (getActive()?.day === s.day) setActive(null);
+  writeDraft(s.draftId, null);
+  const active = getActive();
+  if (active && active.key === s.key && active.date === s.date) setActive(null);
   closeSession(false);
   haptic(30);
   toast('Workout saved' + (duration ? ' · ' + fmtClock(duration) : '') + '. Nice work!');
@@ -321,12 +395,12 @@ async function finish() {
 
 export function initSession() {
   const root = $('session');
-  render(root, html`
+  replaceContent(root, html`
     <header class="session-top">
       <button type="button" class="icon-btn" id="sessionBack" aria-label="Close workout">${icons.back}</button>
       <div class="session-heading">
         <p class="eyebrow"><span id="sessionDate"></span> · <span id="sessionSets">0/0 sets</span></p>
-        <h2 id="sessionTitle"></h2>
+        <h2 id="sessionTitle" tabindex="-1"></h2>
       </div>
       <div class="session-clock"><span id="sessionClock">0:00</span><small id="sessionClockLabel">Not started</small></div>
     </header>
@@ -337,6 +411,7 @@ export function initSession() {
       <span class="rest-time" id="restTime"></span>
       <button type="button" class="btn btn-ghost btn-sm" id="restSkip">Skip</button>
     </div>
+    <p class="sr-only" id="restAnnounce" aria-live="polite"></p>
     <footer class="session-footer"><button type="button" class="btn btn-primary btn-lg" id="sessionMain">Start workout</button></footer>`);
 
   $('sessionBack').onclick = () => closeSession(false);
@@ -344,9 +419,12 @@ export function initSession() {
   $('restSkip').onclick = () => {
     const e = s && s.exercises.find((x) => x.name === s.selected);
     if (!e) return;
-    s.doneAt = {}; s.anyAt = 0;
+    // Like the original app: skip the rest for this muscle group only.
+    s.doneAt[muscleGroup(e.cat)] = 0;
+    s.anyAt = 0;
     renderRest();
   };
+  root.addEventListener('keydown', (e) => { if (e.key === 'Escape' && s && !document.querySelector('.sheet-backdrop')) closeSession(false); });
 
   const list = $('sessionList');
   list.addEventListener('focusin', (e) => {
@@ -356,13 +434,15 @@ export function initSession() {
   });
   list.addEventListener('click', (e) => { if (!s) return; unlockAudio(); select(e.target.closest('.ex-card')); });
   on(list, 'click', '[data-add]', (e, btn) => {
+    if (!s) return;
     const card = btn.closest('.ex-card'), ex = s.exercises[+card.dataset.index], body = card.querySelector('tbody');
     const n = body.rows.length;
     const add = ex.unilateral ? 2 : 1;
-    for (let k = 0; k < add; k++) body.insertAdjacentHTML('beforeend', String(setRow(ex, +card.dataset.index, n + k, '', '', false)));
+    for (let k = 0; k < add; k++) body.insertAdjacentHTML('beforeend', String(setRow(ex, n + k, '', '', false)));
     updateProgress(); saveDraft(); autosave(card);
   });
   on(list, 'click', '[data-remove]', (e, btn) => {
+    if (!s) return;
     const card = btn.closest('.ex-card'), ex = s.exercises[+card.dataset.index], body = card.querySelector('tbody');
     const step = ex.unilateral ? 2 : 1;
     if (body.rows.length <= step) return;
@@ -392,6 +472,8 @@ export function initSession() {
       updateProgress();
       if (e.target.checked) {
         haptic(15);
+        // Ticking the first set of today's workout starts the timer.
+        if (!s.started && !s.retro) start({ quiet: true });
         s.doneAt[muscleGroup(ex.cat)] = Date.now();
         s.anyAt = Date.now();
         s.selected = ex.name;

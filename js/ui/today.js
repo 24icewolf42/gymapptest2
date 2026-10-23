@@ -7,7 +7,7 @@ import { workoutSummary, estimateMinutes } from '../domain/plan.js';
 import { streak } from '../domain/logs.js';
 import { openSession, getActive } from './session.js';
 import { todayTeaser, gymDateDays } from './crew.js';
-import { pickWorkout } from './calendar.js';
+import { pickWorkout, openDay } from './calendar.js';
 import { icons } from './icons.js';
 
 let upcomingDays = 14;
@@ -71,7 +71,7 @@ function upcoming() {
     const d = addDays(now, i), ds = ymd(d), idx = mondayIndex(d.getDay()), w = state.schedule[idx];
     if (d.getMonth() !== month) { month = d.getMonth(); rows.push(html`<li class="up-month">${MONTHS[month]}</li>`); }
     const done = w && loggedOn(ds, w);
-    rows.push(html`<li><button type="button" class="up-row${w ? '' : ' rest'}${done ? ' done' : ''}"${w ? html` data-start="${w}" data-date="${ds}"` : ' disabled'}>
+    rows.push(html`<li><button type="button" class="up-row${w ? '' : ' rest'}${done ? ' done' : ''}"${w ? html` data-preview="${ds}"` : ' disabled'}>
       <span class="up-day"><b>${DOW[idx].slice(0, 3)}</b><small>${fmtShort(ds)}</small></span>
       <span class="up-name">${w || 'Rest'}<small>${w ? (done ? 'Logged' : state.bypass[ds] ? 'Bypass day' : workoutSummary(state.workouts[w])) : ''}${dates.has(ds) ? ' · gym date' : ''}</small></span>
       ${w ? html`<span class="chev">${icons.chevron}</span>` : ''}</button></li>`);
@@ -85,7 +85,7 @@ export function renderToday() {
   const st = streak(state.logs, state.bypass, state.schedule);
   render($('page-today'), html`
     <header class="top"><div><p class="eyebrow">${fmtLong(today)}</p><h1>Today</h1></div>
-      <div class="top-actions">${st ? html`<span class="streak" title="Training streak">${icons.flame} ${st}</span>` : ''}
+      <div class="top-actions">${st ? html`<span class="streak" role="img" aria-label="Training streak: ${st} ${st === 1 ? 'day' : 'days'}">${icons.flame} ${st}</span>` : ''}
       <button type="button" class="icon-btn" data-open-settings aria-label="Settings">${icons.settings}</button></div></header>
     ${weekStrip()}
     ${hero()}
@@ -96,6 +96,8 @@ export function renderToday() {
 export function initToday() {
   const page = $('page-today');
   on(page, 'click', '[data-start]', (e, b) => openSession(b.dataset.start, b.dataset.date));
+  // Upcoming days can be previewed (and marked as bypass) but not logged in advance.
+  on(page, 'click', '[data-preview]', (e, b) => openDay(b.dataset.preview));
   on(page, 'click', '[data-go]', (e, b) => go(b.dataset.go));
   on(page, 'click', '[data-go-crew]', () => go('crew'));
   on(page, 'click', '[data-more]', () => { upcomingDays += 14; renderToday(); });

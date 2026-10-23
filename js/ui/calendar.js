@@ -78,7 +78,7 @@ export function pickWorkout(date) {
   });
 }
 
-async function openDay(ds) {
+export async function openDay(ds) {
   const planned = state.schedule[mondayIndex(parseYmd(ds).getDay())];
   const logs = state.logs[ds] || [];
   const today = ymd();
