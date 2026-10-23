@@ -114,3 +114,21 @@ export async function deleteSharedWorkout(id) {
   const r = await supabase.from('shared_workouts').delete().eq('id', id).eq('owner_id', account.user.id);
   return r.error ? fail(r.error) : ok(true);
 }
+
+/** Blocks someone: ends any friendship or request and stops new ones. */
+export async function block(userId) {
+  const r = await supabase.from('friend_blocks').insert({ blocker_id: account.user.id, blocked_id: userId });
+  if (r.error && r.error.code === '23505') return ok(true);
+  return r.error ? fail(r.error) : ok(true);
+}
+
+export async function unblock(userId) {
+  const r = await supabase.from('friend_blocks').delete().eq('blocker_id', account.user.id).eq('blocked_id', userId);
+  return r.error ? fail(r.error) : ok(true);
+}
+
+export async function loadBlocks() {
+  const r = await supabase.rpc('my_blocks');
+  if (isMissingSchema(r.error)) return ok([]);
+  return r.error ? fail(r.error) : ok(r.data || []);
+}

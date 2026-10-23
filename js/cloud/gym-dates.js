@@ -45,8 +45,8 @@ export async function createDate({ startsAt, duration, gym, workout, note, invit
   if (invite) {
     const inv = await supabase.from('gym_date_invites').insert(inviteIds.map((user_id) => ({ date_id: r.data.id, user_id })));
     if (inv.error) {
-      // Don't leave an invite-only date nobody can see.
-      await supabase.from('gym_dates').delete().eq('id', r.data.id);
+      // Don't leave an invite-only date nobody can see (dates are cancelled, never deleted).
+      await supabase.from('gym_dates').update({ cancelled_at: new Date().toISOString() }).eq('id', r.data.id);
       return fail(inv.error);
     }
   }
@@ -69,14 +69,20 @@ export async function cancelDate(dateId) {
 }
 
 let channel = null;
-/** Calls onChange(payload) when any visible date, reply or invite changes. */
-export function subscribe(onChange) {
+/**
+ * Calls onChange(payload) when a visible gym date changes. Replies and invites
+ * touch their date (activity_at), so they arrive here too. onReconnect runs when
+ * the connection comes back, to catch up on anything missed.
+ */
+export function subscribe(onChange, onReconnect) {
   unsubscribe();
+  let dropped = false;
   channel = supabase.channel('gym-dates')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'gym_dates' }, onChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'gym_date_rsvps' }, onChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'gym_date_invites' }, onChange)
-    .subscribe();
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED' && dropped) { dropped = false; onReconnect?.(); }
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') dropped = true;
+    });
 }
 
 export function unsubscribe() {
