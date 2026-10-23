@@ -1,0 +1,84 @@
+// Gym dates API: list, create, reply, check in, cancel, and live updates.
+import { supabase, errorText, isMissingSchema } from './client.js';
+import { account } from './sync.js';
+
+const fail = (error) => ({ data: null, error: errorText(error), missing: isMissingSchema(error) });
+
+/**
+ * Dates I can see that have not ended more than a few hours ago, with replies,
+ * counts and (for my own invite-only dates) the invite list.
+ */
+export async function loadDates() {
+  const since = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
+  const r = await supabase.from('gym_dates')
+    .select('id,host_id,starts_at,duration_min,gym,workout,note,invite_only,cancelled_at,created_at,host:profiles!gym_dates_host_id_fkey(username)')
+    .gte('starts_at', new Date(Date.now() - 6 * 3600 * 1000 - 360 * 60000).toISOString())
+    .order('starts_at', { ascending: true }).limit(100);
+  if (r.error) return fail(r.error);
+  const dates = (r.data || []).filter((d) => new Date(new Date(d.starts_at).getTime() + d.duration_min * 60000).toISOString() >= since);
+  const ids = dates.map((d) => d.id);
+  if (!ids.length) return { data: { dates: [], rsvps: [], counts: {}, invites: [] }, error: '' };
+  const [rsvps, counts, invites] = await Promise.all([
+    supabase.from('gym_date_rsvps').select('date_id,user_id,status,checked_in_at,user:profiles!gym_date_rsvps_user_id_fkey(username)').in('date_id', ids),
+    supabase.rpc('gym_date_counts', { ids }),
+    supabase.from('gym_date_invites').select('date_id,user_id').in('date_id', ids),
+  ]);
+  const err = rsvps.error || counts.error || invites.error;
+  if (err) return fail(err);
+  const countMap = {};
+  (counts.data || []).forEach((c) => { countMap[c.date_id] = c; });
+  return { data: { dates, rsvps: rsvps.data || [], counts: countMap, invites: invites.data || [] }, error: '' };
+}
+
+export async function createDate({ startsAt, duration, gym, workout, note, inviteIds }) {
+  const invite = Array.isArray(inviteIds) && inviteIds.length > 0;
+  const r = await supabase.from('gym_dates').insert({
+    host_id: account.user.id,
+    starts_at: startsAt.toISOString(),
+    duration_min: duration,
+    gym: gym.trim(),
+    workout: workout || null,
+    note: note ? note.trim() : null,
+    invite_only: invite,
+  }).select('id').single();
+  if (r.error) return fail(r.error);
+  if (invite) {
+    const inv = await supabase.from('gym_date_invites').insert(inviteIds.map((user_id) => ({ date_id: r.data.id, user_id })));
+    if (inv.error) {
+      // Don't leave an invite-only date nobody can see.
+      await supabase.from('gym_dates').delete().eq('id', r.data.id);
+      return fail(inv.error);
+    }
+  }
+  return { data: r.data, error: '' };
+}
+
+export async function reply(dateId, status) {
+  const r = await supabase.from('gym_date_rsvps').upsert({ date_id: dateId, user_id: account.user.id, status }, { onConflict: 'date_id,user_id' });
+  return r.error ? fail(r.error) : { data: true, error: '' };
+}
+
+export async function checkIn(dateId) {
+  const r = await supabase.from('gym_date_rsvps').upsert({ date_id: dateId, user_id: account.user.id, status: 'going', checked_in_at: new Date().toISOString() }, { onConflict: 'date_id,user_id' });
+  return r.error ? fail(r.error) : { data: true, error: '' };
+}
+
+export async function cancelDate(dateId) {
+  const r = await supabase.from('gym_dates').update({ cancelled_at: new Date().toISOString() }).eq('id', dateId).eq('host_id', account.user.id);
+  return r.error ? fail(r.error) : { data: true, error: '' };
+}
+
+let channel = null;
+/** Calls onChange(payload) when any visible date, reply or invite changes. */
+export function subscribe(onChange) {
+  unsubscribe();
+  channel = supabase.channel('gym-dates')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'gym_dates' }, onChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'gym_date_rsvps' }, onChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'gym_date_invites' }, onChange)
+    .subscribe();
+}
+
+export function unsubscribe() {
+  if (channel) { supabase.removeChannel(channel); channel = null; }
+}

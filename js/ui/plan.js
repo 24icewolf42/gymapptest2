@@ -1,0 +1,245 @@
+// Plan: weekly schedule, routine library and the routine editor.
+import { $, html, render, on, toast } from '../core/dom.js';
+import { DOW, fmtClock } from '../core/dates.js';
+import { pushLayer } from '../core/router.js';
+import { state, savePlan, createWorkout, deleteWorkout, planTombstones, setPlanTombstones } from '../state.js';
+import { sanitizeWorkoutName, workoutSummary, displaySets, scheduledDays, renameInSchedule, MAX_SETS, DEFAULT_TARGET, REST_DEFAULTS, DEFAULT_REST } from '../domain/plan.js';
+import { searchCatalog, categoryLabel, CATEGORIES } from '../domain/catalog.js';
+import { account } from '../cloud/sync.js';
+import { shareWorkout } from '../cloud/social.js';
+import { openSheet, confirmDialog, promptDialog } from './sheet.js';
+import { icons } from './icons.js';
+
+let editing = null; // routine name open in the editor
+let closeEditorLayer = null;
+let query = '';
+const REST_OPTIONS = [0, 30, 45, 60, 75, 90, 120, 150, 180, 240, 300];
+
+function weekView() {
+  const names = Object.keys(state.workouts);
+  return html`
+    <header class="top"><div><p class="eyebrow">Your training, your way</p><h1>Plan</h1></div>
+      <button type="button" class="icon-btn" data-open-settings aria-label="Settings">${icons.settings}</button></header>
+    <section class="card list">
+      <h2 class="card-title">Your week</h2>
+      ${DOW.map((day, i) => html`<button type="button" class="row row-btn" data-day="${i}">
+        <span class="row-day">${day.slice(0, 3)}</span>
+        <div class="row-main"><b class="${state.schedule[i] ? '' : 'muted'}">${state.schedule[i] || 'Rest'}</b>${state.schedule[i] ? html`<small>${workoutSummary(state.workouts[state.schedule[i]])}</small>` : ''}</div>
+        <span class="chev">${icons.chevron}</span></button>`)}
+    </section>
+    <h2 class="section-title">My workouts</h2>
+    ${names.length ? html`<div class="routine-list">${names.map((n) => {
+      const days = scheduledDays(state.schedule, n);
+      return html`<button type="button" class="routine" data-edit="${n}">
+        <span class="routine-mark" aria-hidden="true">${n.slice(0, 1).toUpperCase()}</span>
+        <span class="row-main"><b>${n}</b><small>${workoutSummary(state.workouts[n])} · ${days ? days + (days === 1 ? ' day a week' : ' days a week') : 'not scheduled'}</small></span>
+        <span class="chev">${icons.chevron}</span></button>`;
+    })}</div>` : html`<div class="empty-inline"><p>No workouts yet.</p><p class="muted">Create one like Push, Pull, Legs, Upper or Lower.</p></div>`}
+    <button type="button" class="btn btn-primary btn-block" data-new>${icons.plus} New workout</button>`;
+}
+
+function exerciseRow(e, i, count) {
+  return html`<li class="ex-edit" data-i="${i}">
+    <div class="ex-edit-head">
+      <div class="row-main"><b>${e.name}</b><small>${categoryLabel(e.cat)}</small></div>
+      <button type="button" class="icon-btn sm" data-move="-1" aria-label="Move ${e.name} up"${i === 0 ? ' disabled' : ''}>${icons.up}</button>
+      <button type="button" class="icon-btn sm" data-move="1" aria-label="Move ${e.name} down"${i === count - 1 ? ' disabled' : ''}>${icons.down}</button>
+      <button type="button" class="icon-btn sm danger" data-remove aria-label="Remove ${e.name}">${icons.trash}</button>
+    </div>
+    <div class="ex-edit-fields">
+      <div class="field compact"><span>${e.unilateral ? 'Sets / side' : 'Sets'}</span>
+        <div class="stepper"><button type="button" data-sets="-1" aria-label="Fewer sets">${icons.minus}</button><output aria-live="polite">${displaySets(e)}</output><button type="button" data-sets="1" aria-label="More sets">${icons.plus}</button></div></div>
+      <label class="field compact"><span>Reps</span><input class="input" data-field="target" value="${e.target}" maxlength="20" placeholder="${DEFAULT_TARGET}"></label>
+      <label class="field compact"><span>Rest</span><select class="input" data-field="rest">${REST_OPTIONS.map((r) => html`<option value="${r}"${r === e.rest ? ' selected' : ''}>${r ? fmtClock(r) : 'None'}</option>`)}${REST_OPTIONS.includes(e.rest) ? '' : html`<option value="${e.rest}" selected>${fmtClock(e.rest)}</option>`}</select></label>
+      <label class="toggle compact"><input type="checkbox" data-field="unilateral"${e.unilateral ? ' checked' : ''}><span>Left/right</span></label>
+    </div>
+    <label class="field compact"><span class="sr-only">Note for ${e.name}</span><input class="input input-note" data-field="note" value="${e.note}" maxlength="200" placeholder="Note (seat height, grip…)"></label>
+  </li>`;
+}
+
+function searchResults(list) {
+  const added = new Set(list.map((e) => e.name.toLowerCase()));
+  const results = searchCatalog(query).slice(0, 40);
+  const q = query.trim();
+  const exact = results.some((x) => x.name.toLowerCase() === q.toLowerCase());
+  return html`${results.map((x) => html`<button type="button" class="pick${added.has(x.name.toLowerCase()) ? ' added' : ''}" data-add="${x.name}"${added.has(x.name.toLowerCase()) ? ' disabled' : ''}>
+      <span class="row-main"><b>${x.name}</b><small>${categoryLabel(x.cat)}${x.unilateral ? ' · left/right' : ''}</small></span>
+      <span class="pick-tag">${added.has(x.name.toLowerCase()) ? 'Added' : html`${icons.plus} Add`}</span></button>`)}
+    ${q && !exact && !added.has(q.toLowerCase()) ? html`<button type="button" class="pick custom" data-add-custom="${q}"><span class="row-main"><b>Add “${q}”</b><small>Your own exercise</small></span><span class="pick-tag">${icons.plus} Add</span></button>` : ''}`;
+}
+
+function editorView() {
+  const name = editing, list = state.workouts[name];
+  return html`
+    <header class="top editor-top">
+      <button type="button" class="icon-btn" data-close-editor aria-label="Back to my plan">${icons.back}</button>
+      <div class="grow"><p class="eyebrow">Workout · ${workoutSummary(list)}</p><h1 class="h1-sm">${name}</h1></div>
+      <button type="button" class="icon-btn" data-rename aria-label="Rename workout">${icons.edit}</button>
+      ${account.user ? html`<button type="button" class="icon-btn" data-share aria-label="Share with friends">${icons.share}</button>` : ''}
+      <button type="button" class="icon-btn danger" data-delete aria-label="Delete workout">${icons.trash}</button>
+    </header>
+    ${list.length ? html`<ol class="ex-edit-list">${list.map((e, i) => exerciseRow(e, i, list.length))}</ol>`
+      : html`<div class="empty-inline"><p>Start with one exercise.</p><p class="muted">Search below or add your own.</p></div>`}
+    <section class="card add-ex">
+      <label class="field"><span>Add exercises</span>
+        <input class="input" id="exSearch" type="search" value="${query}" placeholder="Search by name or muscle" autocomplete="off" enterkeyhint="search"></label>
+      <div class="picks no-swipe" id="exResults">${searchResults(list)}</div>
+    </section>`;
+}
+
+export function renderPlan() {
+  const page = $('page-plan');
+  if (editing && !Object.hasOwn(state.workouts, editing)) closeEditor();
+  render(page, editing ? editorView() : weekView());
+}
+
+function openEditor(name) {
+  editing = name;
+  query = '';
+  if (!closeEditorLayer) closeEditorLayer = pushLayer(() => { closeEditorLayer = null; editing = null; renderPlan(); });
+  renderPlan();
+  window.scrollTo(0, 0);
+}
+
+function closeEditor() {
+  editing = null;
+  if (closeEditorLayer) { const c = closeEditorLayer; closeEditorLayer = null; c(); }
+}
+
+function list() { return state.workouts[editing]; }
+
+function nameError(v, current) {
+  const n = sanitizeWorkoutName(v);
+  if (!n) return 'Give it a name.';
+  if (n !== current && Object.hasOwn(state.workouts, n)) return 'You already have a workout with that name.';
+  return '';
+}
+
+async function chooseForDay(i) {
+  const names = Object.keys(state.workouts);
+  const current = state.schedule[i];
+  const value = await openSheet({
+    title: DOW[i],
+    subtitle: 'Choose a workout or keep it a rest day.',
+    body: html`<div class="list" role="listbox" aria-label="Workout for ${DOW[i]}">
+      ${[[null, 'Rest day'], ...names.map((n) => [n, n])].map(([v, label]) => html`<button type="button" role="option" aria-selected="${v === current ? 'true' : 'false'}" class="row row-btn${v === current ? ' selected' : ''}" data-choose="${v ?? ''}">
+        <div class="row-main"><b>${label}</b>${v ? html`<small>${workoutSummary(state.workouts[v])}</small>` : ''}</div>${v === current ? html`<span class="tick">${icons.check}</span>` : ''}</button>`)}
+      </div>
+      ${names.length ? '' : html`<p class="hint">Create a workout first, then put it on a day.</p>`}`,
+    onMount: (sheet, close) => sheet.querySelectorAll('[data-choose]').forEach((b) => { b.onclick = () => close({ v: b.dataset.choose || null }); }),
+  });
+  if (!value) return;
+  state.schedule[i] = value.v;
+  savePlan();
+}
+
+export function initPlan() {
+  const page = $('page-plan');
+  on(page, 'click', '[data-day]', (e, b) => chooseForDay(+b.dataset.day));
+  on(page, 'click', '[data-edit]', (e, b) => openEditor(b.dataset.edit));
+  on(page, 'click', '[data-close-editor]', () => { closeEditor(); renderPlan(); });
+  on(page, 'click', '[data-new]', async () => {
+    const name = await promptDialog({ title: 'New workout', label: 'Name', placeholder: 'e.g. Push day', maxLength: 40, ok: 'Create', validate: (v) => nameError(v) });
+    if (!name) return;
+    createWorkout(sanitizeWorkoutName(name));
+    openEditor(sanitizeWorkoutName(name));
+  });
+  on(page, 'click', '[data-rename]', async () => {
+    const from = editing;
+    const to = await promptDialog({ title: 'Rename workout', label: 'Name', value: from, maxLength: 40, validate: (v) => nameError(v, from) });
+    if (!to || sanitizeWorkoutName(to) === from) return;
+    const name = sanitizeWorkoutName(to);
+    // Rebuild the object so the routine keeps its position in the list.
+    const next = {};
+    Object.keys(state.workouts).forEach((k) => { next[k === from ? name : k] = state.workouts[k]; });
+    state.workouts = next;
+    renameInSchedule(state.schedule, from, name);
+    const { deleted, restored } = planTombstones();
+    setPlanTombstones([...new Set([...deleted, from])].filter((n) => n !== name), [...new Set([...restored.filter((n) => n !== from), ...(deleted.includes(name) ? [name] : [])])]);
+    editing = name;
+    savePlan();
+    toast('Renamed. Past logs keep the old name.');
+  });
+  on(page, 'click', '[data-delete]', async () => {
+    const name = editing;
+    if (!(await confirmDialog(`“${name}” will be removed from your plan. Your workout history stays.`, { title: 'Delete workout?', ok: 'Delete', danger: true }))) return;
+    closeEditor();
+    deleteWorkout(name);
+    toast('Workout deleted.');
+  });
+  on(page, 'click', '[data-share]', async () => {
+    const title = await promptDialog({ title: 'Share with friends', label: 'Title your friends will see', value: editing, maxLength: 80, ok: 'Share', hint: 'Friends can copy this routine into their plan.' });
+    if (!title) return;
+    const r = await shareWorkout(title, list());
+    toast(r.error || 'Shared with your friends.', { tone: r.error ? 'error' : 'default' });
+  });
+  on(page, 'click', '[data-move]', (e, b) => {
+    const i = +b.closest('[data-i]').dataset.i, j = i + +b.dataset.move, l = list();
+    if (j < 0 || j >= l.length) return;
+    [l[i], l[j]] = [l[j], l[i]];
+    savePlan();
+  });
+  on(page, 'click', '[data-remove]', (e, b) => {
+    list().splice(+b.closest('[data-i]').dataset.i, 1);
+    savePlan();
+  });
+  on(page, 'click', '[data-sets]', (e, b) => {
+    const ex = list()[+b.closest('[data-i]').dataset.i];
+    const step = ex.unilateral ? 2 : 1;
+    ex.sets = Math.max(step, Math.min(MAX_SETS * step, ex.sets + +b.dataset.sets * step));
+    savePlan();
+  });
+  on(page, 'change', '[data-field]', (e, input) => {
+    const ex = list()[+input.closest('[data-i]').dataset.i];
+    const field = input.dataset.field;
+    if (field === 'unilateral') {
+      // Keep the number of sets per side when switching.
+      ex.sets = input.checked ? ex.sets * 2 : Math.max(1, Math.round(ex.sets / 2));
+      ex.unilateral = input.checked;
+    } else if (field === 'rest') ex.rest = +input.value;
+    else ex[field] = input.value.trim().slice(0, field === 'note' ? 200 : 20);
+    savePlan();
+  });
+  on(page, 'input', '#exSearch', (e, input) => {
+    query = input.value;
+    render($('exResults'), searchResults(list()));
+  });
+  const add = (name, cat, unilateral) => {
+    const l = list();
+    if (l.some((x) => x.name.toLowerCase() === name.toLowerCase())) return;
+    const ex = { name, cat, sets: unilateral ? 6 : 3, target: DEFAULT_TARGET, rest: REST_DEFAULTS[name] ?? DEFAULT_REST, note: '' };
+    if (unilateral) ex.unilateral = true;
+    l.push(ex);
+    savePlan();
+    toast(name + ' added.');
+  };
+  on(page, 'click', '[data-add]', (e, b) => {
+    const x = searchCatalog('').find((c) => c.name === b.dataset.add);
+    if (x) add(x.name, x.cat, x.unilateral);
+  });
+  on(page, 'click', '[data-add-custom]', async (e, b) => {
+    const name = b.dataset.addCustom.trim().slice(0, 80);
+    const cat = await openSheet({
+      title: 'Which muscle?', subtitle: name,
+      body: html`<div class="chips wrap">${Object.entries(CATEGORIES).map(([k, v]) => html`<button type="button" class="chip" data-cat="${k}">${v}</button>`)}</div>`,
+      onMount: (sheet, close) => sheet.querySelectorAll('[data-cat]').forEach((c) => { c.onclick = () => close(c.dataset.cat); }),
+    });
+    if (!cat) return;
+    query = '';
+    add(name, cat, false);
+  });
+}
+
+/** Re-render after a data change, but not while the user is typing in the editor. */
+export function onPlanUpdated() {
+  const page = $('page-plan');
+  if (!page.classList.contains('active')) return;
+  const focused = document.activeElement;
+  const typing = focused && page.contains(focused) && focused.matches('input:not([type=checkbox]), select, textarea');
+  if (typing && focused.id !== 'exSearch') return;
+  const keepSearch = focused && focused.id === 'exSearch';
+  const scroll = window.scrollY;
+  renderPlan();
+  window.scrollTo(0, scroll);
+  if (keepSearch) $('exSearch')?.focus({ preventScroll: true });
+}

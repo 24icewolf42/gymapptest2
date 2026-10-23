@@ -3,8 +3,8 @@
   "short_name": "Tracker",
   "start_url": "index.html",
   "display": "standalone",
-  "background_color": "#000000",
-  "theme_color": "#000000",
+  "background_color": "#0d0e10",
+  "theme_color": "#0d0e10",
   "icons": [
     {
       "src": "icon-192.png",
@@ -30,5 +30,8 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "description": "Log workouts, track progress and plan gym dates with friends.",
+  "scope": "./",
+  "orientation": "portrait"
 }
