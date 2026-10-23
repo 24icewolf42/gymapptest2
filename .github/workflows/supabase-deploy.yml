@@ -1,0 +1,89 @@
+name: Deploy database and email templates
+
+# Applies new migrations to the live Supabase project and keeps the password
+# reset email (link + code) in sync with supabase/templates/recovery.html.
+#
+# Repository settings needed once:
+#   secret   SUPABASE_ACCESS_TOKEN  personal access token (supabase.com → Account → Access Tokens)
+#   secret   SUPABASE_DB_PASSWORD   the project's database password
+#   variable SUPABASE_PROJECT_REF   e.g. aiiyombsmvlbhifxgkhp
+# Protect the "production" environment (Settings → Environments) to require an
+# approval before anything touches the live database.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+      - 'supabase/templates/**'
+      - 'supabase/applied-before-ci.txt'
+      - 'supabase/renamed-migrations.txt'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only show what would change
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Check settings
+        run: |
+          for v in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD PROJECT_REF; do
+            test -n "${!v}" || { echo "::error::$v is not set (see the comment at the top of this workflow)"; exit 1; }
+          done
+
+      - uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1
+        with:
+          version: 2.122.0
+
+      - name: Link the project
+        run: supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+
+      # The live project got its first migrations through the SQL Editor, so its
+      # history may be empty or use an old file name. tools/deploy-db.sh records
+      # those as applied (or reverted) and then pushes only the new migrations.
+      - name: Apply new migrations
+        env:
+          DB_ARGS: --linked --password ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: bash tools/deploy-db.sh
+
+      # Only the reset email is changed; every other auth setting of the live
+      # project stays as it is (config push would overwrite them with local values).
+      - name: Update the password reset email
+        run: |
+          body="$(node -e "
+            const fs = require('fs');
+            const toml = fs.readFileSync('supabase/config.toml', 'utf8');
+            const subject = /\[auth\.email\.template\.recovery\][^[]*?subject\s*=\s*\"([^\"]+)\"/.exec(toml)[1];
+            console.log(JSON.stringify({
+              mailer_subjects_recovery: subject,
+              mailer_templates_recovery_content: fs.readFileSync('supabase/templates/recovery.html', 'utf8'),
+            }));
+          ")"
+          if [ "$DRY_RUN" = "true" ]; then echo "Dry run: would send $(printf '%s' "$body" | wc -c) bytes"; exit 0; fi
+          status="$(curl -sS -o "$RUNNER_TEMP/auth.json" -w '%{http_code}' -X PATCH \
+            "https://api.supabase.com/v1/projects/$PROJECT_REF/config/auth" \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H 'Content-Type: application/json' --data "$body")"
+          test "$status" = 200 || { echo "::error::Updating the email template failed (HTTP $status)"; exit 1; }
+          echo "Password reset email updated"
