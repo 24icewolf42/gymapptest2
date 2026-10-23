@@ -1,5 +1,5 @@
 // Today: this week, today's workout, gym dates and what is coming up.
-import { $, html, render, on } from '../core/dom.js';
+import { $, html, render, on, busyAttr } from '../core/dom.js';
 import { ymd, fmtLong, fmtShort, mondayIndex, addDays, startOfWeek, DOW, DOW_LETTER, MONTHS, fmtClock } from '../core/dates.js';
 import { go, refresh } from '../core/router.js';
 import { state, restImage } from '../state.js';
@@ -62,7 +62,7 @@ function hero() {
     <h2 class="hero-title">${name}</h2>
     <p class="hero-meta">${workoutSummary(list)} · ~${estimateMinutes(list)} min</p>
     ${list.length ? html`<ul class="tags">${list.slice(0, 5).map((e) => html`<li>${e.name}</li>`)}${list.length > 5 ? html`<li>+${list.length - 5}</li>` : ''}</ul>` : html`<p class="muted">This routine has no exercises yet.</p>`}
-    <button type="button" class="btn btn-primary btn-lg" data-start="${name}" data-key="hero-action" id="startToday"${list.length ? '' : ' disabled'}>${running ? 'Resume workout' : 'Start workout'}</button></section>`;
+    <button type="button" class="btn btn-primary btn-lg" data-start="${name}" data-key="hero-action" id="startToday"${busyAttr(!list.length)}>${running ? 'Resume workout' : 'Start workout'}</button></section>`;
 }
 
 function upcoming() {
@@ -72,7 +72,7 @@ function upcoming() {
     const d = addDays(now, i), ds = ymd(d), idx = mondayIndex(d.getDay()), w = state.schedule[idx];
     if (d.getMonth() !== month) { month = d.getMonth(); rows.push(html`<li class="up-month">${MONTHS[month]}</li>`); }
     const done = w && loggedOn(ds, w);
-    rows.push(html`<li><button type="button" class="up-row${w ? '' : ' rest'}${done ? ' done' : ''}"${w ? html` data-preview="${ds}"` : ' disabled'}>
+    rows.push(html`<li><button type="button" class="up-row${w ? '' : ' rest'}${done ? ' done' : ''}"${w ? html` data-preview="${ds}"` : busyAttr(true)}>
       <span class="up-day"><b>${DOW[idx].slice(0, 3)}</b><small>${fmtShort(ds)}</small></span>
       <span class="up-name">${w || 'Rest'}<small>${w ? (done ? 'Logged' : state.bypass[ds] ? 'Bypass day' : workoutSummary(state.workouts[w])) : ''}${dates.has(ds) ? ' · gym date' : ''}</small></span>
       ${w ? html`<span class="chev">${icons.chevron}</span>` : ''}</button></li>`);

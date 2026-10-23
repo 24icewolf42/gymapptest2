@@ -33,7 +33,7 @@ function weightCard() {
     </form>
     ${list.length ? html`
       <button type="button" class="link-btn" data-toggle-entries aria-expanded="${showEntries ? 'true' : 'false'}">${showEntries ? 'Hide entries' : 'Show all ' + list.length + ' entries'}</button>
-      ${showEntries ? html`<ol class="entries">${[...list].reverse().map((x) => html`<li><span>${fmtShort(x.date)}</span><b>${x.weight} kg</b><button type="button" class="icon-btn sm" data-del-weight="${x.date}" aria-label="Delete weigh-in from ${fmtShort(x.date)}">${icons.x}</button></li>`)}</ol>` : ''}`
+      ${showEntries ? html`<ol class="entries">${[...list].reverse().map((x) => html`<li data-key="w-${x.date}"><span>${fmtShort(x.date)}</span><b>${x.weight} kg</b><button type="button" class="icon-btn sm" data-del-weight="${x.date}" aria-label="Delete weigh-in from ${fmtShort(x.date)}">${icons.x}</button></li>`)}</ol>` : ''}`
       : html`<p class="muted small">Log your weight now and then to see the trend.</p>`}
   </section>`;
 }
@@ -73,6 +73,7 @@ export function initStats() {
     const v = parseFloat($('weightInput').value);
     if (!(v >= MIN_KG && v <= MAX_KG)) { toast(`Enter a weight between ${MIN_KG} and ${MAX_KG} kg.`, { tone: 'error' }); return; }
     setWeight(ymd(), Math.round(v * 10) / 10);
+    $('weightInput').value = '';
     toast('Weight logged.');
   });
   on(page, 'click', '[data-toggle-entries]', () => { showEntries = !showEntries; renderStats(); });

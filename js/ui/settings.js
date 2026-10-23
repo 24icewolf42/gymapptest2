@@ -26,6 +26,8 @@ let blocksFor = null;
 let signingOut = false;
 let authError = ''; // kept in state so a background re-render does not wipe it
 let deleting = false;
+let savingWeight = false;
+const unblocking = new Set(); // blocked ids with a request in flight
 
 export function openSettings() {
   if (currentPage() === 'settings') return;
@@ -100,13 +102,13 @@ function accountCard() {
   </section>
   <section class="card">
     <h2>Privacy</h2>
-    <label class="toggle row-toggle"><input type="checkbox" data-share-weight${p?.share_weight ? ' checked' : ''}${p && 'share_weight' in p ? '' : ' disabled'}>
+    <label class="toggle row-toggle"><input type="checkbox" data-share-weight${p?.share_weight ? ' checked' : ''}${busyAttr(savingWeight || !(p && 'share_weight' in p))}>
       <span><b>Show my weight to friends</b><small>Friends see only your latest weigh-in, never the full history.</small></span></label>
     <p class="muted small">Friends see your username, gym dates you share with them, and stats or routines you choose to share. Your workout history syncs only to your own account. <button type="button" class="link-btn inline" data-privacy>Read the privacy notice</button></p>
     <h3 class="sub">Blocked people</h3>
     ${blocks == null ? html`<p class="muted small">Loading…</p>` : blocks.error ? html`<p class="notice error">${blocks.error} <button type="button" class="link-btn inline" data-retry-blocks>Try again</button></p>` : blocks.length ? html`<div class="list">${blocks.map((b) => html`
       <div class="row" data-key="block-${b.blocked_id}"><div class="row-main"><b>@${b.username}</b></div>
-        <button type="button" class="btn btn-ghost btn-sm" data-unblock="${b.blocked_id}" aria-label="Unblock ${b.username}">Unblock</button></div>`)}</div>`
+        <button type="button" class="btn btn-ghost btn-sm" data-unblock="${b.blocked_id}"${busyAttr(unblocking.has(b.blocked_id))} aria-label="Unblock ${b.username}">Unblock</button></div>`)}</div>`
       : html`<p class="muted small">Nobody. You can block someone from the Crew tab.</p>`}
   </section>`;
 }
@@ -116,7 +118,7 @@ function trainingCard() {
   return html`<section class="card">
     <h2>Training</h2>
     <div class="field"><span id="stepLabel">Round weights to</span>
-      <div class="chips wrap" role="radiogroup" aria-labelledby="stepLabel">${steps.map(([v, l]) => html`<button type="button" class="chip${state.settings.weightStep === v ? ' on' : ''}" role="radio" aria-checked="${state.settings.weightStep === v ? 'true' : 'false'}" data-step="${v}">${l}</button>`)}</div>
+      <div class="chips wrap" role="radiogroup" aria-labelledby="stepLabel">${steps.map(([v, l]) => html`<button type="button" class="chip${state.settings.weightStep === v ? ' on' : ''}" role="radio" aria-checked="${state.settings.weightStep === v ? 'true' : 'false'}" tabindex="${state.settings.weightStep === v ? '0' : '-1'}" data-step="${v}">${l}</button>`)}</div>
       <p class="hint">Match the smallest plates or dumbbell steps at your gym.</p></div>
     <div class="field"><span>Rest-day picture</span>
       <div class="rest-pick"><img src="${restImage()}" alt="Current rest-day picture">
@@ -311,19 +313,27 @@ export function initSettings() {
     const r = await changeUsername(name);
     toast(r || 'Username changed.', { tone: r ? 'error' : 'default' });
   });
+  // Busy controls stay focusable (aria-disabled); on() cancels the click that would toggle one.
+  on(page, 'click', '[data-share-weight]', () => {});
   on(page, 'change', '[data-share-weight]', async (e, input) => {
-    input.disabled = true;
-    const r = await setShareWeight(input.checked);
-    input.disabled = false;
-    if (r) { toast(r, { tone: 'error' }); input.checked = !input.checked; }
-    else toast(input.checked ? 'Friends can see your latest weight.' : 'Your weight is hidden from friends.');
+    const want = input.checked;
+    savingWeight = true;
+    renderSettings();
+    const r = await setShareWeight(want);
+    savingWeight = false;
+    if (r) { input.checked = !want; toast(r, { tone: 'error' }); }
+    else toast(want ? 'Friends can see your latest weight.' : 'Your weight is hidden from friends.');
+    renderSettings();
   });
   on(page, 'click', '[data-unblock]', async (e, b) => {
-    b.disabled = true;
-    const r = await unblock(b.dataset.unblock);
-    if (r.error) { b.disabled = false; toast(r.error, { tone: 'error' }); return; }
+    const id = b.dataset.unblock;
+    unblocking.add(id);
+    renderSettings();
+    const r = await unblock(id);
+    if (r.error) { unblocking.delete(id); renderSettings(); toast(r.error, { tone: 'error' }); return; }
     toast('Unblocked.');
-    refreshBlocks();
+    await refreshBlocks();
+    unblocking.delete(id);
   });
   on(page, 'click', '[data-step]', (e, b) => { state.settings.weightStep = +b.dataset.step; saveSettings(); renderSettings(); });
   on(page, 'click', '[data-pick-image]', () => $('restFile').click());

@@ -1,5 +1,5 @@
 // Plan: weekly schedule, routine library and the routine editor.
-import { $, html, render, on, toast } from '../core/dom.js';
+import { $, html, render, on, toast, busyAttr } from '../core/dom.js';
 import { DOW, fmtClock } from '../core/dates.js';
 import { pushLayer } from '../core/router.js';
 import { state, savePlan, createWorkout, deleteWorkout, planTombstones, setPlanTombstones } from '../state.js';
@@ -44,13 +44,13 @@ function exerciseRow(e, i, count) {
   return html`<li class="ex-edit" data-ex="${e.name}" data-key="ex-${e.name}">
     <div class="ex-edit-head">
       <div class="row-main"><b>${e.name}</b><small>${categoryLabel(e.cat)}</small></div>
-      <button type="button" class="icon-btn sm" data-move="-1" aria-label="Move ${e.name} up"${i === 0 ? ' disabled' : ''}>${icons.up}</button>
-      <button type="button" class="icon-btn sm" data-move="1" aria-label="Move ${e.name} down"${i === count - 1 ? ' disabled' : ''}>${icons.down}</button>
+      <button type="button" class="icon-btn sm" data-move="-1" aria-label="Move ${e.name} up"${busyAttr(i === 0)}>${icons.up}</button>
+      <button type="button" class="icon-btn sm" data-move="1" aria-label="Move ${e.name} down"${busyAttr(i === count - 1)}>${icons.down}</button>
       <button type="button" class="icon-btn sm danger" data-remove aria-label="Remove ${e.name}">${icons.trash}</button>
     </div>
     <div class="ex-edit-fields">
       <div class="field compact"><span>${e.unilateral ? 'Sets / side' : 'Sets'}</span>
-        <div class="stepper"><button type="button" data-sets="-1" aria-label="Fewer sets">${icons.minus}</button><output aria-live="polite">${displaySets(e)}</output><button type="button" data-sets="1" aria-label="More sets">${icons.plus}</button></div></div>
+        <div class="stepper"><button type="button" data-sets="-1" aria-label="Fewer sets for ${e.name}">${icons.minus}</button><output aria-live="polite">${displaySets(e)}</output><button type="button" data-sets="1" aria-label="More sets for ${e.name}">${icons.plus}</button></div></div>
       <label class="field compact"><span>Reps</span><input class="input" data-field="target" value="${e.target}" maxlength="20" placeholder="${DEFAULT_TARGET}"></label>
       <label class="field compact"><span>Rest</span><select class="input" data-field="rest">${REST_OPTIONS.map((r) => html`<option value="${r}"${r === e.rest ? ' selected' : ''}>${r ? fmtClock(r) : 'None'}</option>`)}${REST_OPTIONS.includes(e.rest) ? '' : html`<option value="${e.rest}" selected>${fmtClock(e.rest)}</option>`}</select></label>
       <label class="toggle compact"><input type="checkbox" data-field="unilateral"${e.unilateral ? ' checked' : ''}><span>Left/right</span></label>
@@ -66,10 +66,10 @@ function searchResults(list) {
   const q = query.trim();
   const exact = results.some((x) => x.name.toLowerCase() === q.toLowerCase());
   return html`<p class="muted small picks-count">${all.length} exercises${group === 'All' ? '' : ' · ' + group}${all.length > results.length ? ' · showing ' + results.length + ', search to narrow down' : ''}</p>
-    ${results.map((x) => html`<button type="button" class="pick${added.has(x.name.toLowerCase()) ? ' added' : ''}" data-add="${x.name}"${added.has(x.name.toLowerCase()) ? ' disabled' : ''}>
+    ${results.map((x) => html`<button type="button" class="pick${added.has(x.name.toLowerCase()) ? ' added' : ''}" data-add="${x.name}" data-key="pick-${x.name}"${busyAttr(added.has(x.name.toLowerCase()))}>
       <span class="row-main"><b>${x.name}</b><small>${categoryLabel(x.cat)}${x.unilateral ? ' · left/right' : ''}</small></span>
       <span class="pick-tag">${added.has(x.name.toLowerCase()) ? 'Added' : html`${icons.plus} Add`}</span></button>`)}
-    ${q && !exact && !added.has(q.toLowerCase()) ? html`<button type="button" class="pick custom" data-add-custom="${q}"><span class="row-main"><b>Add “${q}”</b><small>Your own exercise</small></span><span class="pick-tag">${icons.plus} Add</span></button>` : ''}`;
+    ${q && !exact && !added.has(q.toLowerCase()) ? html`<button type="button" class="pick custom" data-add-custom="${q}" data-key="pick-custom"><span class="row-main"><b>Add “${q}”</b><small>Your own exercise</small></span><span class="pick-tag">${icons.plus} Add</span></button>` : ''}`;
 }
 
 function editorView() {
@@ -82,12 +82,12 @@ function editorView() {
       ${account.user ? html`<button type="button" class="icon-btn" data-share aria-label="Share with friends">${icons.share}</button>` : ''}
       <button type="button" class="icon-btn danger" data-delete aria-label="Delete workout">${icons.trash}</button>
     </header>
-    ${list.length ? html`<ol class="ex-edit-list">${list.map((e, i) => exerciseRow(e, i, list.length))}</ol>`
-      : html`<div class="empty-inline"><p>Start with one exercise.</p><p class="muted">Search below or add your own.</p></div>`}
-    <section class="card add-ex">
+    ${list.length ? html`<ol class="ex-edit-list" data-key="ex-list">${list.map((e, i) => exerciseRow(e, i, list.length))}</ol>`
+      : html`<div class="empty-inline" data-key="ex-empty"><p>Start with one exercise.</p><p class="muted">Search below or add your own.</p></div>`}
+    <section class="card add-ex" data-key="add-ex">
       <label class="field"><span>Add exercises</span>
         <input class="input" id="exSearch" type="search" value="${query}" placeholder="Search by name or muscle" autocomplete="off" enterkeyhint="search"></label>
-      <div class="chips no-swipe group-filters" role="radiogroup" aria-label="Muscle group">${GROUP_FILTERS.map((g) => html`<button type="button" class="chip${g === group ? ' on' : ''}" role="radio" aria-checked="${g === group ? 'true' : 'false'}" data-group="${g}">${g}</button>`)}</div>
+      <div class="chips no-swipe group-filters" role="radiogroup" aria-label="Muscle group">${GROUP_FILTERS.map((g) => html`<button type="button" class="chip${g === group ? ' on' : ''}" role="radio" aria-checked="${g === group ? 'true' : 'false'}" tabindex="${g === group ? '0' : '-1'}" data-group="${g}">${g}</button>`)}</div>
       <div class="picks no-swipe" id="exResults">${searchResults(list)}</div>
     </section>`;
 }
@@ -198,7 +198,7 @@ export function initPlan() {
     savePlan();
     // Follow the exercise: focus its move button in the new position (or the other one at an end).
     const row = page.querySelector(`[data-ex="${CSS.escape(name)}"]`);
-    const again = row?.querySelector(`[data-move="${b.dataset.move}"]:not([disabled])`) || row?.querySelector('[data-move]:not([disabled])');
+    const again = row?.querySelector(`[data-move="${b.dataset.move}"]:not([aria-disabled])`) || row?.querySelector('[data-move]:not([aria-disabled])');
     again?.focus({ preventScroll: true });
   });
   on(page, 'click', '[data-remove]', (e, b) => {
@@ -233,7 +233,7 @@ export function initPlan() {
   });
   on(page, 'click', '[data-group]', (e, b) => {
     group = b.dataset.group;
-    page.querySelectorAll('[data-group]').forEach((c) => { c.classList.toggle('on', c === b); c.setAttribute('aria-checked', String(c === b)); });
+    page.querySelectorAll('[data-group]').forEach((c) => { c.classList.toggle('on', c === b); c.setAttribute('aria-checked', String(c === b)); c.setAttribute('tabindex', c === b ? '0' : '-1'); });
     render($('exResults'), searchResults(list()));
   });
   on(page, 'input', '#exSearch', (e, input) => {

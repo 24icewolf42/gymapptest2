@@ -86,14 +86,18 @@ export function render(el, content) {
   const keys = row ? [row, ...siblings.slice(siblings.indexOf(row) + 1)].map((n) => n.getAttribute('data-key')).filter(Boolean) : [];
   const selection = hadFocus && typeof active.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd] : null;
   morphChildren(el, next);
-  if (!hadFocus || document.activeElement === active) return;
-  if (active.isConnected && el.contains(active) && !active.matches(':disabled')) {
+  if (!hadFocus) return;
+  // A control that became disabled still looks focused here, but the browser
+  // drops its focus a frame later, so it counts as lost.
+  const usable = active.isConnected && el.contains(active) && !active.matches(':disabled');
+  if (usable && document.activeElement === active) return;
+  if (usable) {
     active.focus({ preventScroll: true });
     if (selection) { try { active.setSelectionRange(...selection); } catch { /* not a text field */ } }
     return;
   }
   const target = keys.map((k) => el.querySelector(`[data-key="${CSS.escape(k)}"]`)).find(Boolean);
-  const control = target && (target.matches(focusable) ? target : target.querySelector(focusable));
+  const control = target && (target.matches(focusable) || target.getAttribute('tabindex') === '-1' ? target : target.querySelector(focusable));
   if (control) control.focus({ preventScroll: true });
   else focusHeading(el);
 }
@@ -159,7 +163,9 @@ function morphNode(a, b) {
   const focused = a === document.activeElement;
   const isField = a.matches('input, textarea, select');
   const oldValue = a.getAttribute('value'), oldChecked = a.hasAttribute('checked');
-  [...a.attributes].forEach((attr) => { if (!b.hasAttribute(attr.name)) a.removeAttribute(attr.name); });
+  // Headings made focusable as a focus fallback (tabindex="-1") stay focusable.
+  const keep = (name) => name === 'tabindex' && /^H[1-6]$/.test(a.tagName) && a.getAttribute('tabindex') === '-1';
+  [...a.attributes].forEach((attr) => { if (!b.hasAttribute(attr.name) && !keep(attr.name)) a.removeAttribute(attr.name); });
   [...b.attributes].forEach((attr) => {
     if (focused && isField && (attr.name === 'value' || attr.name === 'checked')) return;
     if (a.getAttribute(attr.name) !== attr.value) a.setAttributeNode(attr.cloneNode()); // older WebViews reject some parsed names in setAttribute
@@ -201,16 +207,22 @@ export function busyAttr(isBusy) {
 }
 
 let toastTimer = null;
+let toastOrigin = null;
 let errorUntil = 0;
+const TOAST_RESUME_MS = 3000;
 /**
  * Short message. `action: { label, onClick }` adds a button (e.g. Undo).
- * Errors stay longer, are announced assertively, and a routine message that
- * arrives right after one does not replace it.
+ * Errors stay longer, are announced assertively (through a separate alert
+ * region), and a routine message that arrives right after one does not
+ * replace it. The toast stays while it has focus or the pointer.
  */
 export function toast(message, { tone = 'default', ms = 2600, action = null } = {}) {
   const el = $('toast');
   if (!el) return;
   if (tone !== 'error' && Date.now() < errorUntil) return;
+  wireToast(el);
+  const active = document.activeElement;
+  if (active && active !== document.body && !el.contains(active)) toastOrigin = active;
   el.replaceChildren(document.createTextNode(message));
   if (action) {
     const b = document.createElement('button');
@@ -220,17 +232,45 @@ export function toast(message, { tone = 'default', ms = 2600, action = null } = 
     b.onclick = () => { hideToast(el); action.onClick(); };
     el.append(' ', b);
   }
+  const alert = $('toastAlert');
+  const assertive = tone === 'error' && !action && alert;
+  if (alert) alert.textContent = assertive ? message : '';
+  // The visible toast is a polite status; an error is read from the alert region instead.
+  if (assertive) el.setAttribute('aria-hidden', 'true');
+  else el.removeAttribute('aria-hidden');
   el.dataset.tone = tone;
-  el.setAttribute('role', tone === 'error' ? 'alert' : 'status');
   el.classList.toggle('has-action', !!action);
   el.classList.add('show');
-  const duration = tone === 'error' || action ? Math.max(ms, 6000) : ms;
+  const duration = tone === 'error' ? Math.max(ms, 6000) : action ? Math.max(ms, 10000) : ms;
   if (tone === 'error') errorUntil = Date.now() + duration;
+  scheduleHide(el, duration);
+}
+
+function scheduleHide(el, ms) {
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => hideToast(el), duration);
+  toastTimer = setTimeout(() => hideToast(el), ms);
+}
+
+function wireToast(el) {
+  if (el.dataset.wired) return;
+  el.dataset.wired = '1';
+  const hold = () => clearTimeout(toastTimer);
+  const resume = () => { if (el.classList.contains('show')) scheduleHide(el, TOAST_RESUME_MS); };
+  el.addEventListener('focusin', hold);
+  el.addEventListener('mouseenter', hold);
+  el.addEventListener('focusout', (e) => { if (!el.contains(e.relatedTarget)) resume(); });
+  el.addEventListener('mouseleave', () => { if (!el.contains(document.activeElement)) resume(); });
 }
 
 function hideToast(el) {
+  clearTimeout(toastTimer);
+  // Focus on the toast goes back to where the user was, not to the page top.
+  if (el.contains(document.activeElement)) {
+    const origin = toastOrigin;
+    if (origin && origin.isConnected && !origin.closest('[inert]') && !origin.matches(':disabled')) origin.focus({ preventScroll: true });
+    else focusHeading(document.querySelector('#session:not([hidden])') || document.querySelector('.page.active') || document.body);
+  }
+  toastOrigin = null;
   el.classList.remove('show', 'has-action');
   // An invisible Undo button must not stay reachable by keyboard.
   setTimeout(() => { if (!el.classList.contains('show')) el.replaceChildren(); }, 250);

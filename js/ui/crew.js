@@ -156,13 +156,13 @@ export function renderCrew() {
   }
   if (crew.loadedFor !== me() && !loading) refreshCrew();
   const incoming = crew.friendships?.incoming.length || 0;
-  render(page, html`${head('crew-' + crew.tab)}
+  render(page, html`${head('crew')}
     <div class="segmented" role="tablist" aria-label="Crew sections">
       ${SECTIONS.map(([id, label]) => html`<button type="button" role="tab" id="crew-tab-${id}" aria-controls="crew-panel" aria-selected="${crew.tab === id ? 'true' : 'false'}" tabindex="${crew.tab === id ? '0' : '-1'}" data-crew-tab="${id}">${label}${id === 'friends' && incoming ? html`<span class="dot-badge" aria-hidden="true">${incoming}</span><span class="sr-only">, ${incoming} new</span>` : ''}</button>`)}
     </div>
     ${crew.error ? html`<div class="notice error" role="alert"><span>${crew.error}</span> <button type="button" class="link-btn inline" data-retry>Try again</button></div>` : ''}
     <div id="crew-panel" role="tabpanel" aria-labelledby="crew-tab-${crew.tab}">
-      ${crew.tab === 'dates' ? datesPanel() : crew.tab === 'friends' ? friendsPanel() : rankingPanel()}
+      <div data-key="panel-${crew.tab}">${crew.tab === 'dates' ? datesPanel() : crew.tab === 'friends' ? friendsPanel() : rankingPanel()}</div>
     </div>`);
 }
 
@@ -233,8 +233,8 @@ function dateCard(d) {
         </div>`}
       <div class="date-actions">
         ${(mine || status === 'going' || status === 'maybe') && canCheckIn(d) ? (checkedIn
-          ? html`<span class="pill pill-ok">${icons.check} You are at the gym</span>`
-          : html`<button type="button" class="btn btn-primary btn-sm" data-checkin${busyAttr(busy)}>${icons.pin} I’m here</button>`) : ''}
+          ? html`<span class="pill pill-ok" tabindex="-1" data-key="checkin-${d.id}">${icons.check} You are at the gym</span>`
+          : html`<button type="button" class="btn btn-primary btn-sm" data-key="checkin-${d.id}" data-checkin${busyAttr(busy)}>${icons.pin} I’m here</button>`) : ''}
         ${mine ? html`<button type="button" class="btn btn-ghost btn-sm" data-cancel-date${busyAttr(busy)}>Cancel date</button>` : ''}
       </div>
     </article>`;
@@ -328,7 +328,7 @@ async function openDateSheet(minutes) {
         <input class="input" type="datetime-local" name="start" value="${toLocalInput(start)}" min="${toLocalInput(new Date(now.getTime() - 5 * 60000))}">
       </label>
       <div class="field"><span id="durLabel">How long</span>
-        <div class="chips wrap" role="radiogroup" aria-labelledby="durLabel">${DURATIONS.map((m) => html`<button type="button" class="chip${m === duration ? ' on' : ''}" role="radio" aria-checked="${m === duration ? 'true' : 'false'}" data-duration="${m}">${m < 60 ? m + ' min' : m / 60 + ' h'}</button>`)}</div>
+        <div class="chips wrap" role="radiogroup" aria-labelledby="durLabel">${DURATIONS.map((m) => html`<button type="button" class="chip${m === duration ? ' on' : ''}" role="radio" aria-checked="${m === duration ? 'true' : 'false'}" tabindex="${m === duration ? '0' : '-1'}" data-duration="${m}">${m < 60 ? m + ' min' : m / 60 + ' h'}</button>`)}</div>
       </div>
       <label class="field"><span>Workout (optional)</span>
         <select class="input" name="workout"><option value="">No plan, just training</option>${workouts.map((w) => html`<option value="${w}"${w === todays ? ' selected' : ''}>${w}</option>`)}</select>
@@ -348,7 +348,7 @@ async function openDateSheet(minutes) {
       sheet.querySelectorAll('[data-duration]').forEach((b) => {
         b.onclick = () => {
           duration = +b.dataset.duration;
-          sheet.querySelectorAll('[data-duration]').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', String(x === b)); });
+          sheet.querySelectorAll('[data-duration]').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', String(x === b)); x.setAttribute('tabindex', x === b ? '0' : '-1'); });
         };
       });
       sheet.querySelectorAll('input[name=who]').forEach((r) => { r.onchange = () => { sheet.querySelector('.friend-picks').hidden = sheet.querySelector('input[name=who]:checked').value !== 'some'; }; });
@@ -367,11 +367,12 @@ async function openDateSheet(minutes) {
     const problem = validateDraft(draft) || (pickOnly && !inviteIds.length ? 'Pick at least one friend.' : '');
     if (problem) { err.textContent = problem; return; }
     const button = sheet.querySelector('[type=submit]');
-    if (button.disabled) return;
-    button.disabled = true;
+    // Busy, not disabled: disabling the focused button would push focus out of the sheet.
+    if (button.getAttribute('aria-disabled') === 'true') return;
+    button.setAttribute('aria-disabled', 'true');
     button.setAttribute('aria-busy', 'true');
     const r = await api.createDate({ ...draft, workout: form('workout').value, inviteIds });
-    button.disabled = false;
+    button.removeAttribute('aria-disabled');
     button.removeAttribute('aria-busy');
     if (r.error) { err.textContent = r.error; return; }
     write(KEYS.gyms, rememberGym(gyms, draft.gym));

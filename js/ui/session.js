@@ -218,7 +218,7 @@ function renderSession(resume) {
             <p class="ex-meta">${[e.target ? 'Target ' + e.target : '', lastText(e.name)].filter(Boolean).join(' · ')}</p>
           </div>
           <span class="ex-saved" aria-hidden="true">Saved</span>
-          <span class="ex-count">0/0</span>
+          <span class="ex-count"><span aria-hidden="true">0/0</span><span class="sr-only"></span></span>
         </div>
         ${e.note ? html`<p class="ex-note">${e.note}</p>` : ''}
         <table class="sets">
@@ -259,8 +259,8 @@ function updateProgress() {
     const n = [...boxes].filter((b) => b.checked).length;
     total += boxes.length; done += n;
     const count = card.querySelector('.ex-count');
-    count.textContent = n + '/' + boxes.length;
-    count.setAttribute('aria-label', `${n} of ${boxes.length} sets done`);
+    count.firstElementChild.textContent = n + '/' + boxes.length;
+    count.lastElementChild.textContent = `${n} of ${boxes.length} sets done`;
     card.classList.toggle('complete', boxes.length > 0 && n === boxes.length);
   });
   $('sessionSets').textContent = done + '/' + total + ' sets';
@@ -360,10 +360,16 @@ function closeSession(fromBack) {
   setBackgroundInert(false);
   if (!fromBack && closeLayer) closeLayer();
   closeLayer = null;
+  // Show the "Workout running" bar first, so focus can go back to it.
+  emit('gym:active-changed');
   if (returnFocus && document.contains(returnFocus)) returnFocus.focus({ preventScroll: true });
+  if (document.activeElement !== returnFocus) {
+    const fallback = document.querySelector('#activeBar:not([hidden]) button, .page.active [data-start], .page.active h1');
+    if (fallback?.matches('h1') && !fallback.hasAttribute('tabindex')) fallback.setAttribute('tabindex', '-1');
+    fallback?.focus({ preventScroll: true });
+  }
   returnFocus = null;
   if (kept) toast('Workout kept. Open it again to continue.');
-  emit('gym:active-changed');
 }
 
 async function start({ quiet = false } = {}) {
