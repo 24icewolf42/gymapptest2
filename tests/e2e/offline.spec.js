@@ -1,6 +1,5 @@
 // Core tracking works without an account: plan, log, calendar, stats, backup.
-import { test, expect } from '@playwright/test';
-import { trackErrors, open, tab, createWorkout, scheduleToday, fillPrompt, sheetAction } from './helpers.js';
+import { test, expect, trackErrors, open, tab, createWorkout, scheduleToday, fillPrompt, sheetAction } from './helpers.js';
 
 test.beforeEach(async ({ page }) => {
   // No cloud: these flows must work fully offline.

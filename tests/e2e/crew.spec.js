@@ -1,6 +1,5 @@
 // Gym dates, friends, ranking and shared routines, end to end with two users.
-import { test, expect } from '@playwright/test';
-import { tab, sheetAction, friendsPair, createWorkout, fillPrompt } from './helpers.js';
+import { test, expect, tab, sheetAction, friendsPair, createWorkout, fillPrompt } from './helpers.js';
 
 async function postDate(page, { quick = '30', gym = 'McFit Mitte', start = null, pick = null } = {}) {
   await tab(page, 'crew');
@@ -21,20 +20,20 @@ test('replies Maybe and Can’t, checks in at a live date, and validates the for
   // Validation: an empty gym is refused with a message.
   await tab(pa, 'crew');
   await pa.locator('[data-quick="0"]').click();
-  await pa.locator('.date-sheet [name=gym]').fill('');
-  await pa.locator('.date-sheet [type=submit]').click();
-  await expect(pa.locator('.date-sheet .form-error')).toContainText('gym');
-  await pa.locator('.date-sheet [name=gym]').fill('Live Gym');
-  await pa.locator('.date-sheet [type=submit]').click();
+  await pa.locator('.sheet-backdrop.open .date-sheet [name=gym]').fill('');
+  await pa.locator('.sheet-backdrop.open .date-sheet [type=submit]').click();
+  await expect(pa.locator('.sheet-backdrop.open .date-sheet .form-error')).toContainText('gym');
+  await pa.locator('.sheet-backdrop.open .date-sheet [name=gym]').fill('Live Gym');
+  await pa.locator('.sheet-backdrop.open .date-sheet [type=submit]').click();
   await expect(pa.locator('.date-card.live')).toContainText('Live Gym');
 
   await tab(pb, 'crew');
   const card = pb.locator('.date-card', { hasText: 'Live Gym' });
   await expect(card).toBeVisible({ timeout: 10000 });
   await card.locator('[data-reply="maybe"]').click();
-  await expect(card.locator('[data-reply="maybe"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(card.locator('[data-reply="maybe"]')).toHaveAttribute('aria-checked', 'true');
   await card.locator('[data-reply="no"]').click();
-  await expect(card.locator('[data-reply="no"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(card.locator('[data-reply="no"]')).toHaveAttribute('aria-checked', 'true');
   await expect(card.locator('[data-checkin]')).toHaveCount(0);
   await card.locator('[data-reply="going"]').click();
   await card.locator('[data-checkin]').click();

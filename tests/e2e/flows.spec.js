@@ -1,6 +1,5 @@
 // Account safety, workout sessions and navigation flows.
-import { test, expect } from '@playwright/test';
-import { trackErrors, open, tab, createWorkout, scheduleToday, newUser, signUp, closeSettings, sheetAction } from './helpers.js';
+import { test, expect, newPhone, trackErrors, open, tab, createWorkout, scheduleToday, newUser, signUp, closeSettings, sheetAction } from './helpers.js';
 
 test('signing in with the keyboard shows the account, not a stuck form', async ({ page }) => {
   const { makeUser, uniqueName } = await import('../integration/helpers.js');
@@ -106,7 +105,7 @@ test('back closes the innermost layer first, and a tab switch leaves no dead bac
 
 test('sign-out keeps unsynced data unless the user accepts losing it', async ({ browser }) => {
   const user = newUser('out');
-  const ctx = await browser.newContext();
+  const ctx = await newPhone(browser);
   const page = await ctx.newPage();
   await open(page);
   await signUp(page, user);
@@ -130,7 +129,7 @@ test('the account-switch question blocks syncing until it is answered', async ({
   const { makeUser, uniqueName, adminClient } = await import('../integration/helpers.js');
   const first = newUser('sw1');
   const second = await makeUser(uniqueName('sw2'));
-  const page = await (await browser.newContext()).newPage();
+  const page = await (await newPhone(browser)).newPage();
   await open(page);
   await createWorkout(page, 'Private routine', ['Plank']);
   await signUp(page, first);
@@ -142,8 +141,11 @@ test('the account-switch question blocks syncing until it is answered', async ({
   await page.locator('#authForm [type=submit]').click();
   await expect(page.getByText('Someone else used this phone')).toBeVisible({ timeout: 15000 });
   // Coming back to the app or going online must not upload anything meanwhile.
+  const writes = [];
+  page.on('request', (r) => { if (r.method() !== 'GET' && /\/rest\/v1\/(workout_|body_weight)/.test(r.url())) writes.push(r.url()); });
   await page.evaluate(() => { window.dispatchEvent(new Event('online')); document.dispatchEvent(new Event('visibilitychange')); });
-  await page.waitForTimeout(1500);
+  await page.waitForLoadState('networkidle');
+  expect(writes).toEqual([]);
   await sheetAction(page, 'Cancel and sign out');
   const plan = await adminClient().from('workout_plans').select('plan').eq('user_id', second.id).maybeSingle();
   expect(plan.data).toBeNull();
@@ -153,7 +155,7 @@ test('after deleting an account, the next account is asked before taking the dat
   const { makeUser, uniqueName } = await import('../integration/helpers.js');
   const doomed = newUser('del');
   const next = await makeUser(uniqueName('next'));
-  const page = await (await browser.newContext()).newPage();
+  const page = await (await newPhone(browser)).newPage();
   await open(page);
   await createWorkout(page, 'Keep me', ['Plank']);
   await signUp(page, doomed);

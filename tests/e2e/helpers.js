@@ -1,13 +1,39 @@
-import { expect } from '@playwright/test';
+import { test as base, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
-/** Collects uncaught page errors so each test can assert there were none. */
+/**
+ * Collects uncaught page errors, console errors and server errors (5xx) so
+ * each test can assert there were none.
+ */
 export function trackErrors(page) {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|ERR_|net::/.test(m.text())) errors.push(m.text()); });
+  page.on('response', (r) => { if (r.status() >= 500) errors.push(`HTTP ${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`); });
   return errors;
 }
+
+const contexts = [];
+/** A fresh browser context (a second "phone"), closed automatically after the test. */
+export async function newPhone(browser) {
+  const ctx = await browser.newContext();
+  contexts.push(ctx);
+  return ctx;
+}
+
+/**
+ * Test with built-in checks: the default page fails the test on any page or
+ * server error, and extra phones are closed afterwards.
+ */
+export const test = base.extend({
+  page: async ({ page }, use) => {
+    const errors = trackErrors(page);
+    await use(page);
+    expect(errors, 'errors on the page').toEqual([]);
+  },
+});
+test.afterEach(async () => { while (contexts.length) await contexts.pop().close(); });
+export { expect };
 
 export async function open(page, path = '/') {
   await page.goto(path);
@@ -97,8 +123,8 @@ export async function friendsPair(browser, prefix = 'p') {
   const a = await makeUser(uniqueName(prefix + 'a'));
   const b = await makeUser(uniqueName(prefix + 'b'));
   await befriend(a, b);
-  const pa = await (await browser.newContext()).newPage();
-  const pb = await (await browser.newContext()).newPage();
+  const pa = await (await newPhone(browser)).newPage();
+  const pb = await (await newPhone(browser)).newPage();
   const errors = [trackErrors(pa), trackErrors(pb)];
   await open(pa); await signInAs(pa, a);
   await open(pb); await signInAs(pb, b);

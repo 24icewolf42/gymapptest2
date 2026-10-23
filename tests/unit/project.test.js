@@ -28,6 +28,10 @@ describe('project', () => {
     new Set(used.map((f) => f.replace(/\\/g, '/'))).forEach((f) => expect(listed, f).toContain(f));
   });
 
+  it('never interpolates attribute markup as a plain string, which html`` would escape', () => {
+    walk('js').forEach((f) => expect(readFileSync(f, 'utf8'), f).not.toMatch(/\? ' [a-z-]+="/));
+  });
+
   it('has no inline scripts or handlers, so the Content-Security-Policy can forbid them', () => {
     const html = readFileSync('index.html', 'utf8');
     expect(html).toMatch(/Content-Security-Policy/);

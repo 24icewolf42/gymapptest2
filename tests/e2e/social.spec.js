@@ -1,10 +1,9 @@
 // Accounts, sync, friends and gym dates against the local Supabase stack.
-import { test, expect } from '@playwright/test';
-import { trackErrors, open, tab, createWorkout, scheduleToday, newUser, signUp, signIn, closeSettings, sheetAction } from './helpers.js';
+import { test, expect, newPhone, trackErrors, open, tab, createWorkout, scheduleToday, newUser, signUp, signIn, closeSettings, sheetAction } from './helpers.js';
 
 test('workouts sync between two devices, including deletions', async ({ browser }) => {
   const user = newUser('sync');
-  const a = await (await browser.newContext()).newPage();
+  const a = await (await newPhone(browser)).newPage();
   const errors = trackErrors(a);
   await open(a);
   await createWorkout(a, 'Push', ['Push-up']);
@@ -19,7 +18,7 @@ test('workouts sync between two devices, including deletions', async ({ browser 
   await sheetAction(a, 'Save workout');
   await signUp(a, user);
 
-  const b = await (await browser.newContext()).newPage();
+  const b = await (await newPhone(browser)).newPage();
   const errorsB = trackErrors(b);
   await open(b);
   await signIn(b, user);
@@ -51,8 +50,8 @@ test('workouts sync between two devices, including deletions', async ({ browser 
 
 test('friends plan a gym date and reply to it', async ({ browser }) => {
   const alex = newUser('alex'), sam = newUser('sam');
-  const a = await (await browser.newContext()).newPage();
-  const s = await (await browser.newContext()).newPage();
+  const a = await (await newPhone(browser)).newPage();
+  const s = await (await newPhone(browser)).newPage();
   const errors = [...[a, s].map(trackErrors)];
   await open(a); await signUp(a, alex); await closeSettings(a);
   await open(s); await signUp(s, sam); await closeSettings(s);
@@ -72,8 +71,8 @@ test('friends plan a gym date and reply to it', async ({ browser }) => {
   // Alex is heading to the gym in 30 minutes.
   await a.locator('[data-crew-tab="dates"]').click();
   await a.locator('[data-quick="30"]').click();
-  await a.locator('.date-sheet [name=gym]').fill('McFit Mitte');
-  await a.locator('.date-sheet [type=submit]').click();
+  await a.locator('.sheet-backdrop.open .date-sheet [name=gym]').fill('McFit Mitte');
+  await a.locator('.sheet-backdrop.open .date-sheet [type=submit]').click();
   await expect(a.locator('.date-card.mine')).toContainText('McFit Mitte');
 
   // Sam sees it (badge + card) and says Going.
@@ -81,7 +80,7 @@ test('friends plan a gym date and reply to it', async ({ browser }) => {
   await expect(s.locator('.date-card')).toContainText('McFit Mitte', { timeout: 10000 });
   await expect(s.locator('.nav-btn[data-page="crew"] .badge')).toHaveText('1');
   await s.locator('.date-card [data-reply="going"]').click();
-  await expect(s.locator('.date-card [data-reply="going"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(s.locator('.date-card [data-reply="going"]')).toHaveAttribute('aria-checked', 'true');
   await expect(s.locator('.nav-btn[data-page="crew"] .badge')).toBeHidden();
   await tab(s, 'today');
   await expect(s.locator('.teaser')).toContainText('McFit Mitte');
@@ -105,7 +104,7 @@ test('friends plan a gym date and reply to it', async ({ browser }) => {
 
 test('a different account signing in does not absorb the previous data', async ({ browser }) => {
   const first = newUser('one'), second = newUser('two');
-  const p = await (await browser.newContext()).newPage();
+  const p = await (await newPhone(browser)).newPage();
   await open(p);
   await createWorkout(p, 'Secret routine', ['Plank']);
   await signUp(p, first);
