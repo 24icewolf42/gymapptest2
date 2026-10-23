@@ -9,7 +9,7 @@ ROOT="$(pwd)"
 OUT="$ROOT/build-apk"
 
 rm -rf "$OUT" && mkdir -p "$OUT/www"
-cp index.html manifest.json Version rest.png snake-loading.gif icon-192.png icon-512.png icon-192-maskable.png icon-512-maskable.png "$OUT/www/"
+cp index.html plan.js cloud.js cloud-config.js manifest.json Version rest.png snake-loading.gif icon-192.png icon-512.png icon-192-maskable.png icon-512-maskable.png "$OUT/www/"
 cp -r fonts "$OUT/www/fonts"
 
 cd "$OUT"
