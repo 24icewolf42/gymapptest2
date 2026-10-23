@@ -108,13 +108,14 @@ import java.net.URL;
 
 @CapacitorPlugin(name = "ApkUpdater")
 public class ApkUpdaterPlugin extends Plugin {
-    // Only ever download from this app's own GitHub releases.
-    private static final String ALLOWED_PREFIX = "https://github.com/roguelineageaccmanager/gymapptest2/releases/download/";
+    // Only ever download this app's own release asset; a prefix check would accept
+    // "../" paths that GitHub normalizes into another repository's releases.
+    private static final String ALLOWED_URL = "https://github.com/roguelineageaccmanager/gymapptest2/releases/download/latest/rat-tracker.apk";
 
     @PluginMethod
     public void install(final PluginCall call) {
         final String url = call.getString("url");
-        if (url == null || !url.startsWith(ALLOWED_PREFIX)) {
+        if (!ALLOWED_URL.equals(url)) {
             call.reject("Update URL not allowed");
             return;
         }
