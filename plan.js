@@ -83,7 +83,8 @@
     var search = document.getElementById('exerciseSearch'), results = document.getElementById('exerciseResults');
     function showResults() {
       var q = search.value.toLowerCase();
-      results.innerHTML = moves.filter(function (x) { return !q || x.name.toLowerCase().includes(q) || x.cat.includes(q); }).map(function (x) { var added = list.some(function (e) { return e.name === x.name; }); return '<button class="plan-exercise-option" type="button" data-add-ex="' + esc(x.name) + '" ' + (added ? 'disabled' : '') + '><span><b>' + esc(x.name) + '</b><small>' + esc(x.cat) + '</small></span><span class="added-tag">' + (added ? 'Added' : '＋ Add') + '</span></button>'; }).join('');
+      var filtered = moves.filter(function (x) { return !q || x.name.toLowerCase().includes(q) || x.cat.includes(q); });
+      results.innerHTML = filtered.length ? filtered.map(function (x) { var added = list.some(function (e) { return e.name === x.name; }); return '<button class="plan-exercise-option" type="button" data-add-ex="' + esc(x.name) + '" ' + (added ? 'disabled' : '') + '><span><b>' + esc(x.name) + '</b><small>' + esc(x.cat) + '</small></span><span class="added-tag">' + (added ? 'Added' : '＋ Add') + '</span></button>'; }).join('') : '<div class="plan-empty">No matching exercises</div>';
       results.querySelectorAll('[data-add-ex]').forEach(function (b) { b.onclick = function () { var move = moves.find(function (x) { return x.name === b.dataset.addEx; }); list.push({ name: move.name, cat: move.cat, sets: 3, target: '8–12', rest: 90, note: '' }); save(); render(); }; });
     }
     search.oninput = showResults;
@@ -104,16 +105,6 @@
       document.body.classList.remove('keyboard-open');
     };
     showResults();
-    root.addEventListener('click', function (event) {
-      if (!event.target.closest('#planPicker')) {
-        picker.classList.remove('is-open');
-        pickerButton.setAttribute('aria-expanded', 'false');
-      }
-      if (!event.target.closest('#exerciseSearch') && !event.target.closest('#exerciseResults')) {
-        results.innerHTML = '';
-        search.value = '';
-      }
-    });
   }
   function render() {
     if (!root) return;
@@ -134,6 +125,13 @@
   window.openPlanWorkout = function (name, date) {
     if (window.startSession) window.startSession(name, date);
   };
+  document.addEventListener('click', function (event) {
+    var picker = document.getElementById('planPicker');
+    if (picker && !picker.contains(event.target)) {
+      picker.classList.remove('is-open');
+      document.getElementById('dayWorkout').setAttribute('aria-expanded', 'false');
+    }
+  });
   window.renderPlan = render;
   window.addEventListener('gym:plan-loaded', function () { window.renderPlan(); });
   window.renderPlan();
