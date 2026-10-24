@@ -5,7 +5,9 @@ import { sanitizeLogs } from '../../js/domain/logs.js';
 describe('nutrition', () => {
   it('keeps only known picks, a short note, a known time and plausible amounts', () => {
     expect(sanitizeEntry({ items: ['shake', 'shake', 'pizza'], note: '  banana  ', when: '30-60', water: '500', protein: 25.4 }, 'pre'))
-      .toEqual({ items: ['shake'], note: 'banana', when: '30-60', water: 500, protein: 25 });
+      .toEqual({ items: ['shake'], note: 'banana', when: '30-60', water: 500, protein: 25.4 });
+    expect(sanitizeEntry({ water: true, protein: '  ' }, 'pre')).toBeNull();
+    expect(sanitizeEntry({ items: ['nothing', 'meal'], water: 330, protein: '22,5' }, 'pre')).toEqual({ items: ['meal'], note: '', when: '', water: 330, protein: 22.5 });
     expect(sanitizeEntry({ items: [], note: '', water: -1, protein: 9999, when: 'soon' }, 'post')).toBeNull();
     expect(sanitizeEntry({ note: 'x'.repeat(200) }, 'pre').note).toHaveLength(80);
   });

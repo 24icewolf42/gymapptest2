@@ -21,9 +21,11 @@ export const NOTE_MAX = 80;
 const WATER_MAX = 5000; // ml
 const PROTEIN_MAX = 300; // g
 
-const amount = (v, max) => {
-  if (v === '' || v == null) return null;
-  const n = Math.round(Number(v));
+// Only numbers or numeric text count (not true, not blanks); `places` decimals are kept.
+const amount = (v, max, places = 0) => {
+  if (typeof v !== 'number' && !(typeof v === 'string' && /^\s*\d+([.,]\d+)?\s*$/.test(v))) return null;
+  const f = 10 ** places;
+  const n = Math.round(Number(String(v).replace(',', '.')) * f) / f;
   return Number.isFinite(n) && n >= 0 && n <= max ? n : null;
 };
 
@@ -31,10 +33,11 @@ const amount = (v, max) => {
 export function sanitizeEntry(e, side) {
   if (!e || typeof e !== 'object') return null;
   const known = new Set(ITEMS.map(([id]) => id));
-  const items = [...new Set(Array.isArray(e.items) ? e.items.filter((x) => known.has(x)) : [])];
+  let items = [...new Set(Array.isArray(e.items) ? e.items.filter((x) => known.has(x)) : [])];
+  if (items.length > 1) items = items.filter((x) => x !== 'nothing'); // "Nothing" only on its own
   const note = typeof e.note === 'string' ? cut(e.note.trim(), NOTE_MAX) : '';
   const when = TIMES[side].some(([id]) => id === e.when) ? e.when : '';
-  const water = amount(e.water, WATER_MAX), protein = amount(e.protein, PROTEIN_MAX);
+  const water = amount(e.water, WATER_MAX), protein = amount(e.protein, PROTEIN_MAX, 1);
   if (!items.length && !note && !when && water == null && protein == null) return null;
   const out = { items, note, when };
   if (water != null) out.water = water;

@@ -158,7 +158,8 @@ export function openSession(day, date = ymd(), { key = null, fresh = false } = {
     updatesLastUsed: !existing && date === today,
     doneAt: {}, anyAt: 0, selected: null, wasWaiting: false, prs: {},
     // Food and drink before and after (kept with the draft and saved with the workout).
-    nutrition: sanitizeNutrition(resume?.nutrition || existing?.nutrition) || {},
+    // A draft records food even when it was removed (null), so a removed entry does not come back.
+    nutrition: sanitizeNutrition(resume && 'nutrition' in resume ? resume.nutrition : existing?.nutrition) || {},
   };
   returnFocus = document.activeElement;
   renderSession(resume);
@@ -290,7 +291,7 @@ function saveDraft() {
   if (!s) return;
   const ex = {};
   cards().forEach((card) => { ex[s.exercises[+card.dataset.index].name] = collectSets(card); });
-  writeDraft(s.draftId, { day: s.day, date: s.date, key: s.key, startedAt: s.startedAt, active: Date.now(), ex, ...(sanitizeNutrition(s.nutrition) ? { nutrition: sanitizeNutrition(s.nutrition) } : {}) });
+  writeDraft(s.draftId, { day: s.day, date: s.date, key: s.key, startedAt: s.startedAt, active: Date.now(), ex, nutrition: sanitizeNutrition(s.nutrition) });
 }
 
 function autosave(card) {
@@ -469,7 +470,7 @@ async function editFood(side) {
   const label = side === 'pre' ? 'Before training' : 'After training';
   const result = await openSheet({
     title: label,
-    subtitle: 'Food and drink. Only you can see this.',
+    subtitle: 'Food and drink. Saved with this workout; friends never see it.',
     className: 'food-sheet',
     body: html`
       <fieldset class="field"><legend>What</legend>
@@ -478,8 +479,8 @@ async function editFood(side) {
       <fieldset class="field"><legend>When</legend>
         <div class="chips wrap" role="radiogroup" aria-label="When">${TIMES[side].map(([id, name], i) => html`<button type="button" class="chip${now.when === id ? ' on' : ''}" role="radio" aria-checked="${now.when === id ? 'true' : 'false'}" tabindex="${now.when === id || (!now.when && i === 0) ? '0' : '-1'}" data-when="${id}">${name}</button>`)}</div></fieldset>
       <div class="food-amounts">
-        <label class="field"><span>Water (ml, optional)</span><input class="input" name="water" type="number" inputmode="numeric" min="0" max="5000" step="50" value="${now.water ?? ''}"></label>
-        <label class="field"><span>Protein (g, optional)</span><input class="input" name="protein" type="number" inputmode="numeric" min="0" max="300" step="1" value="${now.protein ?? ''}"></label>
+        <label class="field"><span>Water (ml, optional)</span><input class="input" name="water" type="number" inputmode="numeric" min="0" max="5000" step="1" value="${now.water ?? ''}"></label>
+        <label class="field"><span>Protein (g, optional)</span><input class="input" name="protein" type="number" inputmode="decimal" min="0" max="300" step="0.1" value="${now.protein ?? ''}"></label>
       </div>
       <p class="form-error" aria-live="polite"></p>`,
     actions: [
@@ -487,8 +488,9 @@ async function editFood(side) {
         label: 'Save', tone: 'primary', submit: true,
         onClick: (finish, sheet) => {
           const field = (n) => sheet.querySelector(`[name=${n}]`);
-          const bad = ['water', 'protein'].find((n) => field(n).value !== '' && !field(n).checkValidity());
-          if (bad) { sheet.querySelector('.form-error').textContent = bad === 'water' ? 'Water: 0 to 5000 ml.' : 'Protein: 0 to 300 g.'; field(bad).focus(); return; }
+          // badInput: something typed that is not a number (the field's value is then empty).
+          const bad = ['water', 'protein'].find((n) => field(n).validity.badInput || (field(n).value !== '' && !field(n).checkValidity()));
+          if (bad) { sheet.querySelector('.form-error').textContent = bad === 'water' ? 'Water: a whole number from 0 to 5000 ml.' : 'Protein: a number from 0 to 300 g (one decimal).'; field(bad).focus(); return; }
           finish({
             entry: sanitizeEntry({
               items: [...sheet.querySelectorAll('[data-item][aria-pressed="true"]')].map((b) => b.dataset.item),
@@ -504,7 +506,16 @@ async function editFood(side) {
       { label: 'Cancel', tone: 'ghost', value: null },
     ],
     onMount: (sheet) => {
-      sheet.querySelectorAll('[data-item]').forEach((b) => { b.onclick = () => { const on = b.getAttribute('aria-pressed') !== 'true'; b.setAttribute('aria-pressed', String(on)); b.classList.toggle('on', on); }; });
+      // "Nothing" and the other picks exclude each other.
+      const picks = [...sheet.querySelectorAll('[data-item]')];
+      const press = (b, on) => { b.setAttribute('aria-pressed', String(on)); b.classList.toggle('on', on); };
+      picks.forEach((b) => {
+        b.onclick = () => {
+          const on = b.getAttribute('aria-pressed') !== 'true';
+          press(b, on);
+          if (on) picks.filter((x) => x !== b && (x.dataset.item === 'nothing' || b.dataset.item === 'nothing')).forEach((x) => press(x, false));
+        };
+      });
       const radios = [...sheet.querySelectorAll('[data-when]')];
       radios.forEach((b) => {
         b.onclick = () => {
