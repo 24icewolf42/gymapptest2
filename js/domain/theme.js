@@ -19,6 +19,7 @@ const SURFACES = {
 };
 const INKS = ['#0d0e10', '#ffffff'];
 const TEXT_CONTRAST = 4.5; // WCAG AA for normal text
+const TINT = 0.16; // the strongest tint of the color used behind text in it (css/app.css)
 
 export const DEFAULT_THEME = { base: 'dark', preset: 'lime', color: PRESETS[0].color };
 
@@ -62,8 +63,10 @@ const mix = (hex, toward, amount) => {
  * every one of `surfaces` (mixed toward black on light surfaces, toward white
  * on dark ones). Returns the original when it already does.
  */
-export function readableOn(hex, surfaces, min = TEXT_CONTRAST) {
-  const ok = (c) => surfaces.every((s) => contrast(c, s) >= min);
+export function readableOn(hex, surfaces, min = TEXT_CONTRAST, tint = 0) {
+  // With `tint`, also on each surface tinted with the color itself (soft chips, hero cards).
+  const all = (c) => (tint ? surfaces.concat(surfaces.map((s) => mix(s, c, tint))) : surfaces);
+  const ok = (c) => all(c).every((s) => contrast(c, s) >= min);
   if (ok(hex)) return hex;
   const toward = luminance(surfaces[0]) > 0.5 ? '#000000' : '#ffffff';
   for (let step = 1; step <= 50; step++) {
@@ -90,7 +93,7 @@ export function resolveBase(base, prefersLight) {
  */
 export function themeColors(theme, base) {
   const t = sanitizeTheme(theme);
-  const accent = readableOn(t.color, SURFACES[base] || SURFACES.dark);
+  const accent = readableOn(t.color, SURFACES[base] || SURFACES.dark, TEXT_CONTRAST, TINT);
   const [r, g, b] = toRgb(accent);
   return {
     accent,

@@ -3,7 +3,7 @@
 // "Reload now" in Settings (the page sends 'skip-waiting').
 const VERSION = '3.0.0';
 // Hash of the cached files (tools/sw-hash.mjs), so every change re-caches.
-const BUILD = 'f1433137d95a';
+const BUILD = '02b0da12838e';
 const CACHE = 'tracker-' + VERSION + '-' + BUILD;
 
 const FILES = [
@@ -14,6 +14,7 @@ const FILES = [
   'css/app.css',
   'vendor/supabase.js',
   'js/main.js',
+  'js/theme-boot.js',
   'js/version.js',
   'js/state.js',
   'js/native.js',

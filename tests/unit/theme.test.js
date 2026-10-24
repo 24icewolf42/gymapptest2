@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { PRESETS, sanitizeTheme, contrast, readableOn, inkFor, themeColors, resolveBase, DEFAULT_THEME } from '../../js/domain/theme.js';
 
+const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const tinted = (s, c, t = 0.16) => '#' + hex(s).map((v, i) => Math.round(v + (hex(c)[i] - v) * t).toString(16).padStart(2, '0')).join('');
 const surfaces = {
   dark: ['#0d0e10', '#16181b', '#1d2024', '#262a2f'],
   light: ['#f5f6f8', '#ffffff', '#eef0f3', '#e3e6ea'],
@@ -34,6 +36,7 @@ describe('theme', () => {
       for (const base of ['dark', 'light']) {
         const c = themeColors({ base, preset: p.id }, base);
         surfaces[base].forEach((s) => expect(contrast(c.accent, s)).toBeGreaterThanOrEqual(4.5));
+        surfaces[base].forEach((s) => expect(contrast(c.accent, tinted(s, c.accent))).toBeGreaterThanOrEqual(4.5));
         expect(contrast(c.ink, c.accent)).toBeGreaterThanOrEqual(4.5);
       }
     }
