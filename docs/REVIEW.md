@@ -1,6 +1,6 @@
 # Code review and status
 
-Review of the app at commit `108ba0b` (v2.9.1), with the status of every finding after the v3.0.0 rework on the `modernize` branch (rebased onto upstream `a30a7ff`, v2.12.0, and merged with upstream `0d0b6d2`, v2.12.3: its chip-scrolling fix and drag-to-reorder are ported to the modular app; drag uses a grip handle and the up/down buttons stay as the tap and keyboard alternative).
+Review of the app at commit `108ba0b` (v2.9.1), with the status of every finding after the v3.0.0 rework on the `modernize` branch (rebased onto upstream `a30a7ff`, v2.12.0, and merged with upstream `79dace5`, v2.12.4 (v2.12.4 only bumps the version): v2.12.3's chip-scrolling fix and drag-to-reorder are ported to the modular app; drag uses a grip handle and the up/down buttons stay as the tap and keyboard alternative).
 
 Upstream v2.12.0 also starts publishing leaderboard stats automatically on every sync; v3.0.0 keeps sharing opt-in. Which behaviour the app should have is the owner's call.
 The findings come from two independent passes: an Opus review of the frozen snapshot (full report below), cross-checked against my own read. Each was re-verified against the code.
