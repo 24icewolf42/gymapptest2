@@ -623,9 +623,14 @@ export async function updatePassword(password) {
  * successful final sync, unless `force` (the user accepted losing unsynced data).
  * Returns '' on success or a message explaining why nothing was removed.
  */
+const SIGN_OUT_SYNC_MS = 8000;
+
 export async function signOut({ removeLocalData = false, force = false, everywhere = false } = {}) {
   let synced = true;
-  if (account.user && account.ready) synced = await syncAll();
+  // The last sync gets a few seconds, not the full request timeouts: on a bad
+  // connection the user is not held in the dialog. Unfinished counts as not synced.
+  // With force the user has just been told it did not sync, so it is not tried again.
+  if (account.user && account.ready && !force) synced = await Promise.race([syncAll(), new Promise((r) => { setTimeout(() => r(false), SIGN_OUT_SYNC_MS); })]);
   if (removeLocalData && !synced && !force) return 'not-synced';
   account.ready = false;
   retire(); // a sync still in flight must not write the account's data back
@@ -648,7 +653,11 @@ export async function signOut({ removeLocalData = false, force = false, everywhe
 async function endSession(everywhere = false) {
   stopBeat();
   // This device only, unless the user asks to end every session (e.g. a lost phone).
-  const r = await supabase.auth.signOut({ scope: everywhere ? 'global' : 'local' }).catch((error) => ({ error }));
+  // Bounded: offline, the auth client may wait for a token refresh that keeps retrying.
+  const r = await Promise.race([
+    supabase.auth.signOut({ scope: everywhere ? 'global' : 'local' }).catch((error) => ({ error })),
+    new Promise((res) => { setTimeout(() => res({ error: new Error('timeout') }), 4000); }),
+  ]);
   if (!r?.error) return true;
   const key = supabase.auth.storageKey;
   [key, key + '-code-verifier', key + '-user'].forEach((k) => localStorage.removeItem(k));
