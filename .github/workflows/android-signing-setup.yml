@@ -29,8 +29,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
+    # The admin token is given only to the steps that need it.
     env:
-      GH_TOKEN: ${{ secrets.ADMIN_GH_TOKEN }}
       GH_REPO: ${{ github.repository }}
       BACKUP_CERT: ${{ vars.KEYSTORE_BACKUP_CERT }}
     steps:
@@ -40,10 +40,14 @@ jobs:
           java-version: 21
 
       - name: Check settings
+        env:
+          GH_TOKEN: ${{ secrets.ADMIN_GH_TOKEN }}
         run: |
           test -n "$GH_TOKEN" || { echo "::error::Add the ADMIN_GH_TOKEN secret first"; exit 1; }
           printf '%s\n' "$BACKUP_CERT" | openssl x509 -noout 2>/dev/null || { echo "::error::Add the KEYSTORE_BACKUP_CERT variable (a PEM certificate) first"; exit 1; }
-          if gh secret list --env production | grep -q '^ANDROID_KEYSTORE_BASE64'; then
+          # Fail closed: if the secrets can't be listed, never risk replacing a key.
+          existing="$(gh secret list --env production)" || { echo "::error::Could not list the production secrets (check ADMIN_GH_TOKEN)"; exit 1; }
+          if printf '%s\n' "$existing" | grep -q '^ANDROID_KEYSTORE_BASE64'; then
             if [ "${{ inputs.replace_existing }}" != "true" ]; then
               echo "::error::A release key already exists. Re-run with 'Replace an existing key' only if it is lost or leaked."
               exit 1
@@ -59,6 +63,8 @@ jobs:
       # Also creates the signed rotation from the old key, so phones on Android 9+
       # update to the new key without reinstalling.
       - name: Create the key and store it as secrets
+        env:
+          GH_TOKEN: ${{ secrets.ADMIN_GH_TOKEN }}
         run: |
           git show 108ba0b:android-signing/debug.keystore > "$RUNNER_TEMP/legacy.keystore"
           LEGACY_KEYSTORE="$RUNNER_TEMP/legacy.keystore" bash tools/create-release-key.sh "$RUNNER_TEMP/release-key-backup.p7m"
