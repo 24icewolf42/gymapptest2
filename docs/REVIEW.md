@@ -50,6 +50,20 @@ All findings are fixed in code. What remains for the app's owner is configuratio
 
 After the rework, three independent Opus reviews (security/privacy, data correctness, UX/accessibility/tests) rated the branch and listed findings. Every critical, major and minor finding and every nit was fixed and re-reviewed.
 
+### Round 10 (security 7/10, correctness 8/10, UX/tests 7/10)
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| S10-01 | Major | A changed note or target on an exercise the account already had passed undefused | Anything not exactly as the account has it (exercise, workout, lift) is defused; test with a restored note |
+| MA-1 | Major | Workouts of routines with names over 40 characters had their name cut, so Today offered the workout again | Workout names keep up to 200 characters like routine names; the Copy prompt starts at 40; test |
+| UX-M1 | Major | An update found in the background replaced an Undo | Background announcements wait; only a requested check answers at once; test |
+| UX-M2 | Major | Round-9 UX fixes untested | Tests for retries that leave focus where the user moved to (Crew and Settings), per-month calendar memory, the busy update button, a prompt saved once, and a later check reporting a waiting update; each checked against its removal |
+| UX-M3 | Major | Cancelling a prompt while it saved still saved, silently | A saving prompt shows "Saving…" and can't be closed until the result is in; test |
+| S10-02 | Minor | A sign-out elsewhere left the phone trusted, and Sign out signed out every device | Sign out ends this device's session only; any ended session marks later data as untrusted |
+| S10-03, S10-04 | Minor | Edited workouts via a backup; a backup's cleared days wiped history | Covered by S10-01; restores don't take deletion records, and future cleared-day times are ignored; test |
+| mi-1, n-1, m1, S10-05 | Minor/Nit | Gym dates with a long routine name, replied dates over 100, update wording, README | The routine name sent with a date is cut to 40; replied dates are filtered to upcoming open ones you don't host; wording fixed; README exact |
+| Android test | — | The offline test sometimes relaunched before storage was written | It waits until WebView storage has been unchanged for two seconds |
+
 ### Round 9 (security 8/10, correctness 7.5/10, UX/tests 7/10)
 
 | ID | Severity | Finding | Fix |
