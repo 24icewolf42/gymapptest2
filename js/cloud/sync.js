@@ -43,6 +43,12 @@ export function initAccount() {
     // supabase-js advises against awaiting other client calls inside this callback.
     setTimeout(() => handleAuth(event, session), 0);
   });
+  // Another tab is signing out: this one stops syncing at once, so nothing it
+  // has on its way writes the account's data back after it was removed. The
+  // sign-out itself reaches this tab when it is finished.
+  window.addEventListener('storage', (e) => {
+    if (e.key === KEYS.signingOut && e.newValue && account.user) { retire(); account.ready = false; setStatus(''); }
+  });
   listen('gym:plan-changed', () => queue('plan'));
   listen('gym:logs-changed', () => queue('data'));
   // Last-used values change on every keystroke during a workout: upload them calmly.
