@@ -146,8 +146,8 @@ Earlier versions were signed with `android-signing/debug.keystore`, which was
 committed to this public repository, so anyone could sign an app that Android
 accepted as an update. That key is removed and treated as compromised.
 
-Releases are now signed with a private key that exists only in GitHub secrets,
-and the APK is no longer debuggable. The new key is introduced by **APK signature
+Releases are now signed with a private EC (P-256) key, protected by a random
+password, that exists only in GitHub secrets, and the APK is no longer debuggable. The new key is introduced by **APK signature
 key rotation**: the old key signs a statement that the new key replaces it, so
 installed apps update without a reinstall, and on Android 9 and newer the old key
 can no longer sign updates afterwards. In the rotation the old key keeps only
@@ -164,9 +164,10 @@ with the public key. That residual risk ends only when those phones are retired.
 
 One-time setup by the repository owner:
 
-1. Create a certificate for the backup on your own computer and keep the private
-   key offline:
-   `openssl req -x509 -newkey rsa:4096 -keyout backup-key.pem -out backup-cert.pem -days 3650 -subj /CN=Tracker-backup`
+1. Create an EC (P-256) certificate for the backup on your own computer. It asks
+   for a pass phrase that protects the private key: choose a strong one and keep
+   it apart from the key, which stays offline. RSA certificates are refused.
+   `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -keyout backup-key.pem -out backup-cert.pem -days 3650 -subj /CN=Tracker-backup`
 2. In the `production` environment (see Database setup) add:
    - secret `ADMIN_GH_TOKEN`: a fine-grained token for this repository with
      *Environments*, *Secrets* and *Variables* read/write, used once to store the key;
@@ -179,7 +180,8 @@ One-time setup by the repository owner:
    uploads a backup encrypted to your certificate as a 1-day artifact. It refuses
    to run again unless *replace existing* is ticked.
 4. Download the backup, then delete the artifact and `ADMIN_GH_TOKEN`. Decrypt it
-   with `openssl cms -decrypt -binary -inform DER -in release-key-backup.p7m -inkey backup-key.pem -out backup.tgz`.
+   with `openssl cms -decrypt -binary -inform DER -in release-key-backup.p7m -inkey backup-key.pem -out backup.tgz`
+   (it asks for the pass phrase). `key-info.txt` in it holds the keystore password.
    Without the key no future update can be installed over the app.
 
 Each release then runs in three jobs: an unprivileged job builds an unsigned APK

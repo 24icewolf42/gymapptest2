@@ -7,7 +7,7 @@ name: Set up Android release signing (run once)
 # Needed once before running, in the "production" environment:
 #   secret   ADMIN_GH_TOKEN          fine-grained token for this repository with
 #                                    "Environments", "Secrets" and "Variables": read and write
-#   variable KEYSTORE_BACKUP_CERT    the owner's certificate (PEM) the backup is encrypted to
+#   variable KEYSTORE_BACKUP_CERT    the owner's EC certificate (PEM) the backup is encrypted to
 # Afterwards download the "release-key-backup" artifact (keystore and rotation
 # proof, readable only with the certificate's private key), keep it somewhere
 # safe and delete the artifact: without the key, updates can never be installed
@@ -45,6 +45,7 @@ jobs:
         run: |
           test -n "$GH_TOKEN" || { echo "::error::Add the ADMIN_GH_TOKEN secret first"; exit 1; }
           printf '%s\n' "$BACKUP_CERT" | openssl x509 -noout 2>/dev/null || { echo "::error::Add the KEYSTORE_BACKUP_CERT variable (a PEM certificate) first"; exit 1; }
+          printf '%s\n' "$BACKUP_CERT" | openssl x509 -noout -text | grep -q 'id-ecPublicKey' || { echo "::error::KEYSTORE_BACKUP_CERT must be an EC certificate, not RSA (see README, Android signing)"; exit 1; }
           # Fail closed: if the secrets can't be listed, never risk replacing a key.
           existing="$(gh secret list --env production)" || { echo "::error::Could not list the production secrets (check ADMIN_GH_TOKEN)"; exit 1; }
           if printf '%s\n' "$existing" | grep -q '^ANDROID_KEYSTORE_BASE64'; then

@@ -17,9 +17,12 @@ trap 'rm -rf "$work"' EXIT
 cd "$work"
 pass="$(openssl rand -base64 36 | tr -d '\n=+/')"
 [ -n "${GITHUB_ACTIONS:-}" ] && echo "::add-mask::$pass"
+# An EC (P-256) key, not RSA; the keystore and the key are protected by a
+# random password that exists only in the environment secrets and the backup.
 keytool -genkeypair -noprompt -keystore release.keystore -storetype PKCS12 -alias tracker \
-  -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=Tracker, O=Tracker" \
+  -keyalg EC -groupname secp256r1 -sigalg SHA256withECDSA -validity 10000 -dname "CN=Tracker, O=Tracker" \
   -storepass "$pass" -keypass "$pass" 2>/dev/null
+keytool -list -v -keystore release.keystore -storepass "$pass" | grep -q 'Signature algorithm name: SHA256withECDSA' || { echo "ERROR: the release key is not EC" >&2; exit 1; }
 sha="$(keytool -list -v -keystore release.keystore -storepass "$pass" | grep -m1 'SHA256:' | sed 's/.*SHA256: *//')"
 # Rotation proof: the old key vouches for the new one. The old key is public, so
 # it keeps only what an update needs and loses rollback, shared user id and
@@ -41,9 +44,9 @@ $GH variable set ANDROID_CERT_SHA256 --body "$sha"
 echo "Release certificate SHA-256: $sha"
 
 # Backup for the owner (secrets cannot be read back from GitHub), encrypted to
-# their certificate: there is no passphrase to guess.
+# their EC certificate; opening it needs the owner's password-protected private key.
 printf '%s\n' "$BACKUP_CERT" > owner.pem
-openssl x509 -in owner.pem -noout
+openssl x509 -in owner.pem -noout -text | grep -q 'id-ecPublicKey' || { echo "ERROR: the backup certificate must be EC (not RSA)" >&2; exit 1; }
 printf 'alias=tracker\npassword=%s\nsha256=%s\n' "$pass" "$sha" > key-info.txt
 tar -czf backup.tgz release.keystore lineage.bin key-info.txt
 openssl cms -encrypt -binary -aes256 -outform DER -in backup.tgz -out "$out" owner.pem
