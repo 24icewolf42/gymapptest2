@@ -166,16 +166,21 @@ export function promptDialog({ title, label, value = '', placeholder = '', maxLe
           if (error) { showError(error); return; }
           // submit(v) saves on the server and returns an error to show, or '' (the prompt stays open on an error).
           if (submit) {
+            // Saving: said in the status line, the field is read-only, and the
+            // ways to close are marked unavailable until the server answers.
             const label = button.textContent;
-            button.setAttribute('aria-disabled', 'true');
-            button.textContent = 'Saving…';
-            sheet.dataset.busy = '1';
-            sheet.setAttribute('aria-busy', 'true');
+            const closers = [...sheet.querySelectorAll('[data-sheet-close], [data-sheet-action]:not([type=submit])')];
+            const status = sheet.querySelector('.form-error');
+            const busy = (on) => {
+              if (on) sheet.dataset.busy = '1'; else delete sheet.dataset.busy;
+              [button, ...closers].forEach((b) => (on ? b.setAttribute('aria-disabled', 'true') : b.removeAttribute('aria-disabled')));
+              button.textContent = on ? 'Saving…' : label;
+              field.readOnly = on;
+              status.textContent = on ? 'Saving…' : '';
+            };
+            busy(true);
             const failed = await submit(v);
-            delete sheet.dataset.busy;
-            sheet.removeAttribute('aria-busy');
-            button.removeAttribute('aria-disabled');
-            button.textContent = label;
+            busy(false);
             if (failed) { showError(failed); return; }
           }
           finish(v);

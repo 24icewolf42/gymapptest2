@@ -269,10 +269,10 @@ async function restoreFrom(text) {
 }
 
 async function forgotPassword() {
-  const email = await promptDialog({ title: 'Reset password', label: 'Your account email', type: 'email', value: $('authForm')?.email.value || '', ok: 'Send email', maxLength: 120 });
+  // Each step waits for the server inside its own prompt ("Saving…"), so no
+  // answer arrives later and opens something while the user is elsewhere.
+  const email = await promptDialog({ title: 'Reset password', label: 'Your account email', type: 'email', value: $('authForm')?.email.value || '', ok: 'Send email', maxLength: 120, submit: resetPassword });
   if (!email) return;
-  const failed = await resetPassword(email);
-  if (failed) { toast(failed, { tone: 'error' }); return; }
   // The email has a link (opens the web app) and, if the project's email
   // template includes it, a code that works right here, e.g. in the Android app.
   const code = await promptDialog({
@@ -281,10 +281,9 @@ async function forgotPassword() {
     hint: 'Or tap the link in the email instead. It opens Tracker in your browser.',
     ok: 'Continue', maxLength: 10, type: 'text', input: { inputmode: 'numeric', autocomplete: 'one-time-code' },
     validate: (v) => (/^\d{6,10}$/.test(v) ? '' : 'Enter the code from the email.'),
+    submit: (v) => verifyRecoveryCode(email, v),
   });
   if (!code) return;
-  const r = await verifyRecoveryCode(email, code);
-  if (r) toast(r, { tone: 'error' });
   // On success the PASSWORD_RECOVERY event asks for the new password.
 }
 
@@ -367,7 +366,7 @@ export function initSettings() {
   });
   on(page, 'click', '[data-change-username]', async () => {
     const name = await promptDialog({ title: 'Change username', label: 'Username', value: account.profile?.username || '', maxLength: 20, hint: 'Friends find you by this exact name.', validate: (v) => (/^[a-z0-9_]{3,20}$/.test(v.toLowerCase()) ? '' : 'Use 3–20 letters, numbers or _.'), submit: changeUsername });
-    if (name) toast('Username changed.');
+    if (name) toast(`Username changed to @${name.toLowerCase()}.`);
   });
   // Busy controls stay focusable (aria-disabled); on() cancels the click that would toggle one.
   on(page, 'click', '[data-share-weight]', () => {});
@@ -470,7 +469,7 @@ export function initSettings() {
       validate: (v) => (/^[a-z0-9_]{3,20}$/.test(v.toLowerCase()) ? '' : 'Use 3–20 letters, numbers or _.'),
       submit: changeUsername, // a taken name keeps the prompt open with the reason
     });
-    if (name) toast('Username saved.');
+    if (name) toast(`Username saved: @${name.toLowerCase()}.`);
   });
   let askingPassword = false;
   listen('gym:password-recovery', async () => {

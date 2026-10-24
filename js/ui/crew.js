@@ -427,8 +427,9 @@ async function act(key, run, success) {
   if (currentPage() === 'crew') renderCrew();
   const r = await run();
   pending.delete(key);
-  if (r.error) toast(r.error, { tone: 'error' });
-  else if (success) toast(success);
+  // The answer comes later: it waits behind an Undo the user may have made meanwhile.
+  if (r.error) toast(r.error, { tone: 'error', background: true });
+  else if (success) toast(success, { background: true });
   if (currentPage() === 'crew') renderCrew();
   return !r.error;
 }
@@ -509,7 +510,7 @@ export function initCrew() {
     const ok = await act('add', async () => { const r = await social.sendFriendRequest(name); message = r.data; return r; });
     if (!ok) return;
     toast(message);
-    input.value = '';
+    if (input.value === name) input.value = ''; // not what the user has typed since
     refreshCrew();
   });
   on(page, 'click', '[data-accept]', async (e, b) => { if (await act(b.dataset.accept, () => social.acceptRequest(b.dataset.accept), 'You are now friends.')) refreshCrew(); });

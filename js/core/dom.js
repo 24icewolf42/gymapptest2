@@ -270,7 +270,7 @@ export function busyAttr(isBusy) {
 let toastTimer = null;
 let toastOrigin = null;
 let errorUntil = 0;
-let waiting = null; // a message held back while an Undo is on screen
+const waiting = []; // background messages held back while an Undo or an error is on screen
 const TOAST_RESUME_MS = 3000;
 /**
  * Short message. `action: { label, onClick }` adds a button (e.g. Undo).
@@ -289,11 +289,12 @@ export function toast(message, options = {}) {
   const alert = $('toastAlert');
   // A background message waits while an Undo is on screen; the user's own
   // next result replaces it (they have moved on).
-  if (!action && background && el.classList.contains('show') && el.classList.contains('has-action')) {
-    waiting = { message, options };
+  // A background message also waits while an error is still to be read; none is dropped.
+  const busy = el.classList.contains('show') && (el.classList.contains('has-action') || Date.now() < errorUntil);
+  if (!action && background && busy) {
+    if (!waiting.some((w) => w.message === message)) waiting.push({ message, options });
     return;
   }
-  if (background && tone !== 'error' && Date.now() < errorUntil) return;
   if (!background && tone !== 'error') errorUntil = 0; // the user moved on: their new result replaces the error
   if (el.contains(document.activeElement)) returnFocus(el); // replacing a toast the user is on
   const active = document.activeElement;
@@ -386,7 +387,8 @@ function hideToast(el) {
     el.replaceChildren();
     const alert = $('toastAlert');
     if (alert) alert.textContent = '';
-    if (waiting) { const w = waiting; waiting = null; toast(w.message, w.options); }
+    const w = waiting.shift();
+    if (w) toast(w.message, w.options);
   }, 250);
 }
 

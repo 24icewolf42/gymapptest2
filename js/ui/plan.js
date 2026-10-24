@@ -210,10 +210,10 @@ export function initPlan() {
     toast('Workout deleted.');
   });
   on(page, 'click', '[data-share]', async () => {
-    const title = await promptDialog({ title: 'Share with friends', label: 'Title your friends will see', value: editing, maxLength: 80, ok: 'Share', hint: 'Friends can copy this routine into their plan.' });
-    if (!title) return;
-    const r = await shareWorkout(title, list());
-    toast(r.error || 'Shared with your friends.', { tone: r.error ? 'error' : 'default' });
+    // Shared from inside the prompt: busy while it sends, once, with any error shown there.
+    const routine = list();
+    const title = await promptDialog({ title: 'Share with friends', label: 'Title your friends will see', value: editing, maxLength: 80, ok: 'Share', hint: 'Friends can copy this routine into their plan.', submit: async (t) => (await shareWorkout(t, routine)).error || '' });
+    if (title) toast('Shared with your friends.');
   });
   on(page, 'click', '[data-move]', (e, b) => {
     const { l, i, name } = exerciseOf(b), j = i + +b.dataset.move;
