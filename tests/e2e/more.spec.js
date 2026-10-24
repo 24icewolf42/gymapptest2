@@ -1061,21 +1061,69 @@ test('a routine with a long name keeps its finished workout after syncing and ca
   expect(errors.flat()).toEqual([]);
 });
 
-test('a saving prompt is sent once, can\'t be closed while saving, and says it is saving', async ({ page }) => {
+test('a saving prompt is sent once, can\'t be closed while saving, says so, and unlocks after a refusal', async ({ page }) => {
   await offline(page);
   await open(page);
   await page.evaluate(async () => {
     window.__calls = 0;
-    (await import('/js/ui/sheet.js')).promptDialog({ title: 'Name', label: 'Name', submit: () => { window.__calls++; return new Promise((r) => setTimeout(() => r(''), 1200)); } }).then((v) => { window.__result = v; });
+    window.__answers = ['That name is taken.', ''];
+    (await import('/js/ui/sheet.js')).promptDialog({ title: 'Name', label: 'Name', submit: () => { window.__calls++; const a = window.__answers.shift(); return new Promise((r) => setTimeout(() => r(a), 1500)); } }).then((v) => { window.__result = v; });
   });
-  await page.locator('.sheet-backdrop.open input[name=value]').fill('anna');
+  const sheet = page.locator('.sheet-backdrop.open');
+  const field = sheet.locator('input[name=value]');
+  await field.fill('anna');
   await page.keyboard.press('Enter');
   await page.keyboard.press('Enter');
-  await expect(page.locator('.sheet-backdrop.open [type=submit]')).toHaveText('Saving…');
+  const save = sheet.locator('[type=submit]');
+  await expect(save).toHaveText('Saving…');
+  await expect(sheet.locator('.form-error')).toHaveText('Saving…');
+  expect(await field.evaluate((f) => f.readOnly)).toBe(true);
+  await expect(sheet.getByRole('button', { name: 'Cancel' })).toHaveAttribute('aria-disabled', 'true');
+  // None of the ways to close works while saving.
   await page.keyboard.press('Escape');
-  await expect(page.locator('.sheet-backdrop.open')).toBeVisible();
-  await expect.poll(() => page.evaluate(() => window.__result)).toBe('anna');
+  await sheet.getByRole('button', { name: 'Cancel' }).dispatchEvent('click');
+  await sheet.locator('[data-sheet-close]').dispatchEvent('click');
+  await page.mouse.click(5, 5);
+  await page.goBack();
+  await expect(sheet).toBeVisible();
+  // The refusal: back to normal, with the reason, and it can be closed again.
+  await expect(sheet.locator('.form-error')).toHaveText('That name is taken.');
+  await expect(save).toHaveText('Save');
+  expect(await field.evaluate((f) => f.readOnly)).toBe(false);
   expect(await page.evaluate(() => window.__calls)).toBe(1);
+  await sheet.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.locator('.sheet-backdrop.open')).toHaveCount(0);
+});
+
+test('background messages are not lost behind an error or each other', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  const seen = [];
+  await page.exposeFunction('seen', (t) => seen.push(t));
+  await page.evaluate(() => { const t = document.getElementById('toast'); new MutationObserver(() => window.seen(t.textContent)).observe(t, { childList: true, subtree: true }); });
+  await page.evaluate(async () => {
+    const { toast } = await import('/js/core/dom.js');
+    toast('Sync failed.', { tone: 'error' });
+    toast('An update is ready.', { background: true });
+    toast('A friend is going to the gym.', { background: true });
+  });
+  await expect.poll(() => seen.includes('A friend is going to the gym.'), { timeout: 20000 }).toBe(true);
+  expect(seen).toContain('An update is ready.');
+});
+
+test('a slow friend request does not erase the next name being typed', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const { pa, errors } = await friendsPair(browser, 'fq');
+  const c = await makeUser(uniqueName('fqc'));
+  await pa.route('**/rest/v1/friend_requests*', async (r) => { if (r.request().method() === 'POST') await new Promise((res) => setTimeout(res, 1500)); return r.continue(); });
+  await tab(pa, 'crew');
+  await pa.locator('[data-crew-tab="friends"]').click();
+  await pa.locator('#friendName').fill(c.username);
+  await pa.keyboard.press('Enter');
+  await pa.locator('#friendName').fill('next_frie');
+  await expect(pa.locator('[data-cancel-request]')).toHaveCount(1, { timeout: 15000 });
+  await expect(pa.locator('#friendName')).toHaveValue('next_frie');
+  expect(errors.flat()).toEqual([]);
 });
 
 test('the update button is busy while it works, and a later check reports the waiting update', async ({ page }) => {
