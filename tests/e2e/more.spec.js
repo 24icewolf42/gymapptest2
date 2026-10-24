@@ -784,3 +784,35 @@ test('Crew "Try again" stays in place, then reports success', async ({ browser }
   errors[0].length = 0;
   expect(errors.flat()).toEqual([]);
 });
+
+test('an upgrading phone keeps names the account already has, and "|" stays in a routine name', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('upg'));
+  const routine = [{ name: 'Dips', cat: 'chest', sets: 2, target: '8', rest: 60, note: '' }];
+  // The original app already synced these names to the account.
+  await u.client.from('workout_plans').insert({ user_id: u.id, plan: { workouts: { 'Push <A>': routine, 'Legs | heavy': routine }, schedule: {} } });
+  await page.addInitScript((r) => {
+    if (localStorage.getItem('seeded')) return;
+    localStorage.setItem('seeded', '1');
+    localStorage.setItem('gymCustomWorkouts', JSON.stringify({ 'Push <A>': r, 'Legs | heavy': r }));
+  }, routine);
+  await open(page);
+  await signInAs(page, u);
+  const plan = (await u.client.from('workout_plans').select('plan').eq('user_id', u.id).single()).data.plan;
+  expect(Object.keys(plan.workouts).sort()).toEqual(['Legs | heavy', 'Push <A>']);
+});
+
+test('more than a URL\'s worth of gym dates still load', async ({ browser }) => {
+  const { makeUser, uniqueName, befriend } = await import('../integration/helpers.js');
+  const viewer = await makeUser(uniqueName('many'));
+  for (let h = 0; h < 4; h++) {
+    const host = await makeUser(uniqueName('mh' + h));
+    await befriend(viewer, host);
+    const rows = Array.from({ length: 20 }, (_, i) => ({ host_id: host.id, starts_at: new Date(Date.now() + (i + 1 + h * 0.1) * 3600000).toISOString(), gym: 'G' + h }));
+    expect((await host.client.from('gym_dates').insert(rows)).error).toBeNull();
+  }
+  const page = await (await newPhone(browser)).newPage();
+  await open(page); await signInAs(page, viewer);
+  await tab(page, 'crew');
+  await expect(page.locator('.date-card')).toHaveCount(80, { timeout: 20000 });
+});
