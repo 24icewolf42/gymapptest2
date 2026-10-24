@@ -3,7 +3,7 @@ import { $, html, render, on, toast, enableArrowKeys } from './core/dom.js';
 import { listen } from './core/store.js';
 import { registerPage, initNav, go, refresh, currentPage, TABS } from './core/router.js';
 import { loadState } from './state.js';
-import { initAccount, onAccountSwitch } from './cloud/sync.js';
+import { initAccount, onAccountSwitch, account, answeredElsewhere } from './cloud/sync.js';
 import { renderToday, initToday } from './ui/today.js';
 import { renderPlan, initPlan, onPlanUpdated, leavePlan } from './ui/plan.js';
 import { renderCalendar, initCalendar, onCalendarShown } from './ui/calendar.js';
@@ -85,28 +85,45 @@ window.addEventListener('storage', (e) => {
   loadState();
   paintActive();
   refresh();
+  // Another tab answered the account question: close it here too.
+  if (accountQuestion && answeredElsewhere(account.user)) accountQuestion('elsewhere');
 });
 
 // An account this phone's data did not come from signed in: nothing joins it
 // without asking, and the question names the account.
-onAccountSwitch(({ email, first }) => openSheet(first ? {
+let accountQuestion = null; // closes the open account question
+onAccountSwitch(({ email, first, deleted }) => openSheet(first ? {
   dismissible: false,
+  onMount: (sheet, finish) => { accountQuestion = finish; },
   title: 'Add this phone’s workouts to this account?',
   body: html`<p class="sheet-text">You are signed in as <b>${email}</b>. The workouts, plan and weigh-ins on this phone will be saved in that account. If you did not sign in yourself, sign out.</p>`,
   actions: [
     { label: 'Add them to this account', value: 'merge', tone: 'primary' },
     { label: 'Sign out', value: 'cancel', tone: 'ghost' },
   ],
+} : deleted ? {
+  dismissible: false,
+  onMount: (sheet, finish) => { accountQuestion = finish; },
+  title: 'Keep the workouts from the deleted account?',
+  body: html`<p class="sheet-text">You are signed in as <b>${email}</b>. This phone still has the workouts of an account that was deleted. Add them to this account, or start fresh (a backup file of them is kept in Settings).</p>`,
+  actions: [
+    { label: 'Add them to this account', value: 'merge', tone: 'primary' },
+    { label: 'Start fresh', value: 'replace', tone: 'secondary' },
+    { label: 'Cancel and sign out', value: 'cancel', tone: 'ghost' },
+  ],
 } : {
   dismissible: false,
+  onMount: (sheet, finish) => { accountQuestion = finish; },
   title: 'Someone else used this phone',
-  body: html`<p class="sheet-text">You are signed in as <b>${email}</b>, but this phone has workouts from another account. What should happen to them?</p>`,
+  body: html`<p class="sheet-text">You are signed in as <b>${email}</b>, but this phone has workouts from another account. Replace them with your account’s data (a backup file of them is kept in Settings), or add them to your account?</p>`,
   actions: [
-    { label: 'Replace with my account’s data', value: 'replace', tone: 'primary' },
+    { label: 'Replace with my account’s data', value: 'replace', tone: 'secondary' },
     { label: 'Add them to my account', value: 'merge', tone: 'secondary' },
     { label: 'Cancel and sign out', value: 'cancel', tone: 'ghost' },
   ],
 }).then((v) => {
+  accountQuestion = null;
+  if (v === 'elsewhere') return v;
   if (!v || v === 'cancel') toast('Signed out. Nothing from this phone was added to that account.');
   return v || 'cancel';
 }));

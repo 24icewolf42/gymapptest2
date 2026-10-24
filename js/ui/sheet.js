@@ -23,7 +23,7 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
     const backdrop = document.createElement('div');
     backdrop.className = 'sheet-backdrop';
     replaceContent(backdrop, html`
-      <form class="sheet ${className}" role="${dismissible ? 'dialog' : 'alertdialog'}" aria-modal="true" aria-labelledby="${id}" tabindex="-1" novalidate>
+      <form class="sheet ${className}" role="${dismissible ? 'dialog' : 'alertdialog'}" aria-modal="true" aria-labelledby="${id}"${dismissible ? '' : html` aria-describedby="${id}-body"`} tabindex="-1" novalidate>
         <div class="sheet-handle" aria-hidden="true"></div>
         <header class="sheet-head">
           <div>
@@ -32,7 +32,7 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
           </div>
           ${dismissible ? html`<button type="button" class="icon-btn" data-sheet-close aria-label="Close">${icons.x}</button>` : ''}
         </header>
-        <div class="sheet-body">${body}</div>
+        <div class="sheet-body" id="${id}-body">${body}</div>
         ${actions.length ? html`<div class="sheet-actions">${actions.map((a, i) => html`<button type="${a.submit ? 'submit' : 'button'}" class="btn btn-${a.tone || 'secondary'}" data-sheet-action="${i}">${a.label}</button>`)}</div>` : ''}
       </form>`);
     root.appendChild(backdrop);
@@ -41,19 +41,29 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
     const behind = [...document.querySelectorAll('#app, #bottomNav, #activeBar, #session, #sheetRoot > .sheet-backdrop')].filter((el) => el !== backdrop && !el.inert);
     behind.forEach((el) => { el.inert = true; });
     let done = false;
-    const previousFocus = document.activeElement;
-    const entry = { close: () => { if (dismissible) finish(null); } };
+    const entry = { close: () => { if (dismissible) finish(null); }, backdrop, behind, previousFocus: document.activeElement };
     open.push(entry);
 
     const finish = (value, fromBack) => {
       if (done) return;
       done = true;
-      open.splice(open.indexOf(entry), 1);
-      behind.forEach((el) => { el.inert = false; });
+      const at = open.indexOf(entry);
+      open.splice(at, 1);
       if (!fromBack) closeLayer();
       backdrop.classList.remove('open');
       backdrop.classList.add('closing');
       setTimeout(() => backdrop.remove(), 180);
+      const above = open[at];
+      if (above) {
+        // A sheet above this one is still open: it keeps the page inert and
+        // takes over where focus returns to; focus stays in it.
+        entry.behind.forEach((el) => { if (el !== above.backdrop && !above.behind.includes(el)) above.behind.push(el); });
+        if (!above.previousFocus?.isConnected || backdrop.contains(above.previousFocus)) above.previousFocus = entry.previousFocus;
+        resolve(value === undefined ? null : value);
+        return;
+      }
+      entry.behind.forEach((el) => { el.inert = false; });
+      const previousFocus = entry.previousFocus;
       // Back to where the user was; if that control is gone, to the page heading.
       if (previousFocus && previousFocus.isConnected && !previousFocus.closest('[inert]')) previousFocus.focus({ preventScroll: true });
       else {

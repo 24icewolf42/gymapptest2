@@ -177,10 +177,10 @@ function datesPanel() {
   if (!crew.dates || !crew.friendships) return loadingCard('Loading gym dates…');
   const hasFriends = crew.friendships.friends.length > 0;
   const groups = groupDates(crew.dates.dates);
-  const section = (title, list) => (list.length ? html`<h2 class="section-title">${title}</h2>${list.map(dateCard)}` : '');
+  const section = (title, list) => (list.length ? html`<h2 class="section-title" data-key="sec-${title}">${title}</h2>${list.map(dateCard)}` : '');
   const any = groups.live.length + groups.today.length + groups.tomorrow.length + groups.later.length;
   return html`
-    <section class="card quick-card">
+    <section class="card quick-card" data-key="quick">
       <div class="quick-head"><span class="big-icon small">${icons.bolt}</span><div><h2>Heading to the gym?</h2><p>Let your friends know so they can join.</p></div></div>
       <div class="chips wrap no-swipe">
         ${QUICK_STARTS.map((q) => html`<button type="button" class="chip chip-lg" data-quick="${q.minutes}">${q.label}</button>`)}
@@ -192,7 +192,7 @@ function datesPanel() {
     ${section('Today', groups.today)}
     ${section('Tomorrow', groups.tomorrow)}
     ${section('Coming up', groups.later)}
-    ${any ? '' : html`<div class="empty-inline"><p>No gym dates yet.</p><p class="muted">Post one and your friends can join you.</p></div>`}`;
+    ${any ? '' : html`<div class="empty-inline" data-key="no-dates"><p>No gym dates yet.</p><p class="muted">Post one and your friends can join you.</p></div>`}`;
 }
 
 function dateCard(d) {
@@ -250,23 +250,23 @@ function friendsPanel() {
       <div class="input-row"><span class="input-prefix" aria-hidden="true">@</span><input class="input" id="friendName" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="21" placeholder="username" enterkeyhint="send"><button class="btn btn-primary" type="submit"${busyAttr(pending.has('add'))}>Add</button></div>
       <p class="hint">Your username is <b>@${account.profile?.username || '…'}</b>. Share it with friends so they can add you.</p>
     </form>
-    ${f.incoming.length ? html`<h2 class="section-title">Requests</h2><div class="card list">${f.incoming.map((x) => html`
+    ${f.incoming.length ? html`<h2 class="section-title" data-key="req-title">Requests</h2><div class="card list" data-key="req-list">${f.incoming.map((x) => html`
       <div class="row row-request" data-key="req-${x.id}">${avatar(x.username)}<div class="row-main"><b>@${x.username}</b><small>wants to be friends</small></div>
         <button type="button" class="btn btn-primary btn-sm" data-accept="${x.id}"${busyAttr(pending.has(x.id))}>Accept</button>
         <button type="button" class="btn btn-ghost btn-sm" data-decline="${x.id}" data-user="${x.userId}" data-name="${x.username}"${busyAttr(pending.has(x.id))} aria-label="Decline request from ${x.username}">Decline</button></div>`)}</div>` : ''}
-    <h2 class="section-title">Friends ${f.friends.length ? html`<span class="muted">${f.friends.length}</span>` : ''}</h2>
-    ${f.friends.length ? html`<div class="card list">${f.friends.map((x) => html`
+    <h2 class="section-title" data-key="friends-title">Friends ${f.friends.length ? html`<span class="muted">${f.friends.length}</span>` : ''}</h2>
+    ${f.friends.length ? html`<div class="card list" data-key="friends-list">${f.friends.map((x) => html`
       <div class="row" data-key="friend-${x.id}">${avatar(x.username)}<div class="row-main"><b>@${x.username}</b></div>
         <button type="button" class="icon-btn" data-unfriend="${x.id}" data-user="${x.userId}" data-name="${x.username}"${busyAttr(pending.has(x.id))} aria-label="Remove or block ${x.username}">${icons.x}</button></div>`)}</div>`
-      : html`<div class="empty-inline"><p>No friends yet.</p><p class="muted">Add someone by their username above.</p></div>`}
-    ${f.outgoing.length ? html`<h2 class="section-title">Sent</h2><div class="card list">${f.outgoing.map((x) => html`
+      : html`<div class="empty-inline" data-key="no-friends"><p>No friends yet.</p><p class="muted">Add someone by their username above.</p></div>`}
+    ${f.outgoing.length ? html`<h2 class="section-title" data-key="sent-title">Sent</h2><div class="card list" data-key="sent-list">${f.outgoing.map((x) => html`
       <div class="row" data-key="out-${x.id}">${avatar(x.username)}<div class="row-main"><b>@${x.username}</b><small>waiting for an answer</small></div>
         <button type="button" class="btn btn-ghost btn-sm" data-cancel-request="${x.id}"${busyAttr(pending.has(x.id))} aria-label="Cancel request to ${x.username}">Cancel</button></div>`)}</div>` : ''}
-    <h2 class="section-title">Shared routines</h2>
-    ${!shared ? html`<p class="muted">Loading…</p>` : shared.error ? html`<p class="notice error">${shared.error} <button type="button" class="link-btn inline" data-retry>Try again</button></p>` : shared.length ? html`<div class="card list">${shared.map((x) => html`
+    <h2 class="section-title" data-key="shared-title">Shared routines</h2>
+    ${!shared ? html`<p class="muted" data-key="shared-loading">Loading…</p>` : shared.error ? html`<p class="notice error" data-key="shared-error">${shared.error} <button type="button" class="link-btn inline" data-retry>Try again</button></p>` : shared.length ? html`<div class="card list" data-key="shared-list">${shared.map((x) => html`
       <div class="row" data-key="shared-${x.id}"><div class="row-main"><b>${x.title}</b><small>${x.mine ? 'Shared by you' : '@' + (x.owner?.username || 'friend')} · ${workoutSummary(x.workout)}</small></div>
         ${x.mine ? html`<button type="button" class="btn btn-ghost btn-sm" data-unshare="${x.id}" aria-label="Stop sharing ${x.title}">Remove</button>` : html`<button type="button" class="btn btn-soft btn-sm" data-copy-shared="${x.id}" aria-label="Copy ${x.title} to my plan">${icons.copy} Copy</button>`}</div>`)}</div>`
-      : html`<p class="muted small">Routines you or your friends share from the Plan tab show up here.</p>`}`;
+      : html`<p class="muted small" data-key="shared-none">Routines you or your friends share from the Plan tab show up here.</p>`}`;
 }
 
 function timeText(seconds) {
@@ -292,8 +292,8 @@ function rankingPanel() {
     <section class="card">
       <h2>Your stats</h2>
       <p class="muted small">${published
-        ? 'Friends see your number of workouts, total kg × reps, training time, streak and how many routines you have. Update it after training.'
-        : 'Share your number of workouts, total kg × reps, training time, streak and how many routines you have with your friends. Your sets and workouts themselves stay private.'}</p>
+        ? 'Friends see your number of workouts, total kg × reps and training time, which update by themselves after each synced workout, plus your streak and how many routines you have (Update refreshes those).'
+        : 'Share your number of workouts, total kg × reps, training time, streak and how many routines you have with your friends. The totals then update after each synced workout, so friends can tell when you trained and for how long. Your sets stay private.'}</p>
       <div class="btn-row">
         <button type="button" class="btn btn-primary" data-publish${busyAttr(pending.has('publish'))}>${published ? 'Update my stats' : 'Share my stats'}</button>
         ${published ? html`<button type="button" class="btn btn-ghost" data-unpublish${busyAttr(pending.has('publish'))}>Stop sharing</button>` : ''}
@@ -398,7 +398,7 @@ function ensureRealtime() {
       const who = usernameOf(payload.new.host_id);
       const when = new Date(payload.new.starts_at);
       const day = relativeDay(when);
-      toast(`${who ? '@' + who : 'A friend'} is going to the gym ${/^(Today|Tomorrow)$/.test(day) ? day.toLowerCase() : 'on ' + day} at ${fmtTime(when)}`, { tone: 'accent', ms: 4500 });
+      toast(`${who ? '@' + who : 'A friend'} is going to the gym ${/^(Today|Tomorrow)$/.test(day) ? day.toLowerCase() : 'on ' + day} at ${fmtTime(when)}`, { tone: 'accent', ms: 4500, background: true });
     }
     clearTimeout(timer);
     timer = setTimeout(refreshCrew, 400);

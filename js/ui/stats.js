@@ -47,13 +47,13 @@ function liftCards() {
     const best = Math.max(...p.map((x) => x.w));
     const diff = p.length > 1 ? Math.round((p[p.length - 1].w - p[0].w) * 10) / 10 : 0;
     const shown = p.slice(-30);
-    return html`<section class="card lift">
+    return html`<section class="card lift" data-key="lift-${name}">
       <header class="card-head"><div><h3>${name}</h3><small class="${diff > 0 ? 'up' : ''}">${p.length === 1 ? 'First session' : diff > 0 ? '▲ +' + diff + ' kg since the first session' : diff < 0 ? '▼ ' + Math.abs(diff) + ' kg less than the first session' : 'Same as the first session'}</small></div>
         <div class="big-num sm">${best}<small> kg best</small></div></header>
       ${lineChart(shown, { best, label: name + ' progress' })}
       <p class="muted small">${p.length} ${p.length === 1 ? 'session' : 'sessions'}${shown.some((x) => x.w === best) ? ' · ring marks your best' : ` · best set on ${fmtShort(p.find((x) => x.w === best).date)}`}</p></section>`;
   })}
-  ${names.length > shown.length ? html`<button type="button" class="btn btn-ghost btn-block" data-all-lifts>Show all ${names.length} exercises</button>` : ''}`;
+  ${names.length > shown.length ? html`<button type="button" class="btn btn-ghost btn-block" data-all-lifts data-key="all-lifts">Show all ${names.length} exercises</button>` : ''}`;
 }
 
 export function renderStats() {
@@ -62,7 +62,7 @@ export function renderStats() {
       <button type="button" class="icon-btn" data-open-settings aria-label="Settings">${icons.settings}</button></header>
     ${tiles()}
     ${weightCard()}
-    <h2 class="section-title">Lifts</h2>
+    <h2 class="section-title" data-key="lifts-title">Lifts</h2>
     ${liftCards()}`);
 }
 

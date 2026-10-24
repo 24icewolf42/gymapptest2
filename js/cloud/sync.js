@@ -102,7 +102,8 @@ function resetAccountBookkeeping() {
 // decision to back up this phone's data in that account. Stored, so the app's
 // other open tabs (which hear about the sign-in too) don't ask again.
 const FORM_SIGN_IN_MS = 2 * 60 * 1000;
-const markFormSignIn = () => writeText(KEYS.formSignIn, String(Date.now()));
+let signedInHere = 0; // this tab's own form sign-in
+const markFormSignIn = () => { signedInHere = Date.now(); writeText(KEYS.formSignIn, String(signedInHere)); };
 
 async function startSession(user) {
   // Re-read: another tab may already have answered for this account.
@@ -112,10 +113,13 @@ async function startSession(user) {
     // Signed in some other way (e.g. a link): ask before the data goes to that account.
     const choice = await accountSwitchHandler({ email: user.email || '', first: true });
     if (account.user?.id !== user.id) return;
+    if (answeredElsewhere(user)) return finishStart(user);
     if (choice !== 'merge') { await endSession(); return; }
   } else if (owner && owner !== user.id && hasLocalData()) {
-    const choice = await accountSwitchHandler({ email: user.email || '', first: false });
+    const choice = await accountSwitchHandler({ email: user.email || '', first: false, deleted: String(owner).startsWith('deleted:') });
     if (account.user?.id !== user.id) return;
+    // Another tab answered the same question meanwhile: its answer stands.
+    if (answeredElsewhere(user)) return finishStart(user);
     if (choice === 'cancel') { await endSession(); return; }
     if (choice === 'replace') {
       // Keep a copy in case the other person had changes that never reached their account.
@@ -131,10 +135,20 @@ async function startSession(user) {
       // These weigh-ins are new to this account: a weigh-in it once deleted on
       // the same day must not drop them (a weigh-in it has there still counts).
       state.sync.mergedWeightDates = state.weights.map((x) => x.date);
+      state.sync.mergedSessions = Object.entries(state.logs).flatMap(([d, list]) => list.map((x) => sessionKey(d, x)));
     }
   } else if (owner && owner !== user.id) {
     resetAccountBookkeeping();
   }
+  return finishStart(user);
+}
+
+/** True when another tab of the app already settled this phone's data for this account. */
+export function answeredElsewhere(user) {
+  return (read(KEYS.sync, {}) || {}).accountId === user?.id;
+}
+
+async function finishStart(user) {
   state.sync.accountId = user.id;
   saveSync();
   account.ready = true;
@@ -157,9 +171,13 @@ async function loadProfile() {
   }
   account.profile = r.data || null;
   if (r.error) setStatus('Could not load your profile: ' + errorText(r.error), 'error');
-  // The requested username was taken at sign-up, so the account got a random one.
+  // The requested username was taken at sign-up, so the account got a random
+  // one. Asked once, in the tab where the user just signed in, never on a
+  // later start (the name can always be changed in Settings).
   const wanted = String(account.user.user_metadata?.username || '').toLowerCase();
-  if (account.profile && wanted && account.profile.username !== wanted && /^user_[0-9a-f]{8}$/.test(account.profile.username)) {
+  const justSignedIn = Date.now() - signedInHere < FORM_SIGN_IN_MS;
+  if (justSignedIn && readText(KEYS.usernameAsked) !== uid && account.profile && wanted && account.profile.username !== wanted && /^user_[0-9a-f]{8}$/.test(account.profile.username)) {
+    writeText(KEYS.usernameAsked, uid);
     emit('gym:username-taken', { wanted, given: account.profile.username });
   }
 }
@@ -272,11 +290,12 @@ const SYNC = {
       if (r.error) throw r.error;
       const remote = r.data || {};
       const has = (c) => columns.includes(c);
-      // Sessions brought back from a backup that were deleted in the account
-      // since: give them new ids, so the deletion doesn't remove them again.
-      // The id follows from the old one, so restoring twice gives one copy.
-      const restored = new Set(state.sync.restoredSessions || []);
-      const restoredDates = new Set(); // days cleared after a restored session (the original app's delete)
+      // Sessions brought back from a backup, or added from another account's
+      // phone, must not be removed by this account's deletions: a deleted key
+      // gets a new id (derived from the old one, so restoring twice gives one
+      // copy), and a session on a day cleared after it (the original app's
+      // delete) gets the current time, so both apps keep it.
+      const restored = new Set([...(state.sync.restoredSessions || []), ...(state.sync.mergedSessions || [])]);
       if (restored.size) {
         const gone = new Set(Array.isArray(remote.deleted_sessions) ? remote.deleted_sessions : []);
         const cleared = remote.deleted_dates || {};
@@ -286,12 +305,12 @@ const SYNC = {
             const k = sessionKey(d, x);
             if (!restored.has(k)) return x;
             const clearedAt = Number(cleared[d]) || Date.parse(cleared[d]) || 0;
-            if (clearedAt && clearedAt >= (Date.parse(x.time) || 0)) restoredDates.add(d);
-            if (!gone.has(k)) return x;
+            const hidden = clearedAt && clearedAt >= (Date.parse(x.time) || 0);
+            if (!gone.has(k) && !hidden) return x;
             let id = k;
             do { id = 'r' + hashOf(id).replace(':', ''); } while (gone.has(id));
             rekeyed = true;
-            return { ...x, id };
+            return { ...x, id, ...(hidden ? { time: new Date().toISOString() } : {}) };
           });
         });
         if (rekeyed) saveLogs({ silent: true });
@@ -300,8 +319,6 @@ const SYNC = {
       const deleted = [...new Set([...state.deletedSessions, ...(Array.isArray(remote.deleted_sessions) ? remote.deleted_sessions : [])])];
       const deletedDates = { ...(remote.deleted_dates || {}) };
       Object.keys(state.deletedDates).forEach((d) => { deletedDates[d] = Math.max(Number(deletedDates[d]) || Date.parse(deletedDates[d]) || 0, Number(state.deletedDates[d]) || 0); });
-      // Restoring is the user's decision: a cleared day no longer hides what the backup brought back.
-      restoredDates.forEach((d) => { delete deletedDates[d]; });
       const logs = mergeLogs(remote.logs || {}, state.logs, { deleted, deletedDates });
       const progress = mergeProgress(remote.progress, state.lastUsed);
       const bypass = mergeBypass(remote.bypass_days, state.bypassState);
@@ -320,7 +337,7 @@ const SYNC = {
       if (has('deleted_dates')) Object.assign(row, { deleted_dates: deletedDates, daily_summaries: dailySummaries(logs) });
       const changed = !r.data || Object.keys(row).some((k) => k !== 'updated_at' && k !== 'user_id' && !same(remote[k] ?? null, row[k]));
       if (!changed || await casWrite('workout_data', uid, r.data?.updated_at ?? null, row)) {
-        if (restored.size && !stale()) { state.sync.restoredSessions = []; saveSync(); }
+        if (restored.size && !stale()) { state.sync.restoredSessions = []; state.sync.mergedSessions = []; saveSync(); }
         return true;
       }
     }
@@ -360,8 +377,10 @@ const SYNC = {
     const changed = merged.filter((x) => x.date >= '1900-01-01' && x.date <= latest && (dirty.has(x.date) || remote.get(x.date) !== x.weight));
     const mergedIn = new Set(state.sync.mergedWeightDates || []);
     const fresh = (x) => dirty.has(x.date) || (mergedIn.has(x.date) && !remote.has(x.date));
-    // Server stamps of what was written; an entry missing here was refused (deleted elsewhere).
-    const saved = new Map();
+    // Server stamps of what was written; entries the server refused because
+    // they were deleted elsewhere go from the phone too; entries with a date
+    // the server doesn't accept (phone clock off) stay here.
+    const saved = new Map(), refused = new Set();
     let rpc = true;
     for (let i = 0; i < changed.length; i += WEIGHT_BATCH) {
       const batch = changed.slice(i, i + WEIGHT_BATCH);
@@ -373,7 +392,10 @@ const SYNC = {
         if (stale()) return false;
         if (!isMissingSchema(up.error)) {
           if (up.error) throw up.error;
-          (up.data || []).forEach((row) => saved.set(row.log_date, Date.parse(row.updated_at) || 0));
+          (up.data || []).forEach((row) => {
+            if (row.outcome === 'saved') saved.set(row.log_date, Date.parse(row.updated_at) || 0);
+            else if (row.outcome === 'deleted') refused.add(row.log_date);
+          });
           continue;
         }
         rpc = false; // older database: plain upsert
@@ -389,14 +411,17 @@ const SYNC = {
       const sent = new Map(changed.map((x) => [x.date, x]));
       const untouched = (x) => sent.has(x.date) && sent.get(x.date).weight === x.weight && sent.get(x.date).updatedAt === x.updatedAt;
       const current = new Map(state.weights.map((x) => [x.date, x]));
-      const settled = new Set(changed.filter((x) => !current.has(x.date) || untouched(current.get(x.date))).map((x) => x.date));
+      const answered = (d) => saved.has(d) || refused.has(d);
+      const settled = new Set(changed.filter((x) => answered(x.date) && (!current.has(x.date) || untouched(current.get(x.date)))).map((x) => x.date));
       state.weights = state.weights
-        .filter((x) => !untouched(x) || saved.has(x.date))
+        .filter((x) => !untouched(x) || !refused.has(x.date))
         .map((x) => (untouched(x) && saved.get(x.date) ? { ...x, updatedAt: saved.get(x.date) } : x));
       state.sync.dirtyWeightDates = state.sync.dirtyWeightDates.filter((d) => !settled.has(d));
       saveWeights({ silent: true });
     }
-    state.sync.syncedWeightDates = state.weights.filter((x) => !state.sync.dirtyWeightDates.includes(x.date)).map((x) => x.date);
+    // Synced means: in the cloud now. Only those can later be "deleted elsewhere".
+    const inCloud = new Set([...remote.keys(), ...saved.keys()]);
+    state.sync.syncedWeightDates = state.weights.filter((x) => inCloud.has(x.date) && !state.sync.dirtyWeightDates.includes(x.date)).map((x) => x.date);
     state.sync.mergedWeightDates = [];
     saveSync();
     return true;

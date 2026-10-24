@@ -1,4 +1,5 @@
 // Backup and restore of everything stored on this phone.
+import { isSafeImage } from './plan.js';
 
 // Earlier backups only had the first four keys, so routines and the weekly plan
 // were lost on restore. Restore still accepts that older format.
@@ -32,6 +33,7 @@ export function parseBackup(text) {
     if (k !== 'gymSidesFrom' && k !== 'gymRestImage') {
       try { JSON.parse(value); } catch { throw new Error('The backup is damaged (' + k + ').'); }
     }
+    if (k === 'gymRestImage' && !isSafeImage(value)) return; // only a picture, never markup
     out[k] = value;
   });
   return out;

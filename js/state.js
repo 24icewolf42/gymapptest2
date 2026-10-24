@@ -2,7 +2,7 @@
 // `state` and call the save functions; cloud sync listens for the events.
 import { KEYS, read, write, readText, writeText, remove, emit } from './core/store.js';
 import { ymd } from './core/dates.js';
-import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule, planHashes } from './domain/plan.js';
+import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule, planHashes, isSafeImage } from './domain/plan.js';
 import { sanitizeLogs, upgradeLastUsed, sessionKey, newSessionId, mergeProgress, normalizeBypass, activeBypass, streak, bestStreak } from './domain/logs.js';
 import { sanitizeWeights, upsertWeight } from './domain/weights.js';
 
@@ -103,7 +103,7 @@ export function setPlanTombstones(deleted, restored) {
 /** The plan in the shared cloud format, with per-item edit times. */
 export function localPlan() {
   const { deleted, restored } = planTombstones();
-  const img = readText(KEYS.restImage);
+  const img = isSafeImage(readText(KEYS.restImage)) ? readText(KEYS.restImage) : null;
   return {
     workouts: state.workouts,
     schedule: state.schedule,
@@ -130,7 +130,7 @@ export function applyPlan(plan) {
   state.schedule = plan.schedule;
   setPlanTombstones(plan.deletedWorkouts, plan.restoredWorkouts);
   write(KEYS.planTimes, plan.itemUpdatedAt || {});
-  if (plan.restImage) writeText(KEYS.restImage, plan.restImage); else remove(KEYS.restImage);
+  if (isSafeImage(plan.restImage)) writeText(KEYS.restImage, plan.restImage); else remove(KEYS.restImage);
   savePlan({ silent: true });
 }
 
@@ -246,7 +246,8 @@ const LOCAL_DATA_KEYS = [KEYS.logs, KEYS.lastUsed, KEYS.weights, KEYS.bypass, KE
   KEYS.switchBackup, KEYS.settings];
 
 export function hasLocalData() {
-  return Object.keys(state.logs).length > 0 || Object.keys(state.workouts).length > 0 || state.weights.length > 0;
+  return Object.keys(state.logs).length > 0 || Object.keys(state.workouts).length > 0 || state.weights.length > 0 ||
+    Object.keys(state.lastUsed).length > 0 || Object.keys(state.bypassState).length > 0 || !!readText(KEYS.restImage) || (read(KEYS.gyms, []) || []).length > 0;
 }
 
 /** Removes this phone's training data (used when another account signs in, or on request at sign-out). */
@@ -260,7 +261,8 @@ export function clearLocalData() {
 }
 
 export function restImage() {
-  return readText(KEYS.restImage) || 'rest.png';
+  const img = isSafeImage(readText(KEYS.restImage)) ? readText(KEYS.restImage) : null;
+  return isSafeImage(img) ? img : 'rest.png';
 }
 
 export function setRestImage(dataUrl) {

@@ -12,6 +12,7 @@ import { renameRunningWorkout } from './session.js';
 import { icons } from './icons.js';
 
 let editing = null; // routine name open in the editor
+let editorCopy = null; // what the editor last showed, to offer it back if the routine is deleted elsewhere
 let closeEditorLayer = null;
 let query = '';
 let group = 'All';
@@ -50,7 +51,7 @@ function exerciseRow(e, i, count) {
     </div>
     <div class="ex-edit-fields">
       <div class="field compact"><span>${e.unilateral ? 'Sets / side' : 'Sets'}</span>
-        <div class="stepper"><button type="button" data-sets="-1" aria-label="Fewer sets for ${e.name}">${icons.minus}</button><output aria-live="polite">${displaySets(e)}</output><button type="button" data-sets="1" aria-label="More sets for ${e.name}">${icons.plus}</button></div></div>
+        <div class="stepper"><button type="button" data-sets="-1" aria-label="Fewer sets for ${e.name}">${icons.minus}</button><output aria-live="off">${displaySets(e)}</output><button type="button" data-sets="1" aria-label="More sets for ${e.name}">${icons.plus}</button></div></div>
       <label class="field compact"><span>Reps</span><input class="input" data-field="target" value="${e.target}" maxlength="20" placeholder="${DEFAULT_TARGET}"></label>
       <label class="field compact"><span>Rest</span><select class="input" data-field="rest">${REST_OPTIONS.map((r) => html`<option value="${r}"${r === e.rest ? ' selected' : ''}>${r ? fmtClock(r) : 'None'}</option>`)}${REST_OPTIONS.includes(e.rest) ? '' : html`<option value="${e.rest}" selected>${fmtClock(e.rest)}</option>`}</select></label>
       <label class="toggle compact"><input type="checkbox" data-field="unilateral"${e.unilateral ? ' checked' : ''}><span>Left/right</span></label>
@@ -74,6 +75,7 @@ function searchResults(list) {
 
 function editorView() {
   const name = editing, list = state.workouts[name];
+  editorCopy = { name, list: JSON.parse(JSON.stringify(list)) };
   return html`
     <header class="top editor-top" data-view="editor-${name}">
       <button type="button" class="icon-btn" data-close-editor aria-label="Back to my plan">${icons.back}</button>
@@ -89,12 +91,26 @@ function editorView() {
         <input class="input" id="exSearch" type="search" value="${query}" placeholder="Search by name or muscle" autocomplete="off" enterkeyhint="search"></label>
       <div class="chips no-swipe group-filters" role="radiogroup" aria-label="Muscle group">${GROUP_FILTERS.map((g) => html`<button type="button" class="chip${g === group ? ' on' : ''}" role="radio" aria-checked="${g === group ? 'true' : 'false'}" tabindex="${g === group ? '0' : '-1'}" data-group="${g}">${g}</button>`)}</div>
       <div class="picks no-swipe" id="exResults">${searchResults(list)}</div>
-    </section>`;
+    </section>
+    <p class="sr-only" role="status" id="planStatus"></p>`;
 }
 
 export function renderPlan() {
   const page = $('page-plan');
-  if (editing && !Object.hasOwn(state.workouts, editing)) closeEditor();
+  if (editing && !Object.hasOwn(state.workouts, editing)) {
+    // Deleted on another device or tab: say so, keep focus on the plan, and offer it back.
+    const gone = editorCopy, hadFocus = page.contains(document.activeElement);
+    closeEditor();
+    render(page, weekView());
+    const h = page.querySelector('[data-key="mine"]');
+    if (hadFocus && h) { h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
+    if (gone) {
+      toast(`${gone.name} was deleted or renamed on another device or tab.`, {
+        action: { label: 'Keep it', onClick: () => { if (!Object.hasOwn(state.workouts, gone.name)) { state.workouts[gone.name] = gone.list; savePlan(); } } },
+      });
+    }
+    return;
+  }
   render(page, editing ? editorView() : weekView());
 }
 
@@ -121,6 +137,7 @@ function list() { return state.workouts[editing]; }
 /** The exercise a control belongs to, found by name (positions can change under a sync). */
 function exerciseOf(el) {
   const l = list();
+  if (editing && !l) setTimeout(renderPlan); // the routine went away meanwhile: tell the user
   const name = el.closest('[data-ex]')?.dataset.ex;
   return l && name ? { l, i: l.findIndex((x) => x.name === name), name } : { l: null, i: -1, name };
 }
@@ -216,6 +233,9 @@ export function initPlan() {
     const ex = l[i], step = ex.unilateral ? 2 : 1;
     ex.sets = Math.max(step, Math.min(MAX_SETS * step, ex.sets + +b.dataset.sets * step));
     savePlan();
+    // Announce only the change the user made (the counters themselves are silent).
+    const status = $('planStatus');
+    if (status) status.textContent = `${ex.name}: ${displaySets(ex)} ${ex.unilateral ? 'sets per side' : 'sets'}`;
   });
   on(page, 'change', '[data-field]', (e, input) => {
     const { l, i } = exerciseOf(input);

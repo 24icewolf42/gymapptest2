@@ -104,7 +104,17 @@ export function initToday() {
   on(page, 'click', '[data-preview]', (e, b) => openDay(b.dataset.preview));
   on(page, 'click', '[data-go]', (e, b) => go(b.dataset.go));
   on(page, 'click', '[data-go-crew]', () => go('crew'));
-  on(page, 'click', '[data-more]', () => { upcomingDays += 14; renderToday(); });
+  on(page, 'click', '[data-more]', () => {
+    const first = ymd(addDays(new Date(), upcomingDays + 1));
+    upcomingDays += 14;
+    renderToday();
+    // The last press removes the button: continue at the first day it added.
+    if (page.querySelector('[data-more]')) return;
+    for (let li = page.querySelector(`[data-key="up-${first}"]`); li; li = li.nextElementSibling) {
+      const b = li.querySelector('button');
+      if (b) { b.focus({ preventScroll: true }); return; }
+    }
+  });
   on(page, 'click', '[data-log-any]', async () => {
     const name = await pickWorkout(ymd());
     if (name) openSession(name, ymd(), { fresh: true });

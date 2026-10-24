@@ -1,8 +1,8 @@
 // Settings: account, privacy, training options, rest-day image, backup, about.
 import { $, html, render, on, toast, busyAttr } from '../core/dom.js';
-import { listen, readText, KEYS } from '../core/store.js';
+import { listen, readText, write, KEYS } from '../core/store.js';
 import { pushLayer, go, currentPage } from '../core/router.js';
-import { state, saveSettings, restImage, setRestImage, loadState } from '../state.js';
+import { state, saveSettings, restImage, setRestImage, loadState, planTombstones, setPlanTombstones } from '../state.js';
 import { makeBackup, parseBackup, BACKUP_KEYS } from '../domain/backup.js';
 import { sessionKey } from '../domain/logs.js';
 import { cloudConfigured } from '../cloud/client.js';
@@ -61,7 +61,7 @@ const PRIVACY = html`
     <li>Your username.</li>
     <li>Gym dates you post for them.</li>
     <li>When you reply to a gym date or check in there: the host and every friend of yours who can see that date see your answer and check-in by name. People who are not your friends only see a count.</li>
-    <li>Stats, only if you share them: number of workouts, total kg × reps, training time, current and best streak, and how many routines and exercises your plan has.</li>
+    <li>Stats, only if you share them: number of workouts, total kg × reps, training time, current and best streak, and how many routines and exercises your plan has. The totals update after each synced workout, so friends can tell when you trained and for how long.</li>
     <li>Routines you choose to share (they can copy them).</li>
     <li>Your latest weight, only if you turn that on. Never your weight history.</li>
   </ul>
@@ -102,7 +102,7 @@ function accountCard() {
   return html`<section class="card">
     <header class="card-head"><div><h2>@${p?.username || '…'}</h2><small class="muted">${account.user.email}</small></div>
       <button type="button" class="btn btn-soft btn-sm" data-change-username aria-label="Change username">Change</button></header>
-    <p class="status ${account.statusTone}" role="status">${account.status}</p>
+    <p class="status ${account.statusTone}">${account.status}</p>
     <div class="btn-row">
       <button type="button" class="btn btn-soft" data-sync>Sync now</button>
       <button type="button" class="btn btn-ghost" data-signout${busyAttr(signingOut)}>${signingOut ? 'Syncing…' : 'Sign out'}</button>
@@ -166,7 +166,7 @@ function setAuthError(message) {
 }
 
 export function renderSettings() {
-  const accountKey = document.activeElement?.closest?.('#page-settings [data-key^="account-"]')?.dataset.key;
+  const accountKey = document.activeElement?.closest?.('#page-settings [data-key^="account-"], #page-settings [data-key="danger"]')?.dataset.key;
   render($('page-settings'), html`
     <header class="top editor-top" data-view="settings">
       <button type="button" class="icon-btn" data-close-settings aria-label="Back">${icons.back}</button>
@@ -249,6 +249,12 @@ async function restoreFrom(text) {
   state.sync.restoredSessions = Object.entries(state.logs).flatMap(([d, list]) => list.map((x) => sessionKey(d, x)));
   state.sync.dirtyWeightDates = state.weights.map((x) => x.date);
   localStorage.setItem(KEYS.sync, JSON.stringify(state.sync));
+  // The backup's routines and week count as changed now, so they win over
+  // deletions and edits made in the account since.
+  const now = Date.now(), names = Object.keys(state.workouts);
+  write(KEYS.planTimes, { workouts: Object.fromEntries(names.map((n) => [n, now])), schedule: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [d, now])), restImage: now });
+  const { deleted, restored } = planTombstones();
+  setPlanTombstones(deleted.filter((n) => !names.includes(n)), [...new Set([...restored, ...names])]);
   toast('Backup restored.');
   setTimeout(() => location.reload(), 600);
 }
@@ -300,7 +306,11 @@ export function initSettings() {
     renderSettings();
   });
   on(page, 'click', '[data-forgot]', forgotPassword);
-  on(page, 'click', '[data-sync]', () => syncAll());
+  // Background syncs update the status quietly; a sync the user asked for reports its result.
+  on(page, 'click', '[data-sync]', async () => {
+    const ok = await syncAll();
+    toast(ok ? 'Synced.' : account.status || 'Sync failed.', { tone: ok ? 'default' : 'error' });
+  });
   on(page, 'click', '[data-signout]', async () => {
     const choice = await openSheet({
       title: 'Sign out?',

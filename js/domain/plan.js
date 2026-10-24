@@ -34,9 +34,16 @@ function clampInt(value, min, max, fallback) {
   return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
 }
 
+// Markup characters are removed from every name and note: the original app
+// (still in use on some phones) puts them into the page unescaped.
+export const plain = (s) => s.replace(/[<>"`]/g, '');
+
 function text(value, max) {
-  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+  return typeof value === 'string' ? plain(value).trim().slice(0, max) : '';
 }
+
+/** A rest-day picture as this app stores it (a resized photo); anything else is dropped. */
+export const isSafeImage = (v) => typeof v === 'string' && v.length < 2000000 && /^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/]+=*$/.test(v);
 
 /**
  * Validates one exercise. Data can come from other people (shared routines) or
@@ -95,8 +102,9 @@ export function sanitizeSchedule(schedule, workouts) {
   const out = emptySchedule();
   if (!schedule || typeof schedule !== 'object') return out;
   for (let i = 0; i < 7; i++) {
-    const name = schedule[i];
-    out[i] = typeof name === 'string' && workouts[name] ? name : null;
+    // Names are cleaned the same way as routine names, so a day keeps its routine.
+    const name = typeof schedule[i] === 'string' ? sanitizeWorkoutName(schedule[i]) : null;
+    out[i] = name && workouts[name] ? name : null;
   }
   return out;
 }
@@ -157,7 +165,7 @@ export function planItems(plan) {
   plan = plan || {};
   const workouts = sanitizeWorkouts(plan.workouts);
   const deleted = new Set(listOf(plan, 'deletedWorkouts').filter((n) => !listOf(plan, 'restoredWorkouts').includes(n)));
-  const items = { workouts: {}, schedule: {}, restImage: typeof plan.restImage === 'string' && plan.restImage ? plan.restImage : null };
+  const items = { workouts: {}, schedule: {}, restImage: isSafeImage(plan.restImage) ? plan.restImage : null };
   Object.keys(workouts).forEach((n) => { if (!deleted.has(n)) items.workouts[n] = workouts[n]; });
   deleted.forEach((n) => { items.workouts[n] = null; });
   for (let i = 0; i < 7; i++) {

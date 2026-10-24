@@ -53,6 +53,10 @@ describe('project', () => {
     expect(readFileSync('tools/build-apk.sh', 'utf8')).toContain("connect-src 'self' https://api.github.com");
   });
 
+  it('gives installed copies a new cache whenever a cached file changes', () => {
+    expect(() => execFileSync('node', ['tools/sw-hash.mjs', '--check'], { stdio: 'pipe' })).not.toThrow();
+  });
+
   it('keeps supabase/schema.sql generated from the migrations', () => {
     expect(() => execFileSync('node', ['tools/build-schema.mjs', '--check'], { stdio: 'pipe' })).not.toThrow();
   });

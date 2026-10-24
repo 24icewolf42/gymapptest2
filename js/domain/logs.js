@@ -2,6 +2,10 @@
 // Pure functions, no DOM or storage.
 import { mondayIndex, addDays, ymd } from '../core/dates.js';
 
+// Markup characters are removed from names and values: the original app puts
+// them into the page unescaped.
+const plain = (s) => s.replace(/[<>"`]/g, '');
+
 /**
  * Identity of a logged session, shared with the original app so deletions
  * sync between both versions: the session id, or date|workout|time for
@@ -52,16 +56,17 @@ export function canonicalLogDate(raw, session) {
 
 function cleanSet(s) {
   if (!s || typeof s !== 'object') return null;
-  return { w: String(s.w ?? '').slice(0, 12), r: String(s.r ?? '').slice(0, 12), done: !!s.done };
+  return { w: plain(String(s.w ?? '')).slice(0, 12), r: plain(String(s.r ?? '')).slice(0, 12), done: !!s.done };
 }
 
 function cleanSession(s) {
   if (!s || typeof s !== 'object' || typeof s.day !== 'string' || !s.day) return null;
   const exercises = (Array.isArray(s.exercises) ? s.exercises : [])
     .filter((e) => e && typeof e.name === 'string')
-    .map((e) => ({ name: e.name.slice(0, 80), target: String(e.target ?? '').slice(0, 20), sets: (Array.isArray(e.sets) ? e.sets : []).map(cleanSet).filter(Boolean) }));
-  const out = { day: s.day.slice(0, 40), exercises, time: typeof s.time === 'string' ? s.time : '' };
-  if (typeof s.id === 'string' && s.id) out.id = s.id.slice(0, 64);
+    .map((e) => ({ name: plain(e.name).slice(0, 80), target: plain(String(e.target ?? '')).slice(0, 20), sets: (Array.isArray(e.sets) ? e.sets : []).map(cleanSet).filter(Boolean) }));
+  const out = { day: plain(s.day).slice(0, 40), exercises, time: typeof s.time === 'string' ? s.time : '' };
+  // Ids are short, except the original app's key for a session without id and time (date|day|JSON).
+  if (typeof s.id === 'string' && s.id) out.id = s.id.slice(0, s.id.includes('|') ? 20000 : 64);
   if (Number.isFinite(+s.duration) && +s.duration >= 0) out.duration = Math.round(+s.duration);
   return out;
 }

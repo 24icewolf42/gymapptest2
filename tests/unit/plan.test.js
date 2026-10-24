@@ -17,8 +17,9 @@ describe('sanitizeExercise', () => {
     expect(sanitizeExercise({ name: 'Curl', sets: 4, sides: 'both' }).unilateral).toBe(true);
   });
 
-  it('keeps markup as plain text (escaping happens at render time)', () => {
-    expect(sanitizeExercise({ name: '<img src=x onerror=alert(1)>' }).name).toBe('<img src=x onerror=alert(1)>');
+  it('removes markup characters, which the original app would run as code', () => {
+    expect(sanitizeExercise({ name: '<img src=x onerror="alert(1)">', note: 'grip `wide`' })).toMatchObject({ name: 'img src=x onerror=alert(1)', note: 'grip wide' });
+    expect(sanitizeExercise({ name: "Farmer's walk" }).name).toBe("Farmer's walk");
   });
 });
 

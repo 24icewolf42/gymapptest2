@@ -101,9 +101,13 @@ export function render(el, content) {
     if (selection) { try { active.setSelectionRange(...selection); } catch { /* not a text field */ } }
     return;
   }
-  const target = keys.map((k) => el.querySelector(`[data-key="${CSS.escape(k)}"]`)).find(Boolean);
-  const control = target && (target.matches(focusable) || target.getAttribute('tabindex') === '-1' ? target : target.querySelector(focusable));
-  if (control) { control.focus({ preventScroll: true }); return; }
+  for (const k of keys) {
+    const target = el.querySelector(`[data-key="${CSS.escape(k)}"]`);
+    if (!target) continue;
+    if (/^H[1-6]$/.test(target.tagName)) { focusHeading(target.parentElement, `[data-key="${CSS.escape(k)}"]`); return; }
+    const control = target.matches(focusable) || target.getAttribute('tabindex') === '-1' ? target : target.querySelector(focusable);
+    if (control) { control.focus({ preventScroll: true }); return; }
+  }
   // Then the heading of the closest section that is still there, then the page heading.
   const scope = ancestors.find((n) => n.isConnected && el.contains(n) && n.querySelector('h2, h3'));
   if (!scope || !focusHeading(scope, 'h2, h3')) focusHeading(el);
@@ -138,6 +142,8 @@ function morphChildren(from, to) {
       if (match && !sameKind(match, next)) match = null;
     } else if (cursor && !keyOf(cursor) && sameKind(cursor, next)) {
       match = cursor;
+    } else if (cursor && !keyOf(cursor)) {
+      match = unkeyedAhead(cursor, next);
     }
     if (match) {
       // Moving an element blurs it, so remove what stands in front of it
@@ -156,6 +162,27 @@ function morphChildren(from, to) {
     }
   });
   while (cursor) { const n = cursor.nextSibling; cursor.remove(); cursor = n; }
+}
+
+// An unkeyed element was removed in front of the one wanted next: find that
+// one a few elements further on, unless the current one is itself wanted a
+// little later (then something was inserted instead, and nothing matches).
+const LOOKAHEAD = 6;
+const signature = (n) => (n.nodeType === 1 ? n.tagName + '|' + (n.getAttribute('type') || '') + '|' + (n.getAttribute('class') || '') : null);
+function unkeyedAhead(cursor, next) {
+  if (next.nodeType !== 1 || cursor.nodeType !== 1) return null;
+  const want = signature(next), have = signature(cursor);
+  const ahead = (start, limit) => {
+    const out = [];
+    for (let n = start; n && out.length < limit; n = n.nextSibling) {
+      if (n.nodeType !== 1) continue;
+      if (keyOf(n)) break;
+      out.push(n);
+    }
+    return out;
+  };
+  if (ahead(next.nextSibling, LOOKAHEAD).some((n) => signature(n) === have)) return null;
+  return ahead(cursor.nextSibling, LOOKAHEAD).find((n) => signature(n) === want) || null;
 }
 
 function isAfter(node, ref) {
@@ -222,11 +249,13 @@ const TOAST_RESUME_MS = 3000;
  * Short message. `action: { label, onClick }` adds a button (e.g. Undo).
  * Errors stay longer and are announced assertively (through a separate alert
  * region). A message never replaces an Undo on screen (it waits until the
- * Undo is gone), and a routine message right after an error does not replace
- * it. The toast stays while it has focus or the pointer.
+ * Undo is gone), and a background message right after an error does not
+ * replace it. The toast stays while it has focus or the pointer.
  */
 export function toast(message, options = {}) {
-  const { tone = 'default', ms = 2600, action = null } = options;
+  // background: not caused by the user (e.g. a friend's gym date); such a
+  // message never pushes aside an error the user still has to read.
+  const { tone = 'default', ms = 2600, action = null, background = false } = options;
   const el = $('toast');
   if (!el) return;
   wireToast(el);
@@ -236,7 +265,8 @@ export function toast(message, options = {}) {
     waiting = { message, options };
     return;
   }
-  if (!action && tone !== 'error' && Date.now() < errorUntil) return;
+  if (background && tone !== 'error' && Date.now() < errorUntil) return;
+  if (!background && tone !== 'error') errorUntil = 0; // the user moved on: their new result replaces the error
   if (el.contains(document.activeElement)) returnFocus(el); // replacing a toast the user is on
   const active = document.activeElement;
   if (active && active !== document.body && !el.contains(active)) toastOrigin = active;
@@ -246,6 +276,7 @@ export function toast(message, options = {}) {
     b.type = 'button';
     b.className = 'toast-action';
     b.textContent = action.label;
+    b.setAttribute('aria-keyshortcuts', 'Control+Z Meta+Z');
     b.onclick = () => { hideToast(el); action.onClick(); };
     el.append(' ', b);
   }
@@ -259,7 +290,24 @@ export function toast(message, options = {}) {
   el.classList.add('show');
   const duration = tone === 'error' ? Math.max(ms, 6000) : action ? Math.max(ms, 10000) : ms;
   if (tone === 'error') errorUntil = Date.now() + duration;
-  scheduleHide(el, duration);
+  // Someone using the keyboard may need longer to reach Undo: it stays until
+  // used, dismissed with Escape, or replaced (Ctrl/Cmd+Z also runs it).
+  if (action && usingKeyboard) clearTimeout(toastTimer);
+  else scheduleHide(el, duration);
+}
+
+let usingKeyboard = false;
+if (typeof document !== 'undefined') {
+  document.addEventListener('pointerdown', () => { usingKeyboard = false; }, true);
+  document.addEventListener('keydown', (e) => {
+    if (['Tab', 'Enter', ' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) usingKeyboard = true;
+    const el = $('toast');
+    const undo = el && el.classList.contains('show') ? el.querySelector('.toast-action') : null;
+    if (!undo) return;
+    const typing = e.target.closest?.('input:not([type=checkbox]):not([type=radio]), textarea, select, [contenteditable]');
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !typing) { e.preventDefault(); undo.click(); }
+    else if (e.key === 'Escape' && !e.defaultPrevented) hideToast(el);
+  });
 }
 
 function scheduleHide(el, ms) {

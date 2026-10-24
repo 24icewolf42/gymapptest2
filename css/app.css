@@ -489,6 +489,7 @@ body.has-active:not(.session-open) .toast { bottom: calc(var(--nav-h) + 86px + v
 .toast[data-tone="accent"] { background: var(--accent); color: var(--accent-ink); }
 .toast[data-tone="error"] { background: #ffd5d0; color: #4a0d07; }
 body.session-open .toast { bottom: calc(96px + var(--safe-b)); }
+body.session-open:has(#restBar:not([hidden])) .toast { bottom: calc(172px + var(--safe-b)); }
 
 /* ---------- sheets ---------- */
 .sheet-backdrop { position: fixed; inset: 0; z-index: 70; display: flex; align-items: flex-end; justify-content: center; background: rgba(0, 0, 0, 0); transition: background .18s; }
