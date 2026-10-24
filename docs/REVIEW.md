@@ -50,6 +50,22 @@ All findings are fixed in code. What remains for the app's owner is configuratio
 
 After the rework, three independent Opus reviews (security/privacy, data correctness, UX/accessibility/tests) rated the branch and listed findings. Every critical, major and minor finding and every nit was fixed and re-reviewed.
 
+### Round 8 (security 8.5/10, correctness 7/10, UX/tests 6.5/10)
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| MA-1 | Major | A "|" in a routine name became "/", duplicating routines in the original app | Names keep "|"; draft keys are handled by prefix |
+| MA-2 | Major | Defusing rewrote the user's own names on restore and on every upgrade's first sign-in | Backups and joining data only defuse "<" before a letter (the original app puts names into page text, never attributes); data joining an account is defused only for routines, workouts and lifts the account does not have yet, so an upgrading phone keeps its names; test |
+| S8-01 | Minor | Someone else's data on a shared phone joined an account without defusing | As above: what is new to the account is defused; test |
+| S8-02 | Minor | Shared routines were checked for markup but not shape | Database refuses entries that are not exercises or have absurd set counts; existing bad shares are removed; test |
+| S8-03 | Minor | Renaming revealed which usernames exist, without limit | Renames go through change_username(), which shares the 30-an-hour lookup budget; other updates keep the username silently; test |
+| UX-M1 | Major | The floating update banner covered every screen's header | No banner: updates are offered in Settings and announced once; test |
+| UX-M2, n-3 | Major/Nit | The other tab asked again after two minutes | The signing tab announces itself until its session starts; a failed sign-in clears it |
+| UX-M3 | Major | Restoring one's own backup still duplicated routines with quotes | Quotes are no longer changed (see MA-2) |
+| mi-1 | Minor | More than ~200 visible gym dates made the list fail (URL too long) | Detail queries go in chunks; test with 80 dates |
+| UX-m1..m5 | Minor | Focus moved to the same action for the next person, stale retry error, prompts undescribed, calendar tab stop, untested claims | The fallback skips same-action and destructive controls and goes to the section; Accept names the person; retries report only what they loaded and return focus to the section; prompt fields are described by their hint; the calendar remembers the last-visited day; tests for each |
+| n-1, n-2, S8-N1, S8-N2, UX nits | Nit | Own shares beyond the newest 50, a superseded account start, client-set share dates, take-back message, banner wording, focus after retry, .btn-danger | Own shares always load; a start superseded by another sign-in restarts for it; shares are dated by the server; the message mentions friends may have seen it; handled as above |
+
 ### Round 7 (security 8/10, correctness 7/10, UX/tests 6.5/10)
 
 | ID | Severity | Finding | Fix |
