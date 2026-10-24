@@ -5,7 +5,8 @@ A gym tracker that works offline on your phone, plus friends, a leaderboard and
 time in the next 60 days), and friends can say they're coming and check in once
 they're there.
 
-- Web app: https://roguelineageaccmanager.github.io/gymapptest2/
+- Web app (works on iPhone and iPad): https://roguelineageaccmanager.github.io/gymapptest2/
+- iPhone/iPad: in Safari, tap **Share → Add to Home Screen** to install Tracker. It opens like an app and works offline after its first load.
 - Android app: built by GitHub Actions and published as the `latest` release
 
 ## What's where
@@ -23,7 +24,7 @@ they're there.
 | `supabase/migrations/` | Database changes, in order. `supabase/schema.sql` is generated from them. |
 | `tools/build-apk.sh` | Wraps the web app as an Android app (Capacitor) |
 
-The app has **no build step**. Edit a file, reload, done. npm is only needed for tests.
+The app has **no build step**. Edit a file, reload, done. npm is only needed for tests. The iPhone/iPad version is the installable web app; it does not require an App Store listing.
 
 ## Data and privacy
 
