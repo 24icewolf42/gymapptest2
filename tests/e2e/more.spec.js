@@ -56,6 +56,7 @@ test('declines, cancels and unblocks', async ({ browser }) => {
   await pa.locator('[data-crew-tab="friends"]').click();
   await pa.locator('[data-decline]').click();
   await sheetAction(pa, 'Decline and block');
+  await expect(pa.locator('#toast')).toContainText('is blocked.'); // saved in the background
   await b.client.from('friend_requests').insert({ requester_id: b.id, target_id: a.id, status: 'pending' });
   expect((await b.client.from('friend_requests').select('id').eq('target_id', a.id)).data).toEqual([]);
   await pa.locator('.page.active [data-open-settings]').click();
@@ -354,7 +355,7 @@ test('removing the data at sign-out works offline with an expired session', asyn
   await page.locator('[data-signout]').click();
   await sheetAction(page, 'Sign out and remove my data');
   await sheetAction(page, 'Remove anyway');
-  await expect(page.locator('#authForm')).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('#authForm')).toBeVisible({ timeout: 8000 });
   expect(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('sb-')))).toEqual([]);
   await context.setOffline(false);
   await page.reload();
@@ -1463,6 +1464,15 @@ test('signing out waits inside its sheet, and "Not synced yet" is asked from the
   await sheetAction(page, 'Stay signed in');
   await expect(page.locator('.sheet-backdrop.open')).toHaveCount(0);
   await expect(page.locator('#toast')).toContainText('still signed in');
+  // The second step ("keep data here") waits in the sheet too.
+  await page.locator('[data-signout]').click();
+  await sheetAction(page, 'Sign out and remove my data');
+  await expect(page.locator('.sheet-backdrop.open .sheet').last()).toContainText('Not synced yet', { timeout: 30000 });
+  await page.route('**/auth/v1/logout*', async (r) => { await new Promise((res) => setTimeout(res, 1500)); return r.continue(); });
+  await sheetAction(page, 'Sign out, keep data here');
+  await expect(first.locator('.form-status')).toHaveText('Signing out…');
+  await expect(first.getByRole('button', { name: 'Cancel' })).toHaveAttribute('aria-disabled', 'true');
+  await expect(page.locator('#toast')).toContainText('Your data stays on this phone', { timeout: 30000 });
 });
 
 test('a failed "Sign out on all devices" says so', async ({ page }) => {
@@ -1511,7 +1521,41 @@ test('an APK that needs a reinstall shows the steps in Settings, not over the pa
   await expect(page.locator('.update-notice ol li')).toHaveCount(3);
 });
 
-test('an Undo toast never blocks the dialog under it, and a tap does not keep it forever', async ({ page }) => {
+test('a slow APK install answers behind an Undo; in Settings the steps take focus before the button', async ({ page }) => {
+  await offline(page);
+  await page.addInitScript(() => {
+    window.Capacitor = {
+      isNativePlatform: () => true,
+      Plugins: {
+        App: { getInfo: async () => ({ version: '3.0.0', build: '1' }), addListener: () => {} },
+        ApkUpdater: { install: () => new Promise((res, rej) => setTimeout(() => rej(Object.assign(new Error('mismatch'), { code: 'SIGNATURE_MISMATCH' })), 1500)) },
+      },
+    };
+    const real = window.fetch;
+    window.fetch = (url, opts) => (String(url).startsWith('https://api.github.com/')
+      ? Promise.resolve(new Response(JSON.stringify({ name: 'Tracker v3.0.1 (build 2)' }), { headers: { 'Content-Type': 'application/json' } }))
+      : real(url, opts));
+  });
+  await open(page);
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.locator('[data-check-update]').click();
+  await page.locator('[data-apply-update]').click();
+  await fakeUndo(page);
+  await expect(page.locator('.update-notice ol li')).toHaveCount(3, { timeout: 5000 });
+  await page.waitForTimeout(300);
+  await expect(page.locator('#toast .toast-action')).toBeFocused();
+  // Second run: the user stays on the button, so focus moves to the steps.
+  await page.reload();
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.locator('[data-check-update]').click();
+  await page.locator('[data-apply-update]').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.update-notice b')).toBeFocused({ timeout: 5000 });
+  const order = await page.locator('.update-notice').evaluate((n) => [...n.children].map((c) => c.tagName));
+  expect(order).toEqual(['B', 'P', 'OL', 'BUTTON']);
+});
+
+test('an Undo toast is hidden under a dialog and comes back after it, and a tap does not keep it forever', async ({ page }) => {
   await offline(page);
   await open(page);
   await createWorkout(page, 'Upper', ['Pull-up', 'Dips', 'Plank']);
@@ -1521,10 +1565,20 @@ test('an Undo toast never blocks the dialog under it, and a tap does not keep it
   const t = await page.locator('#toast').boundingBox();
   await page.touchscreen.tap(t.x + 8, t.y + t.height / 2);
   await expect(page.locator('#toast.show')).toHaveCount(0, { timeout: 14000 });
+  // While a dialog is open the toast is not drawn over its buttons, and its time stands still.
   await page.locator('[data-ex="Plank"] [data-remove]').click();
   await page.locator('[data-delete]').click();
   const del = page.locator('.sheet-backdrop.open').getByRole('button', { name: 'Delete', exact: true });
   await expect(del).toBeVisible();
+  await expect(page.locator('#toast')).toBeHidden();
+  await page.waitForTimeout(11000);
+  await sheetAction(page, 'Cancel');
+  await expect(page.locator('#toast .toast-action')).toBeVisible();
+  await page.locator('#toast .toast-action').click();
+  await expect(page.locator('[data-ex="Plank"]')).toHaveCount(1);
+  // The dialog's own button takes a tap at its centre.
+  await page.locator('[data-ex="Plank"] [data-remove]').click();
+  await page.locator('[data-delete]').click();
   await page.waitForTimeout(300);
   const b = await del.boundingBox();
   await page.touchscreen.tap(b.x + b.width / 2, b.y + b.height / 2);
@@ -1546,6 +1600,7 @@ test('Share and the username wait inside their prompts and say what they do', as
   await expect(sheet.locator('[type=submit]')).toHaveText('Sharing…');
   await expect(sheet.locator('[data-sheet-close]')).toHaveAttribute('aria-disabled', 'true');
   await expect(sheet.locator('.form-status')).toHaveCSS('color', 'rgb(160, 168, 177)');
+  await expect(sheet.locator('.form-status')).toHaveAttribute('aria-live', 'polite');
   await expect(page.locator('.sheet-backdrop.open')).toHaveCount(0, { timeout: 10000 });
   await expect(page.locator('#toast')).toContainText('Shared with your friends');
   await page.locator('[data-close-editor]').click();
@@ -1554,6 +1609,21 @@ test('Share and the username wait inside their prompts and say what they do', as
   const name = uniqueName('nn').slice(0, 20);
   await fillPrompt(page, name);
   await expect(page.locator('#toast')).toContainText(`Username changed to @${name.toLowerCase()}.`);
+  // Change password: a refusal stays in the prompt; then it is saved, as typed.
+  let refuse = true;
+  await page.route('**/auth/v1/user*', (r) => {
+    if (r.request().method() === 'PUT' && refuse) { refuse = false; return r.fulfill({ status: 422, contentType: 'application/json', body: JSON.stringify({ code: 422, error_code: 'weak_password', msg: 'Password is too weak.' }) }); }
+    return r.continue();
+  });
+  await page.locator('[data-change-password]').click();
+  const pw = page.locator('.sheet-backdrop.open .sheet');
+  await pw.locator('input[name=value]').fill(' another pass 9 ');
+  await sheetAction(page, 'Save password');
+  await expect(pw.locator('.form-error')).toContainText('too weak');
+  await sheetAction(page, 'Save password');
+  await expect(page.locator('#toast')).toContainText('Password changed');
+  const { anonClient } = await import('../integration/helpers.js');
+  expect((await anonClient().auth.signInWithPassword({ email: u.email, password: ' another pass 9 ' })).error).toBeNull();
 });
 
 test('reset password: each step waits in its prompt, refusals stay there, and the new password is kept as typed', async ({ page }) => {
@@ -1578,8 +1648,10 @@ test('reset password: each step waits in its prompt, refusals stay there, and th
   await sheetAction(page, 'Send email');
   await expect(sheet.locator('h2')).toHaveText('Check your email', { timeout: 10000 });
   // A wrong code stays in its prompt.
+  await page.route('**/auth/v1/verify*', async (r) => { await new Promise((res) => setTimeout(res, 800)); return r.continue(); });
   await sheet.locator('input[name=value]').fill('000000');
   await sheetAction(page, 'Continue');
+  await expect(sheet.locator('.form-status')).toHaveText('Checking…');
   await expect(sheet.locator('.form-error')).not.toBeEmpty({ timeout: 10000 });
   await expect(sheet.locator('h2')).toHaveText('Check your email');
   const link = await adminClient().auth.admin.generateLink({ type: 'recovery', email: u.email });
@@ -1769,4 +1841,147 @@ test('a friend request is never sent from an account that signed in after it was
   await page.waitForTimeout(3000);
   const rows = (await adminClient().from('friend_requests').select('requester_id,target_id').in('target_id', [t1.id, t2.id])).data;
   expect(rows).toEqual([]);
+});
+
+// ---- round 13, usability ----
+
+const fakeUndo = (page) => page.evaluate(async () => {
+  window.__undone = 0;
+  (await import('/js/core/dom.js')).toast('Plank removed.', { action: { label: 'Undo', onClick: () => { window.__undone++; } } });
+  document.querySelector('#toast .toast-action').focus();
+});
+
+test('late answers to sign-in, a manual update check and an APK install wait behind an Undo', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  // Sign-in.
+  const u = await makeUser(uniqueName('lsi'));
+  let page = await (await newPhone(browser)).newPage();
+  await open(page);
+  await page.route('**/auth/v1/token*', async (r) => { await new Promise((res) => setTimeout(res, 1500)); return r.continue(); });
+  await page.locator('.page.active [data-open-settings]').click();
+  const form = page.locator('#authForm');
+  await form.locator('[name=email]').fill(u.email);
+  await form.locator('[name=password]').fill(u.password);
+  await form.locator('[type=submit]').click();
+  await fakeUndo(page);
+  await expect(page.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 15000 });
+  await expect(page.locator('#toast .toast-action')).toBeFocused();
+  // Manual web update check.
+  page = await (await newPhone(browser)).newPage();
+  await page.route('**/cloud-config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: 'window.GYM_CLOUD_CONFIG = {};' }));
+  let asked = false;
+  await page.route('**/Version*', async (r) => { if (asked) await new Promise((res) => setTimeout(res, 1500)); return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ version: asked ? '9.9.9' : '0.0.1' }) }); });
+  await open(page);
+  await page.locator('.page.active [data-open-settings]').click();
+  asked = true;
+  await page.locator('[data-check-update]').click();
+  await fakeUndo(page);
+  await expect(page.locator('[data-apply-update]')).toBeVisible({ timeout: 5000 });
+  await page.waitForTimeout(300);
+  await expect(page.locator('#toast .toast-action')).toBeFocused();
+  await expect(page.locator('#toast')).toContainText('Plank removed');
+});
+
+test('a queued friend request waits behind an Undo, and a double tap asks only once', async ({ browser }) => {
+  const { makeUser, uniqueName, adminClient } = await import('../integration/helpers.js');
+  const { pa, a, errors } = await friendsPair(browser, 'qf');
+  const b = await makeUser(uniqueName('qfb')), c = await makeUser(uniqueName('qfc'));
+  await createWorkout(pa, 'Upper', ['Pull-up', 'Dips', 'Plank']);
+  await pa.route('**/rest/v1/friend_requests*', async (r) => { if (r.request().method() === 'POST') await new Promise((res) => setTimeout(res, 2000)); return r.continue(); });
+  await tab(pa, 'crew');
+  await pa.locator('[data-crew-tab="friends"]').click();
+  await pa.locator('#friendName').fill(b.username);
+  await pa.locator('#addFriendForm [type=submit]').click();
+  await pa.locator('#addFriendForm [type=submit]').click({ force: true }); // a double tap
+  await expect(pa.locator('#toast')).toContainText('already on its way');
+  await pa.locator('#friendName').fill(c.username);
+  await pa.keyboard.press('Enter');
+  await removeDipsAndFocusUndo(pa);
+  await pa.waitForTimeout(5500); // both answers are in
+  await expect(pa.locator('#toast .toast-action')).toBeFocused();
+  await pa.keyboard.press('Control+z');
+  await expect(pa.locator('[data-ex="Dips"]')).toHaveCount(1);
+  const rows = (await adminClient().from('friend_requests').select('target_id').eq('requester_id', a.id).in('target_id', [b.id, c.id])).data;
+  expect(rows.length).toBe(2);
+  expect(errors.flat()).toEqual([]);
+});
+
+test('"Not now" on the new password says where to set it later', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await page.evaluate(async () => (await import('/js/core/store.js')).emit('gym:password-recovery'));
+  const sheet = page.locator('.sheet-backdrop.open .sheet');
+  await expect(sheet.locator('h2')).toHaveText('Choose a new password');
+  await page.mouse.click(5, 5);
+  await expect(sheet).toBeFocused();
+  await sheetAction(page, 'Not now');
+  await expect(page.locator('#toast')).toContainText('“Change password” in Settings');
+});
+
+test('dragging near the edge scrolls the page; holding a grip still does not', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await createWorkout(page, 'Long', ['Pull-up', 'Dips', 'Plank', 'Push-up', 'Leg Press', 'Seated Cable Row', 'Bulgarian Split Squat', 'Concentration Curl', 'Barbell Bench Press']);
+  await page.locator('[data-edit="Long"]').click();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const vh = page.viewportSize().height;
+  // Still: a press near the bottom edge, held, moves nothing.
+  const rows = page.locator('[data-ex] [data-drag]');
+  // Put a grip inside the auto-scroll band at the bottom, just above the tab bar.
+  const at = await rows.nth(4).evaluate((el, h) => { const y = el.getBoundingClientRect().top + window.scrollY; window.scrollTo(0, y - (h - 118)); return window.scrollY; }, vh);
+  const grip = await rows.nth(4).boundingBox();
+  expect(grip.y + grip.height / 2).toBeGreaterThan(vh - 130);
+  expect(await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('[data-drag]'), [grip.x + grip.width / 2, grip.y + grip.height / 2])).toBe(true);
+  const order = () => page.evaluate(() => JSON.parse(localStorage.getItem('gymCustomWorkouts')).Long.map((e) => e.name));
+  const before = await order();
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+  await page.mouse.down();
+
+  await page.waitForTimeout(800);
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.scrollY)).toBe(at);
+  expect(await order()).toEqual(before);
+  // A drag into the bottom band scrolls.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const first = await rows.first().boundingBox();
+  await page.mouse.move(first.x + first.width / 2, first.y + first.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(first.x + first.width / 2, vh - 40, { steps: 10 });
+  await page.waitForTimeout(600);
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await page.mouse.up();
+});
+
+test('Crew "Try again" during a running load reports the new load', async ({ browser }) => {
+  const { pa } = await friendsPair(browser, 'cr2');
+  let fail = true;
+  await pa.route('**/rest/v1/gym_dates*', async (r) => {
+    if (r.request().method() !== 'GET') return r.continue();
+    if (fail) { await new Promise((res) => setTimeout(res, 1200)); return r.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"down"}' }); }
+    return r.continue();
+  });
+  await tab(pa, 'crew');
+  await expect(pa.locator('[data-retry]').first()).toBeVisible({ timeout: 10000 });
+  await pa.locator('[data-crew-tab="friends"]').click();
+  await pa.locator('[data-crew-tab="dates"]').click(); // starts a load that will fail
+  await pa.waitForTimeout(200);
+  fail = false;
+  await pa.locator('[data-retry]').first().click();
+  await expect(pa.locator('#toast')).toContainText('Loaded', { timeout: 10000 });
+  await expect(pa.locator('[data-retry]')).toHaveCount(0);
+});
+
+test('signing out on a hanging connection does not hold the user for long', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('sh2'));
+  const page = await (await newPhone(browser)).newPage();
+  await open(page); await signInAs(page, u);
+  await createWorkout(page, 'Offline', ['Plank']);
+  await page.route('**/rest/v1/**', () => new Promise(() => {})); // never answers
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.locator('[data-signout]').click();
+  const t0 = Date.now();
+  await sheetAction(page, 'Sign out, keep data here');
+  await expect(page.locator('#authForm')).toBeVisible({ timeout: 15000 });
+  expect(Date.now() - t0).toBeLessThan(12000);
 });
