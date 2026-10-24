@@ -390,6 +390,7 @@ describe('hardening', () => {
   it('refuses shared routines that are not shaped like routines, and dates them by the server', async () => {
     const a = await makeUser(uniqueName('shp'));
     expect((await a.client.from('shared_workouts').insert({ owner_id: a.id, title: 'X', workout: [null] })).error).not.toBeNull();
+    expect((await a.client.from('shared_workouts').insert({ owner_id: a.id, title: 'X', workout: [[]] })).error).not.toBeNull();
     expect((await a.client.from('shared_workouts').insert({ owner_id: a.id, title: 'X', workout: [{ name: 'Dips', sets: 100000000 }] })).error).not.toBeNull();
     const r = await a.client.from('shared_workouts').insert({ owner_id: a.id, title: 'X', workout: [{ name: 'Dips', sets: 3 }], created_at: '2099-01-01T00:00:00Z' }).select('created_at').single();
     expect(r.error).toBeNull();
