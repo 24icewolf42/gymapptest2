@@ -1,9 +1,9 @@
 // Calendar: every month from the first log to six months ahead, with streak.
 import { $, html, render, on, toast, reducedMotion } from '../core/dom.js';
 import { ymd, parseYmd, fmtLong, mondayIndex, MONTHS, DOW_LETTER, fmtDuration, fmtClock } from '../core/dates.js';
-import { state, setBypass, deleteSession, restoreSession, saveLogs } from '../state.js';
+import { state, setBypass, deleteSession, restoreSession, saveLogs, markSessionsDeleted } from '../state.js';
 import { account } from '../cloud/sync.js';
-import { streak, sessionKey } from '../domain/logs.js';
+import { streak, sessionKey, newSessionId } from '../domain/logs.js';
 import { categoryLabel } from '../domain/catalog.js';
 import { displaySets } from '../domain/plan.js';
 import { entrySummary } from '../domain/nutrition.js';
@@ -121,11 +121,23 @@ export async function openDay(ds) {
             if (!res || !session) return;
             const nutrition = { ...(session.nutrition || {}) };
             if (res.entry) nutrition[side] = res.entry; else delete nutrition[side];
-            // A newer save time, so this copy wins the merge on every device.
-            const next = { ...session, time: new Date().toISOString() };
+            // A newer save time, so this copy wins the merge on every device (also
+            // against a stored time from a phone whose clock runs ahead). A workout
+            // saved before ids existed is known by its time: it gets an id, and its
+            // old identity is marked deleted, as when it is edited in full.
+            const time = new Date(Math.max(Date.now(), (Date.parse(session.time) || 0) + 1)).toISOString();
+            const next = { ...session, id: session.id || newSessionId(), time };
+            const oldKey = sessionKey(ds, session);
             if (Object.keys(nutrition).length) next.nutrition = nutrition; else delete next.nutrition;
             state.logs[ds] = state.logs[ds].map((x) => (x === session ? next : x));
             if (!saveLogs()) { state.logs[ds] = state.logs[ds].map((x) => (x === next ? session : x)); toast('This phone’s storage is full, so it was not saved.', { tone: 'error' }); return; }
+            if (oldKey !== next.id) {
+              markSessionsDeleted([oldKey]);
+              // The sheet's buttons for this workout follow its new identity.
+              b.closest('.log-session').querySelectorAll('[data-food-log], [data-edit], [data-del]').forEach((x) => {
+                ['foodLog', 'edit', 'del'].forEach((k) => { if (x.dataset[k] === oldKey) x.dataset[k] = next.id; });
+              });
+            }
             b.closest('.log-food').querySelector(`[data-food-text="${side}"]`).textContent = entrySummary(next.nutrition?.[side], side) || 'Not logged';
             b.textContent = next.nutrition?.[side] ? 'Edit' : 'Add';
             b.setAttribute('aria-label', foodLabel(side, next.nutrition?.[side]));
