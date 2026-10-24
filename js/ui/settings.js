@@ -16,6 +16,7 @@ import { icons } from './icons.js';
 import { APP_VERSION } from '../version.js';
 import { PRESETS, sanitizeTheme, themeColors } from '../domain/theme.js';
 import { applyTheme, currentTheme } from './theme.js';
+import { isIOS } from '../core/platform.js';
 import { updateOffer } from '../native.js';
 
 const MIN_AGE = 14;
@@ -248,8 +249,15 @@ function backupText() {
   return makeBackup((k) => localStorage.getItem(k), APP_VERSION);
 }
 
-function download(text, name) {
+async function download(text, name) {
   const blob = new Blob([text], { type: 'application/json' });
+  // iPhone and iPad (especially from the home screen) don't save downloads
+  // reliably: the share sheet offers "Save to Files" instead.
+  const file = typeof File === 'function' ? new File([blob], name, { type: 'application/json' }) : null;
+  if (isIOS() && file && navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); } catch (e) { if (e?.name !== 'AbortError') toast('Sharing the file did not work. Use “Copy” instead.', { tone: 'error' }); }
+    return;
+  }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = name;
