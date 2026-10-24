@@ -8,7 +8,7 @@ import { sessionKey } from '../domain/logs.js';
 import { cloudConfigured } from '../cloud/client.js';
 import {
   account, signIn, signUp, resetPassword, verifyRecoveryCode, updatePassword, signOut, changeUsername, setShareWeight,
-  deleteAccount, syncAll, stopSyncs,
+  deleteAccount, syncAll, stopSyncs, signOutFinishing,
 } from '../cloud/sync.js';
 import { loadBlocks, unblock } from '../cloud/social.js';
 import { openSheet, confirmDialog, promptDialog, markBusy } from './sheet.js';
@@ -96,7 +96,7 @@ function accountCard() {
         <p class="hint">Friends find you by your exact username. Don’t use your real full name.</p>
         <label class="check-row consent"><input type="checkbox" name="consent"> <span>I am ${MIN_AGE} or older, or a parent or guardian agreed, and I have read the <button type="button" class="link-btn inline" data-privacy>privacy notice</button>.</span></label>` : ''}
       <p class="form-error" aria-live="polite">${authError}</p>
-      <button class="btn btn-primary btn-block" type="submit"${busyAttr(busy)}>${busy ? 'Please wait…' : signup ? 'Create account' : 'Sign in'}</button>
+      <button class="btn btn-primary btn-block" type="submit"${busyAttr(busy)}>${busy ? (signOutFinishing() ? 'Finishing the last sign-out…' : 'Please wait…') : signup ? 'Create account' : 'Sign in'}</button>
       ${signup ? '' : html`<button type="button" class="link-btn" data-forgot>Forgot password?</button>`}
       </div>
     </form>`;
@@ -351,7 +351,7 @@ export function initSettings() {
     let done = markBusy(sheet, button, 'Syncing…');
     try {
       const r = await signOut({ removeLocalData: choice === 'remove', everywhere: choice === 'everywhere' });
-      if (r !== 'not-synced') { finish(r === 'everywhere-failed' ? r : r === 'unsynced' ? 'out-unsynced' : 'out'); return; }
+      if (r !== 'not-synced') { finish(r === 'everywhere-failed' ? r : r === 'unsynced' ? 'out-unsynced' : choice === 'everywhere' ? 'out-everywhere' : 'out'); return; }
       done(); done = null;
       const next = await openSheet({
         title: 'Not synced yet',
@@ -385,13 +385,14 @@ export function initSettings() {
     });
     const messages = {
       out: 'Signed out.',
+      'out-everywhere': 'Signed out here and on all your other devices.',
       'out-unsynced': 'Signed out. Your latest changes had not reached your account yet (no connection?); they stay on this phone.',
       removed: 'Signed out and removed from this phone.',
       kept: 'Signed out. Your data stays on this phone.',
       stayed: 'You are still signed in. Nothing was removed.',
     };
     if (result === 'everywhere-failed') toast('Signed out here, but your other devices could not be signed out (no connection?). Try again online, or change your password.', { tone: 'error' });
-    else if (messages[result]) toast(messages[result]);
+    else if (messages[result]) toast(messages[result], { ms: result === 'out-unsynced' ? 7000 : 2600 });
   });
   on(page, 'click', '[data-change-password]', async () => {
     const pw = await promptDialog({ title: 'Change password', label: 'New password', type: 'password', maxLength: 72, ok: 'Save password', input: { autocomplete: 'new-password' }, trim: false, validate: (v) => (v.length >= 8 ? '' : 'Use at least 8 characters.'), submit: updatePassword });

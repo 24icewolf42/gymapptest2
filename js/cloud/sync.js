@@ -666,6 +666,11 @@ export async function signOut({ removeLocalData = false, force = false, everywhe
 // counts too: it is marked in storage while it runs.
 let ending = null;
 const SIGNING_OUT_MS = 60000;
+/** True while a sign-out (in this or another tab) is still finishing. */
+export function signOutFinishing() {
+  const since = Number(localStorage.getItem(KEYS.signingOut) || 0);
+  return !!ending || (!!since && Date.now() - since < SIGNING_OUT_MS);
+}
 async function afterEnding() {
   if (ending) await ending;
   for (let t = Date.now(); Date.now() - t < SIGNING_OUT_MS; ) {
@@ -695,7 +700,7 @@ async function endSession(everywhere = false) {
   ending = tracked;
   const r = await Promise.race([
     out,
-    new Promise((res) => { setTimeout(() => res({ error: new Error('timeout') }), everywhere ? 20000 : 4000); }),
+    new Promise((res) => { setTimeout(() => res({ error: new Error('timeout') }), everywhere ? 10000 : 4000); }),
   ]);
   if (!r?.error) return true;
   const key = supabase.auth.storageKey;
