@@ -32,10 +32,15 @@ test.beforeAll(async () => {
 /** Waits until the WebView has written localStorage to disk (it does so shortly after a change). */
 async function waitForStorageFlush(sinceSeconds) {
   const dir = 'app_webview/Default/Local\\ Storage/leveldb';
+  // Size and time of the newest log file: written after the change, then unchanged
+  // for two seconds (a save can take several writes).
+  const state = async () => String(await device.shell(`run-as ${PKG} sh -c 'stat -c "%Y %s" ${dir}/*.log 2>/dev/null | sort -n | tail -1'`)).trim();
+  let last = '', stableSince = 0;
   await expect.poll(async () => {
-    const out = await device.shell(`run-as ${PKG} sh -c 'stat -c %Y ${dir}/*.log 2>/dev/null | sort -n | tail -1'`);
-    return Number(String(out).trim()) || 0;
-  }, { timeout: 15000, message: 'WebView storage was not written to disk' }).toBeGreaterThanOrEqual(sinceSeconds);
+    const now = await state();
+    if (now !== last) { last = now; stableSince = Date.now(); }
+    return (Number(now.split(' ')[0]) || 0) >= sinceSeconds && Date.now() - stableSince >= 2000;
+  }, { timeout: 20000, intervals: [500], message: 'WebView storage was not written to disk' }).toBe(true);
 }
 
 test.afterAll(async () => { await device?.close(); });

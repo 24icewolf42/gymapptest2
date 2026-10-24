@@ -775,10 +775,10 @@ test('an update found while Settings is open appears there, and a second check s
   await page.locator('.page.active [data-open-settings]').click();
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('gym:check-update', { detail: { manual: false } })));
   await expect(page.locator('[data-apply-update]')).toBeVisible();
-  await expect(page.locator('#toast')).toContainText('is below');
+  await expect(page.locator('#toast')).toContainText('just above');
   await expect(page.locator('#toast.show')).toHaveCount(0, { timeout: 10000 });
   await page.locator('[data-check-update]').click();
-  await expect(page.locator('#toast.show')).toContainText('is below');
+  await expect(page.locator('#toast.show')).toContainText('just above');
 });
 
 test('Crew "Try again" stays in place, then reports success', async ({ browser }) => {
@@ -1058,5 +1058,122 @@ test('a routine with a long name keeps its finished workout after syncing and ca
   await pa.locator('.sheet-backdrop.open .date-sheet [name=gym]').fill('Long Gym');
   await pa.locator('.sheet-backdrop.open .date-sheet [type=submit]').click();
   await expect(pa.locator('.date-card', { hasText: 'Long Gym' })).toBeVisible({ timeout: 15000 });
+  expect(errors.flat()).toEqual([]);
+});
+
+test('a saving prompt is sent once, can\'t be closed while saving, and says it is saving', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await page.evaluate(async () => {
+    window.__calls = 0;
+    (await import('/js/ui/sheet.js')).promptDialog({ title: 'Name', label: 'Name', submit: () => { window.__calls++; return new Promise((r) => setTimeout(() => r(''), 1200)); } }).then((v) => { window.__result = v; });
+  });
+  await page.locator('.sheet-backdrop.open input[name=value]').fill('anna');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.sheet-backdrop.open [type=submit]')).toHaveText('Saving…');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.sheet-backdrop.open')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__result)).toBe('anna');
+  expect(await page.evaluate(() => window.__calls)).toBe(1);
+});
+
+test('the update button is busy while it works, and a later check reports the waiting update', async ({ page }) => {
+  await offline(page);
+  let version = '9.9.9';
+  await page.route('**/Version*', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ version }) }));
+  await open(page);
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('gym:check-update', { detail: { manual: false } })));
+  await expect(page.locator('[data-apply-update]')).toBeVisible();
+  await page.evaluate(async () => {
+    window.__applied = 0;
+    (await import('/js/native.js')).updateOffer().apply = () => { window.__applied++; return new Promise((r) => setTimeout(r, 1500)); };
+  });
+  await page.locator('[data-apply-update]').click();
+  await expect(page.locator('[data-apply-update]')).toHaveAttribute('aria-disabled', 'true');
+  await page.locator('[data-apply-update]').click({ force: true }); // a second tap while busy
+  await expect(page.locator('[data-apply-update]')).not.toHaveAttribute('aria-disabled', 'true', { timeout: 5000 });
+  expect(await page.evaluate(() => window.__applied)).toBe(1);
+  // The server now reports no newer version, but the found update still waits: a check says so.
+  version = '0.0.1';
+  await expect(page.locator('#toast.show')).toHaveCount(0, { timeout: 10000 });
+  await page.locator('[data-check-update]').click();
+  await expect(page.locator('#toast.show')).toContainText('just above');
+});
+
+test('a slow retry that succeeds leaves focus where the user moved to', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('rsm'));
+  const page = await (await newPhone(browser)).newPage(); // the refused request is the point here
+  let fail = true;
+  await page.route('**/rest/v1/rpc/my_blocks*', async (r) => {
+    if (fail) return r.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"down"}' });
+    await new Promise((res) => setTimeout(res, 1200));
+    return r.continue();
+  });
+  await open(page); await signInAs(page, u);
+  await page.locator('.page.active [data-open-settings]').click();
+  await expect(page.locator('[data-retry-blocks]')).toBeVisible();
+  fail = false;
+  await page.locator('[data-retry-blocks]').click();
+  const chip = page.locator('[data-step]').first();
+  await chip.focus();
+  await expect(page.locator('#toast')).toContainText('Loaded');
+  await expect(chip).toBeFocused();
+});
+
+test('the calendar remembers a visited day in each month', async ({ browser }) => {
+  const ctx = await newPhone(browser);
+  await ctx.route('**/cloud-config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: 'window.GYM_CLOUD_CONFIG = {};' }));
+  const page = await ctx.newPage();
+  await open(page);
+  await tab(page, 'calendar');
+  const days = await page.evaluate(() => {
+    const d = new Date();
+    const f = (x) => x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0');
+    return [f(new Date(d.getFullYear(), d.getMonth(), 2)), f(new Date(d.getFullYear(), d.getMonth() + 1, 3))];
+  });
+  await page.locator(`[data-day="${days[0]}"]`).focus();
+  await page.locator(`[data-day="${days[1]}"]`).focus();
+  const other = await ctx.newPage();
+  await open(other);
+  await other.evaluate(() => localStorage.setItem('gymSettings', JSON.stringify({ weightStep: 0.5 })));
+  await page.waitForTimeout(300);
+  expect(await page.evaluate((ds) => ds.map((d) => document.querySelector(`[data-day="${d}"]`).getAttribute('tabindex')), days)).toEqual(['0', '0']);
+});
+
+test('an update found in the background does not replace an Undo', async ({ page }) => {
+  await offline(page);
+  await page.route('**/Version*', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ version: '9.9.9' }) }));
+  await open(page);
+  await createWorkout(page, 'Upper', ['Pull-up', 'Dips']);
+  await page.locator('[data-edit="Upper"]').click();
+  await page.locator('[data-ex="Dips"] [data-remove]').click();
+  await expect(page.locator('#toast .toast-action')).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('gym:check-update', { detail: { manual: false } })));
+  await page.waitForTimeout(500);
+  await expect(page.locator('#toast .toast-action')).toBeVisible();
+});
+
+test('a slow Crew retry that succeeds leaves focus where the user moved to', async ({ browser }) => {
+  const { pa, errors } = await friendsPair(browser, 'csm');
+  let fail = true;
+  await pa.route('**/rest/v1/gym_dates*', async (r) => {
+    if (r.request().method() !== 'GET') return r.continue();
+    if (fail) return r.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"down"}' });
+    await new Promise((res) => setTimeout(res, 1200));
+    return r.continue();
+  });
+  await tab(pa, 'crew');
+  await pa.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await expect(pa.locator('[data-retry]').first()).toBeVisible();
+  fail = false;
+  await pa.locator('[data-retry]').first().click();
+  const chip = pa.locator('[data-quick="60"]');
+  await chip.focus();
+  await expect(pa.locator('#toast')).toContainText('Loaded');
+  await expect(chip).toBeFocused();
+  errors[0].length = 0;
   expect(errors.flat()).toEqual([]);
 });
