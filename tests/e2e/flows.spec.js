@@ -170,8 +170,9 @@ test('after deleting an account, the next account is asked before taking the dat
   await page.locator('#authForm [name=email]').fill(next.email);
   await page.locator('#authForm [name=password]').fill(next.password);
   await page.locator('#authForm [type=submit]').click();
-  await expect(page.getByText('Someone else used this phone')).toBeVisible({ timeout: 15000 });
-  await sheetAction(page, 'Replace with my account’s data');
+  await expect(page.getByText('Keep the workouts from the deleted account?')).toBeVisible({ timeout: 15000 });
+  await sheetAction(page, 'Start fresh');
   await expect(page.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 15000 });
   expect(await page.evaluate(() => localStorage.getItem('gymCustomWorkouts') || '{}')).not.toContain('Keep me');
+  expect(await page.evaluate(() => localStorage.getItem('gymBackupBeforeSwitch') || '')).toContain('Keep me');
 });

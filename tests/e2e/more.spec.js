@@ -431,3 +431,62 @@ test('signing in on one tab does not ask the question in the others', async ({ b
   await expect(one.locator('.sheet-backdrop.open')).toHaveCount(0);
   await expect(two.locator('.sheet-backdrop.open')).toHaveCount(0);
 });
+
+test('a taken username is asked about once, not at every start', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const taken = await makeUser(uniqueName('tk'));
+  const user = newUser('tk2');
+  await open(page);
+  await page.locator('.page.active [data-open-settings]').first().click();
+  await page.locator('[data-auth-mode="signup"]').click();
+  const form = page.locator('#authForm');
+  await form.locator('[name=email]').fill(user.email);
+  await form.locator('[name=password]').fill(user.password);
+  await form.locator('[name=username]').fill(taken.username);
+  await form.locator('[name=consent]').check();
+  await form.locator('[type=submit]').click();
+  await expect(page.locator('.sheet-backdrop.open h2')).toHaveText('Choose another username', { timeout: 15000 });
+  await sheetAction(page, 'Cancel');
+  await page.reload();
+  await expect(page.locator('#page-today h1')).toHaveText('Today');
+  await page.waitForTimeout(3000);
+  await expect(page.locator('.sheet-backdrop.open')).toHaveCount(0);
+});
+
+test('after an error, the result of the next action is shown, and Ctrl+Z undoes', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await tab(page, 'stats');
+  await page.getByRole('button', { name: 'Log', exact: true }).click();
+  await expect(page.locator('#toast')).toContainText('Enter a weight');
+  await page.locator('#weightInput').fill('80.5');
+  await page.getByRole('button', { name: 'Log', exact: true }).click();
+  await expect(page.locator('#toast')).toContainText('Weight logged');
+  await page.locator('[data-toggle-entries]').click();
+  await page.locator('[data-del-weight]').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('[data-del-weight]')).toHaveCount(0);
+  await page.keyboard.press('Control+z');
+  await expect(page.locator('[data-del-weight]')).toHaveCount(1);
+});
+
+test('a routine deleted in another tab while it is open is announced and can be kept', async ({ browser }) => {
+  const ctx = await newPhone(browser);
+  await ctx.route('**/cloud-config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: 'window.GYM_CLOUD_CONFIG = {};' }));
+  const a = await ctx.newPage();
+  await open(a);
+  await createWorkout(a, 'Legs', ['Plank']);
+  await a.locator('[data-edit="Legs"]').click();
+  await a.locator('[data-ex="Plank"] input[data-field=note]').focus();
+  const b = await ctx.newPage();
+  await open(b);
+  await b.evaluate(() => {
+    const w = JSON.parse(localStorage.getItem('gymCustomWorkouts'));
+    delete w.Legs;
+    localStorage.setItem('gymCustomWorkouts', JSON.stringify(w));
+  });
+  await expect(a.locator('#toast')).toContainText('Legs was deleted or renamed');
+  await expect(a.locator('#page-plan [data-key="mine"]')).toBeFocused();
+  await a.locator('#toast .toast-action').click();
+  await expect(a.locator('[data-edit="Legs"]')).toHaveCount(1);
+});

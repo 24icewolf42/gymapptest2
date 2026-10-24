@@ -9,6 +9,15 @@ const focused = (page) => page.evaluate(() => {
   return el === document.body ? 'BODY' : (el.getAttribute('aria-label') || el.textContent).trim();
 });
 
+// Remembers the focused node itself: a re-created copy with the same selector
+// would pass toBeFocused() but loses a screen reader's position.
+const hold = (page) => page.evaluate(() => {
+  window.__held = document.activeElement;
+  window.__blurs = 0;
+  if (!window.__watching) { window.__watching = true; document.addEventListener('focusout', () => { window.__blurs++; }); }
+});
+const stillHeld = (page) => page.evaluate(() => ({ same: document.activeElement === window.__held && window.__held.isConnected, blurs: window.__blurs }));
+
 async function postDate(user, minutes, gym) {
   const r = await user.client.from('gym_dates').insert({ host_id: user.id, starts_at: new Date(Date.now() + minutes * 60000).toISOString(), gym }).select('id').single();
   expect(r.error).toBeNull();
@@ -34,8 +43,8 @@ test('a date removed by its host keeps focus in the next card, or moves it to th
   await a.client.from('gym_dates').update({ cancelled_at: new Date().toISOString() }).eq('id', second);
   await refreshCrew(pb);
   await expect(pb.locator(`[data-date-id="${second}"]`)).toHaveCount(0);
-  // Not lost: focus lands on the nearest heading that is still there.
-  expect(await pb.evaluate(() => { const el = document.activeElement; return el !== document.body && /^H[1-3]$/.test(el.tagName) && !!el.closest('#page-crew'); })).toBe(true);
+  // Not lost: focus lands on the nearest thing still there (here the card above).
+  expect(await pb.evaluate(() => { const el = document.activeElement; return el !== document.body && !!el.closest('#crew-panel'); })).toBe(true);
   expect(errors.flat()).toEqual([]);
 });
 
@@ -207,6 +216,7 @@ test('changes from another tab keep focus on the same routine, day and page', as
   await createWorkout(a, 'Legs', ['Plank']);
   await tab(a, 'plan');
   await a.locator('[data-edit="Pull"]').focus();
+  await hold(a);
   const b = await ctx.newPage();
   await open(b);
   await b.evaluate(() => {
@@ -216,10 +226,12 @@ test('changes from another tab keep focus on the same routine, day and page', as
   });
   await expect(a.locator('[data-edit="Push"]')).toHaveCount(0);
   await expect(a.locator('[data-edit="Pull"]')).toBeFocused();
+  expect(await stillHeld(a)).toEqual({ same: true, blurs: 0 });
   // Calendar: an older workout arrives, months are added above; focus stays on the day.
   await tab(a, 'calendar');
   const today = await a.evaluate(() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); });
   await a.locator(`[data-day="${today}"]`).focus();
+  await hold(a);
   await b.evaluate(() => {
     const logs = JSON.parse(localStorage.getItem('gymLogs') || '{}');
     logs['2026-01-05'] = [{ id: 'old', day: 'Pull', time: '2026-01-05T10:00:00.000Z', exercises: [{ name: 'Pull-up', target: '8', sets: [{ w: '', r: '8', done: true }] }] }];
@@ -227,6 +239,7 @@ test('changes from another tab keep focus on the same routine, day and page', as
   });
   await expect(a.locator('[data-day="2026-01-05"]')).toHaveCount(1);
   await expect(a.locator(`[data-day="${today}"]`)).toBeFocused();
+  expect(await stillHeld(a)).toEqual({ same: true, blurs: 0 });
 });
 
 test('a workout ended in another tab leaves focus on the page, not nowhere', async ({ browser }) => {
@@ -274,9 +287,84 @@ test('when the gym-date card on Today goes away, focus stays in the list below i
   const row = pb.locator('#page-today [data-preview]').nth(1);
   const day = await row.getAttribute('data-preview');
   await row.focus();
+  await hold(pb);
   await a.client.from('gym_dates').update({ cancelled_at: new Date().toISOString() }).eq('id', id);
   await refreshCrew(pb);
   await expect(pb.locator('#page-today .teaser')).toHaveCount(0);
   await expect(pb.locator(`#page-today [data-preview="${day}"]`)).toBeFocused();
+  expect(await stillHeld(pb)).toEqual({ same: true, blurs: 0 });
   expect(errors.flat()).toEqual([]);
+});
+
+test('a withdrawn friend request leaves the friends list and its focused button in place', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const { b, pa, errors } = await friendsPair(browser, 'wd');
+  const c = await makeUser(uniqueName('wdc'));
+  await c.client.from('friend_requests').insert({ requester_id: c.id, target_id: (await pa.evaluate(async () => (await import('/js/cloud/sync.js')).account.user.id)), status: 'pending' });
+  await tab(pa, 'crew');
+  await pa.locator('[data-crew-tab="friends"]').click();
+  await expect(pa.locator('[data-decline]')).toHaveCount(1);
+  await pa.locator(`[data-unfriend][data-user="${b.id}"]`).focus();
+  await hold(pa);
+  await c.client.from('friend_requests').delete().eq('requester_id', c.id);
+  await refreshCrew(pa);
+  await expect(pa.locator('[data-decline]')).toHaveCount(0);
+  expect(await stillHeld(pa)).toEqual({ same: true, blurs: 0 });
+  expect(errors.flat()).toEqual([]);
+});
+
+test('unblocking the last blocked person moves focus to the Privacy heading', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const a = await makeUser(uniqueName('lb_a'));
+  const b = await makeUser(uniqueName('lb_b'));
+  await a.client.from('friend_blocks').insert({ blocker_id: a.id, blocked_id: b.id });
+  const pa = await (await newPhone(browser)).newPage();
+  await open(pa); await signInAs(pa, a);
+  await pa.locator('.page.active [data-open-settings]').click();
+  await pa.locator(`[data-unblock="${b.id}"]`).focus();
+  await pa.keyboard.press('Enter');
+  await expect(pa.locator('[data-unblock]')).toHaveCount(0);
+  await expect(pa.locator('#page-settings h2', { hasText: 'Privacy' })).toBeFocused();
+});
+
+test('signing out in another tab keeps focus where it was in Settings', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('so2'));
+  const ctx = await newPhone(browser);
+  const one = await ctx.newPage();
+  await open(one); await signInAs(one, u);
+  await one.locator('.page.active [data-open-settings]').click();
+  await one.locator('[data-step]').first().focus();
+  await hold(one);
+  const two = await ctx.newPage();
+  await open(two);
+  await two.evaluate(async () => (await import('/js/cloud/client.js')).supabase.auth.signOut());
+  await expect(one.locator('#authForm')).toBeVisible({ timeout: 15000 });
+  expect(await stillHeld(one)).toEqual({ same: true, blurs: 0 });
+});
+
+test('a lift added from another tab does not change what the focused card shows', async ({ browser }) => {
+  const ctx = await newPhone(browser);
+  await ctx.route('**/cloud-config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: 'window.GYM_CLOUD_CONFIG = {};' }));
+  const a = await ctx.newPage();
+  await a.addInitScript(() => {
+    if (localStorage.getItem('seeded')) return;
+    localStorage.setItem('seeded', '1');
+    const set = (w) => [{ w, r: '5', done: true }];
+    localStorage.setItem('gymLogs', JSON.stringify({ '2026-10-01': [{ id: 's1', day: 'A', time: '2026-10-01T10:00:00.000Z', exercises: [{ name: 'Bench Press', target: '5', sets: set('60') }, { name: 'Deadlift', target: '5', sets: set('100') }] }] }));
+  });
+  await open(a);
+  await tab(a, 'stats');
+  const heading = a.locator('[data-key="lift-Deadlift"] h3');
+  await expect(heading).toHaveText('Deadlift');
+  await a.evaluate(() => { window.__h = document.querySelector('[data-key="lift-Deadlift"] h3'); });
+  const b = await ctx.newPage();
+  await open(b);
+  await b.evaluate(() => {
+    const logs = JSON.parse(localStorage.getItem('gymLogs'));
+    logs['2026-10-02'] = [{ id: 's2', day: 'A', time: '2026-10-02T10:00:00.000Z', exercises: [{ name: 'Cable Curl', target: '10', sets: [{ w: '15', r: '10', done: true }] }] }];
+    localStorage.setItem('gymLogs', JSON.stringify(logs));
+  });
+  await expect(a.locator('[data-key="lift-Cable Curl"]')).toHaveCount(1);
+  expect(await a.evaluate(() => window.__h.isConnected && window.__h.textContent)).toBe('Deadlift');
 });
