@@ -35,12 +35,19 @@ const me = () => account.user && account.user.id;
 const pending = new Set(); // keys of actions in flight, to block double taps
 
 // ---------- data ----------
-let loading = null, reloadAfter = false;
+let loading = null;
+let queued = null; // { promise, resolve } of the load that runs after the current one
 let retrying = false; // a "Try again" the user pressed is running
-/** Reloads friends and dates. A call while a load runs queues one more, so writes are never shown stale. */
+/**
+ * Reloads friends and dates. A call while a load runs queues one more, so
+ * writes are never shown stale; it resolves when that newer load is done.
+ */
 function refreshCrew() {
   if (!account.user || !account.ready) return Promise.resolve();
-  if (loading) { reloadAfter = true; return loading; }
+  if (loading) {
+    if (!queued) { let resolve; const promise = new Promise((r) => { resolve = r; }); queued = { promise, resolve }; }
+    return queued.promise;
+  }
   const forUser = me();
   loading = (async () => {
     const [f, d] = await Promise.all([social.loadFriendships(), api.loadDates()]);
@@ -55,7 +62,7 @@ function refreshCrew() {
     if (currentPage() === 'crew') renderCrew();
   })().finally(() => {
     loading = null;
-    if (reloadAfter) { reloadAfter = false; refreshCrew(); }
+    if (queued) { const q = queued; queued = null; refreshCrew().then(q.resolve, q.resolve); }
   });
   return loading;
 }
@@ -505,26 +512,33 @@ export function initCrew() {
     if (await act('date:' + id, () => api.cancelDate(id), 'Gym date cancelled.')) refreshCrew();
   });
   // A name sent while the last request is on its way goes next, not lost.
+  // Its answer counts from when the user asked (toastLater then), so it waits
+  // behind anything newer, such as an Undo.
   let addQueue = Promise.resolve();
-  const sendRequest = async (name, uid) => {
-    if (account.user?.id !== uid) return; // signed out (or another account) since it was asked for
-    const toast = toastLater();
-    let message = '';
-    const ok = await act('add', async () => { const r = await social.sendFriendRequest(name); message = r.data; return r; });
-    if (!ok) return;
-    toast(message);
-    const input = $('friendName');
-    if (input && input.value === name) input.value = ''; // not what the user has typed since
-    refreshCrew();
+  const asked = new Set(); // names on their way or waiting, so a double tap does not ask twice
+  const sendRequest = async (name, uid, toast) => {
+    try {
+      if (account.user?.id !== uid) return; // signed out (or another account) since it was asked for
+      let message = '';
+      const ok = await act('add', async () => { const r = await social.sendFriendRequest(name); message = r.data; return r; });
+      if (!ok) return;
+      toast(message);
+      const input = $('friendName');
+      if (input && input.value === name) input.value = ''; // not what the user has typed since
+      refreshCrew();
+    } finally { asked.delete(name.trim().toLowerCase().replace(/^@/, '')); }
   };
   on(page, 'submit', '#addFriendForm', (e) => {
     e.preventDefault();
     const input = $('friendName');
     const name = input.value;
     if (!name.trim()) { input.focus(); return; }
-    if (pending.has('add')) toast(`@${name.trim().replace(/^@/, '')} is sent next, after the request on its way.`);
-    const uid = account.user?.id;
-    addQueue = addQueue.then(() => sendRequest(name, uid)).catch(() => {}); // one failure must not stop the next
+    const key = name.trim().toLowerCase().replace(/^@/, '');
+    if (asked.has(key)) { toast(`The request to @${key} is already on its way.`); return; }
+    asked.add(key);
+    if (pending.has('add')) toast(`@${key} is sent next, after the request on its way.`);
+    const uid = account.user?.id, later = toastLater();
+    addQueue = addQueue.then(() => sendRequest(name, uid, later)).catch(() => {}); // one failure must not stop the next
   });
   on(page, 'click', '[data-accept]', async (e, b) => { if (await act(b.dataset.accept, () => social.acceptRequest(b.dataset.accept), 'You are now friends.')) refreshCrew(); });
   on(page, 'click', '[data-decline]', (e, b) => removeOrBlock(b.dataset.decline, b.dataset.user, b.dataset.name, 'request'));
