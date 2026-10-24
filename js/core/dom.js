@@ -273,6 +273,8 @@ let errorUntil = 0;
 let shown = 0; // counts the messages shown, so a late answer can tell what came after its request
 const waiting = []; // background messages held back while an Undo or an error is on screen
 const TOAST_RESUME_MS = 3000;
+let current = null; // { message, options, waited, at } of the message on screen
+const nextWaiting = () => { const w = waiting.shift(); if (w) toast(w.message, { ...w.options, waited: true }); };
 /**
  * Short message. `action: { label, onClick }` adds a button (e.g. Undo).
  * Errors stay longer and are announced assertively (through a separate alert
@@ -301,6 +303,12 @@ export function toast(message, options = {}) {
     if (!waiting.some((w) => w.message === message)) waiting.push({ message, options });
     return;
   }
+  // A message that waited its turn and has barely been seen goes back to the
+  // front of the queue instead of being replaced (e.g. by a dialog's result).
+  if (current?.waited && el.classList.contains('show') && Date.now() - current.at < 2000 && current.message !== message) {
+    waiting.unshift({ message: current.message, options: current.options });
+  }
+  current = { message, options, waited: !!options.waited, at: Date.now() };
   if (!background && tone !== 'error') errorUntil = 0; // the user moved on: their new result replaces the error
   if (el.contains(document.activeElement)) returnFocus(el); // replacing a toast the user is on
   const active = document.activeElement;
@@ -360,13 +368,18 @@ export function updateToastReach() {
   const shown = el.classList.contains('show'), undo = el.classList.contains('has-action');
   if (open) {
     if (shown && undo) clearTimeout(toastTimer);
-    else if (shown) hideToast(el);
+    else if (shown) {
+      // An error still to be read comes back after the dialog; a plain message just goes.
+      if (current && current.options.tone === 'error' && Date.now() < errorUntil) waiting.unshift({ message: current.message, options: current.options });
+      hideToast(el);
+    }
   } else if (shown) {
     el.replaceChildren(...el.childNodes); // read again by screen readers
     scheduleHide(el, undo ? 6000 : TOAST_RESUME_MS);
   } else {
-    const w = waiting.shift();
-    if (w) toast(w.message, w.options);
+    // A moment later, so the dialog's own result (e.g. "Renamed.") comes first;
+    // what waited follows it.
+    setTimeout(() => { if (!el.classList.contains('show') && !el.classList.contains('under-sheet')) nextWaiting(); }, 300);
   }
 }
 
@@ -427,8 +440,8 @@ function hideToast(el) {
     el.replaceChildren();
     const alert = $('toastAlert');
     if (alert) alert.textContent = '';
-    const w = waiting.shift();
-    if (w) toast(w.message, w.options);
+    current = null;
+    if (!el.classList.contains('under-sheet')) nextWaiting(); // behind a dialog the queue keeps its order
   }, 250);
 }
 
