@@ -495,6 +495,7 @@ export function foodSheet(side, current) {
           const field = (n) => sheet.querySelector(`[name=${n}]`);
           // badInput: something typed that is not a number (the field's value is then empty).
           const bad = ['water', 'protein'].find((n) => field(n).validity.badInput || (field(n).value !== '' && !field(n).checkValidity()));
+          ['water', 'protein'].forEach((n) => (n === bad ? field(n).setAttribute('aria-invalid', 'true') : field(n).removeAttribute('aria-invalid')));
           if (bad) { sheet.querySelector('.form-error').textContent = bad === 'water' ? 'Water: a whole number from 0 to 5000 ml.' : 'Protein: a number from 0 to 300 g (one decimal).'; field(bad).focus(); return; }
           finish({
             entry: sanitizeEntry({

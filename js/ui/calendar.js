@@ -98,8 +98,8 @@ export async function openDay(ds) {
       body: html`${logs.map((s) => html`
         <section class="log-session">
           <header class="log-head"><h3>${s.day}</h3><small>${s.duration ? fmtClock(s.duration) : ''}</small></header>
-          <dl class="log-food">${['pre', 'post'].map((k) => html`<div><dt>${k === 'pre' ? 'Before' : 'After'}</dt><dd data-food-text="${k}">${entrySummary(s.nutrition?.[k], k) || 'Not logged'}</dd>
-            <button type="button" class="link-btn inline" data-food-log="${sessionKey(ds, s)}" data-side="${k}" aria-label="${foodLabel(k, s.nutrition?.[k])}">${s.nutrition?.[k] ? 'Edit' : 'Add'}</button></div>`)}</dl>
+          <ul class="log-food plain">${['pre', 'post'].map((k) => html`<li><span class="food-side">${k === 'pre' ? 'Before' : 'After'}</span><span class="food-what" data-food-text="${k}">${entrySummary(s.nutrition?.[k], k) || 'Not logged'}</span>
+            <button type="button" class="btn btn-ghost btn-sm" data-food-log="${sessionKey(ds, s)}" data-side="${k}" aria-label="${foodLabel(k, s.nutrition?.[k])}">${s.nutrition?.[k] ? 'Change food' : 'Add food'}</button></li>`)}</ul>
           ${s.exercises.map((e) => html`<div class="log-ex"><b>${e.name}</b>
             <ol class="log-sets">${e.sets.map((x) => html`<li><span>${x.w || '–'} kg × ${x.r || '–'}</span>${x.done ? html`<i aria-label="done">${icons.check}</i>` : ''}</li>`)}</ol></div>`)}
           <div class="btn-row">
@@ -139,7 +139,7 @@ export async function openDay(ds) {
               });
             }
             b.closest('.log-food').querySelector(`[data-food-text="${side}"]`).textContent = entrySummary(next.nutrition?.[side], side) || 'Not logged';
-            b.textContent = next.nutrition?.[side] ? 'Edit' : 'Add';
+            b.textContent = next.nutrition?.[side] ? 'Change food' : 'Add food';
             b.setAttribute('aria-label', foodLabel(side, next.nutrition?.[side]));
           };
         });
