@@ -2,10 +2,6 @@
 // Pure functions, no DOM or storage.
 import { mondayIndex, addDays, ymd } from '../core/dates.js';
 
-// Markup characters in names and values become look-alikes: the original app
-// puts them into the page unescaped (see plain() in plan.js).
-const LOOKALIKE = { '<': '‹', '>': '›', '"': '”', '`': '’' };
-const plain = (s) => s.replace(/[<>"`]/g, (c) => LOOKALIKE[c]);
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/;
 
 /**
@@ -70,15 +66,15 @@ export function canonicalLogDate(raw, session) {
 
 function cleanSet(s) {
   if (!s || typeof s !== 'object') return null;
-  return { w: plain(String(s.w ?? '')).slice(0, 12), r: plain(String(s.r ?? '')).slice(0, 12), done: !!s.done };
+  return { w: String(s.w ?? '').slice(0, 12), r: String(s.r ?? '').slice(0, 12), done: !!s.done };
 }
 
 function cleanSession(s) {
   if (!s || typeof s !== 'object' || typeof s.day !== 'string' || !s.day) return null;
   const exercises = (Array.isArray(s.exercises) ? s.exercises : [])
     .filter((e) => e && typeof e.name === 'string')
-    .map((e) => ({ name: plain(e.name).slice(0, 80), target: plain(String(e.target ?? '')).slice(0, 20), sets: (Array.isArray(e.sets) ? e.sets : []).map(cleanSet).filter(Boolean) }));
-  const out = { day: plain(s.day).slice(0, 40), exercises, time: typeof s.time === 'string' && ISO_TIME.test(s.time) ? s.time : '' };
+    .map((e) => ({ name: e.name.slice(0, 80), target: String(e.target ?? '').slice(0, 20), sets: (Array.isArray(e.sets) ? e.sets : []).map(cleanSet).filter(Boolean) }));
+  const out = { day: s.day.slice(0, 40), exercises, time: typeof s.time === 'string' && ISO_TIME.test(s.time) ? s.time : '' };
   // An id that is an original-app key (date|day|JSON, stored by an earlier version) becomes its hash.
   if (typeof s.id === 'string' && s.id) out.id = s.id.includes('|') ? legacyId(s.id) : s.id.slice(0, 64);
   if (Number.isFinite(+s.duration) && +s.duration >= 0) out.duration = Math.round(+s.duration);

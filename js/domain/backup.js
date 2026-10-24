@@ -1,5 +1,5 @@
 // Backup and restore of everything stored on this phone.
-import { isSafeImage } from './plan.js';
+import { isSafeImage, deepPlain } from './plan.js';
 
 // Earlier backups only had the first four keys, so routines and the weekly plan
 // were lost on restore. Restore still accepts that older format.
@@ -30,11 +30,10 @@ export function parseBackup(text) {
   BACKUP_KEYS.forEach((k) => {
     if (data[k] == null) return;
     const value = typeof data[k] === 'string' ? data[k] : JSON.stringify(data[k]);
-    if (k !== 'gymSidesFrom' && k !== 'gymRestImage') {
-      try { JSON.parse(value); } catch { throw new Error('The backup is damaged (' + k + ').'); }
-    }
-    if (k === 'gymRestImage' && !isSafeImage(value)) return; // only a picture, never markup
-    out[k] = value;
+    if (k === 'gymRestImage') { if (isSafeImage(value)) out[k] = value; return; } // only a picture, never markup
+    if (k === 'gymSidesFrom') { out[k] = value; return; }
+    // A backup file can come from anyone: no markup in it may reach the original app.
+    try { out[k] = JSON.stringify(deepPlain(JSON.parse(value))); } catch { throw new Error('The backup is damaged (' + k + ').'); }
   });
   return out;
 }

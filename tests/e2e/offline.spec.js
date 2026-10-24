@@ -70,7 +70,7 @@ test('an unfinished workout survives closing and reopening', async ({ page }) =>
   await expect(page.locator('#session')).toBeHidden();
 });
 
-test('workout names never run as code: markup becomes look-alikes, shown as text', async ({ page }) => {
+test('workout names are shown as text, never run as code', async ({ page }) => {
   const errors = trackErrors(page);
   await page.addInitScript(() => {
     window.__xss = false;
@@ -80,9 +80,9 @@ test('workout names never run as code: markup becomes look-alikes, shown as text
     localStorage.setItem('gymPlanSchedule', JSON.stringify({ [dow]: evil }));
   });
   await open(page);
-  await expect(page.locator('.hero-title')).toHaveText('‹img src=x onerror=”window.__xss=true”›');
+  await expect(page.locator('.hero-title')).toHaveText('<img src=x onerror="window.__xss=true">');
   await page.locator('#startToday').click();
-  await expect(page.locator('#session h3')).toHaveText('‹img src=x onerror=”window.__xss=true”›');
+  await expect(page.locator('#session h3')).toHaveText('<img src=x onerror="window.__xss=true">');
   await page.locator('#sessionBack').click();
   for (const t of ['plan', 'calendar', 'stats']) await tab(page, t);
   expect(await page.evaluate(() => window.__xss)).toBe(false);

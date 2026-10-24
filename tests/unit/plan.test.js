@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   sanitizeExercise, sanitizeWorkout, sanitizeWorkouts, sanitizeSchedule, upgradeExercises,
-  removeStockPresets, mergePlans, workoutSummary, displaySets, fingerprint, emptySchedule, planHashes, stableStringify,
+  removeStockPresets, mergePlans, workoutSummary, displaySets, fingerprint, emptySchedule, planHashes, stableStringify, deepPlain,
 } from '../../js/domain/plan.js';
 
 describe('sanitizeExercise', () => {
@@ -17,8 +17,9 @@ describe('sanitizeExercise', () => {
     expect(sanitizeExercise({ name: 'Curl', sets: 4, sides: 'both' }).unilateral).toBe(true);
   });
 
-  it('turns markup characters into look-alikes, which the original app can\'t run as code', () => {
-    expect(sanitizeExercise({ name: '<img src=x onerror="alert(1)">', note: 'grip `wide`, RPE <8' })).toMatchObject({ name: '‹img src=x onerror=”alert(1)”›', note: 'grip ’wide’, RPE ‹8' });
+  it('keeps names as typed (escaping happens when shown); deepPlain cleans what comes from others', () => {
+    expect(sanitizeExercise({ name: 'Arms <3', note: 'RPE <8' })).toMatchObject({ name: 'Arms <3', note: 'RPE <8' });
+    expect(deepPlain({ 'Arms <3': [{ name: '<img src=x onerror="alert(1)">', note: 'grip `wide`' }] })).toEqual({ 'Arms ‹3': [{ name: '‹img src=x onerror=”alert(1)”›', note: 'grip ’wide’' }] });
     expect(sanitizeExercise({ name: "Farmer's walk" }).name).toBe("Farmer's walk");
   });
 });

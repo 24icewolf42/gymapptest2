@@ -34,14 +34,23 @@ function clampInt(value, min, max, fallback) {
   return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
 }
 
-// Markup characters in names and notes become look-alikes (Arms <3 -> Arms ‹3):
-// the original app (still on some phones) puts them into the page unescaped.
-// The database does the same for every app version.
+// Names are kept exactly as typed: both apps identify routines and workouts
+// by them. Markup characters become look-alikes (Arms <3 -> Arms ‹3) only in
+// what comes from someone else (shared routines, backup files), because the
+// original app (still on some phones) puts names into the page unescaped.
 const LOOKALIKE = { '<': '‹', '>': '›', '"': '”', '`': '’' };
 export const plain = (s) => s.replace(/[<>"`]/g, (c) => LOOKALIKE[c]);
 
+/** plain() applied to every string and key of a JSON value. */
+export function deepPlain(value) {
+  if (typeof value === 'string') return plain(value);
+  if (Array.isArray(value)) return value.map(deepPlain);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [plain(k), deepPlain(v)]));
+  return value;
+}
+
 function text(value, max) {
-  return typeof value === 'string' ? plain(value).trim().slice(0, max) : '';
+  return typeof value === 'string' ? value.trim().slice(0, max) : '';
 }
 
 /** A rest-day picture as this app stores it (a resized photo); anything else is dropped. */

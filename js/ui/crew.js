@@ -13,7 +13,7 @@ import {
   DURATIONS, QUICK_STARTS, phase, canCheckIn, quickStartTime, validateDraft, groupDates, unanswered, rememberGym, startOf,
 } from '../domain/gym-dates.js';
 import { leaderboardStats } from '../domain/logs.js';
-import { sanitizeWorkoutName, workoutSummary } from '../domain/plan.js';
+import { sanitizeWorkoutName, workoutSummary, deepPlain } from '../domain/plan.js';
 import { openSheet, confirmDialog, promptDialog } from './sheet.js';
 import { icons } from './icons.js';
 
@@ -508,7 +508,7 @@ export function initCrew() {
       validate: (v) => (!sanitizeWorkoutName(v) ? 'Give it a name.' : Object.hasOwn(state.workouts, sanitizeWorkoutName(v)) ? 'You already have a routine with that name.' : ''),
     });
     if (!name) return;
-    createWorkout(sanitizeWorkoutName(name), item.workout.map((x) => ({ ...x })));
+    createWorkout(sanitizeWorkoutName(name), deepPlain(item.workout));
     toast('Copied to your plan.');
   });
   on(page, 'click', '[data-unshare]', async (e, b) => {

@@ -115,3 +115,12 @@ describe('catalog', () => {
     expect(searchCatalog('Single-Arm Cable Curl')[0].unilateral).toBe(true);
   });
 });
+
+describe('backup files', () => {
+  it('turn markup from a backup into look-alikes and drop a rest picture that is not an image', async () => {
+    const { parseBackup } = await import('../../js/domain/backup.js');
+    const out = parseBackup(JSON.stringify({ gymLogs: '{}', gymCustomWorkouts: { 'Arms <3': [{ name: '<b>x</b>' }] }, gymRestImage: 'rest.png" onerror="x' }));
+    expect(JSON.parse(out.gymCustomWorkouts)).toEqual({ 'Arms ‹3': [{ name: '‹b›x‹/b›' }] });
+    expect(out.gymRestImage).toBeUndefined();
+  });
+});

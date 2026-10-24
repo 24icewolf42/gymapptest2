@@ -1328,7 +1328,9 @@ begin
   if new.log_date < date '1900-01-01' or new.log_date > current_date + 2 then
     raise exception 'A weigh-in needs a date between 1900 and today' using errcode = '22023';
   end if;
-  if tg_op = 'INSERT' and (select count(*) from public.body_weight_logs b where b.user_id = new.user_id) >= 20000 then
+  if tg_op = 'INSERT'
+     and not exists (select 1 from public.body_weight_logs b where b.user_id = new.user_id and b.log_date = new.log_date) -- a correction, not a new day
+     and (select count(*) from public.body_weight_logs b where b.user_id = new.user_id) >= 20000 then
     raise exception 'Too many weigh-ins on this account' using errcode = '54000';
   end if;
   return new;
@@ -1375,49 +1377,21 @@ create trigger gym_dates_count_limit before insert on public.gym_dates
   for each row execute function private.count_limits();
 
 -- ===== 20261024000005_plain_text.sql =====
--- No markup in names, notes and pictures, for every app version: the original
--- app (still on some phones) puts routine and exercise names and the rest-day
--- picture into the page unescaped, so a friend's shared routine could
--- otherwise run code there.
---
--- Plans and workout history are cleaned, not refused, because both apps
--- rewrite them in full on every sync: markup characters become look-alikes
--- (< > " ` -> ‹ › ” ’), as this app does itself, and a rest picture that is
--- not image data is dropped. Shared routines (written only by this app, which
--- cleans them first) are refused instead.
-
--- Replaces markup characters in every string and key of a JSON value. Works on
--- the JSON text: < > ` never have a meaning there, and a quote inside a string
--- is the only quote preceded by an odd number of backslashes.
-create or replace function private.plain_json(j jsonb)
-returns jsonb
-language plpgsql
-immutable
-strict -- null in, null out (the NOT NULL constraints then refuse it)
-set search_path = ''
-as $$
-declare
-  t text := j::text;
-  prev text;
-begin
-  if t !~ '[<>`]|\\"' then
-    return j;
-  end if;
-  t := translate(t, '<>`', '‹›’');
-  loop
-    prev := t;
-    t := regexp_replace(t, '(^|[^\\])((\\\\)*)\\"', '\1\2”', 'g');
-    exit when t is not distinct from prev;
-  end loop;
-  return t::jsonb;
-end;
-$$;
-revoke all on function private.plain_json(jsonb) from public, anon, authenticated;
+-- No markup from other people reaches the original app (still on some phones),
+-- which puts routine and exercise names and the rest-day picture into the page
+-- unescaped:
+--  * shared routines (the only names that come from someone else) are refused
+--    when they carry markup characters; this app cleans them before sharing,
+--    and existing ones that carry them are removed;
+--  * the rest-day picture must be image data; anything else is dropped (the
+--    original app's "Reset" stores 'rest.png', which then means "none").
+-- A user's own plan and history keep names exactly as typed: both apps
+-- identify routines and workouts by name, and renaming them would duplicate
+-- routines and workouts in the original app.
 
 create or replace function private.clean_plan()
 returns trigger
 language plpgsql
-security definer
 set search_path = ''
 as $$
 begin
@@ -1425,7 +1399,6 @@ begin
      and new.plan ->> 'restImage' !~ '^data:image/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/]+=*$' then
     new.plan := new.plan - 'restImage';
   end if;
-  new.plan := private.plain_json(new.plan);
   return new;
 end;
 $$;
@@ -1433,23 +1406,6 @@ revoke all on function private.clean_plan() from public, anon, authenticated;
 drop trigger if exists workout_plans_clean on public.workout_plans;
 create trigger workout_plans_clean before insert or update on public.workout_plans
   for each row execute function private.clean_plan();
-
-create or replace function private.clean_workout_data()
-returns trigger
-language plpgsql
-security definer
-set search_path = ''
-as $$
-begin
-  new.logs := private.plain_json(new.logs);
-  new.progress := private.plain_json(new.progress);
-  return new;
-end;
-$$;
-revoke all on function private.clean_workout_data() from public, anon, authenticated;
-drop trigger if exists workout_data_clean on public.workout_data;
-create trigger workout_data_clean before insert or update on public.workout_data
-  for each row execute function private.clean_workout_data();
 
 -- Shared routines: refused when they carry markup; existing ones that do are
 -- removed (the owner's own plan keeps the routine), so a payload planted
@@ -1460,9 +1416,12 @@ alter table public.shared_workouts add constraint shared_workouts_plain_text
 delete from public.shared_workouts where title ~ '[<>"`]' or workout::text ~ '[<>`]|(^|[^\\])(\\\\)*\\"';
 alter table public.shared_workouts validate constraint shared_workouts_plain_text;
 
--- Earlier drafts of this migration refused instead of cleaning.
+-- Earlier drafts of this migration cleaned or refused whole plans and histories.
 alter table public.workout_plans drop constraint if exists workout_plans_plain_text;
 alter table public.workout_data drop constraint if exists workout_data_plain_text;
+drop trigger if exists workout_data_clean on public.workout_data;
+drop function if exists private.clean_workout_data();
+drop function if exists private.plain_json(jsonb);
 
 -- ===== 20261024000006_verify_access.sql =====
 -- Stops the deploy that applies it if the live database has row-level

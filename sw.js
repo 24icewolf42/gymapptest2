@@ -3,7 +3,7 @@
 // the update banner (the page sends 'skip-waiting').
 const VERSION = '3.0.0';
 // Hash of the cached files (tools/sw-hash.mjs), so every change re-caches.
-const BUILD = '41cb0cd302c1';
+const BUILD = '9a647a55bd96';
 const CACHE = 'tracker-' + VERSION + '-' + BUILD;
 
 const FILES = [
