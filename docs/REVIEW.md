@@ -50,6 +50,24 @@ All findings are fixed in code. What remains for the app's owner is configuratio
 
 After the rework, three independent Opus reviews (security/privacy, data correctness, UX/accessibility/tests) rated the branch and listed findings. Every critical, major and minor finding and every nit was fixed and re-reviewed.
 
+### Round 15 (security 8.5/10, correctness 8.5/10, UX/tests 7.5/10)
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| S15-01, mi-2 (correctness) | Minor | One browser tab's unfinished sign-out could use, then end, a session another tab had just signed into, and save the old account's weigh-in in the new one | Weigh-ins and username changes name the intended account and the server refuses others (migration `20261025000000_expected_user.sql`, one-argument versions kept for 3.0.0); a sign-out still finishing is marked in storage and every tab's sign-in waits for it; tests (the cross-tab wait itself could not be reproduced in a test) |
+| mi-1 (correctness) | Minor | Another tab could write the workouts back after "Sign out and remove my data" | Every other tab stops syncing as soon as a sign-out starts; test |
+| mi-3 (correctness) | Minor | An open workout kept raw exercise targets, and an edited logged workout put raw text back | Targets follow too; an edited workout that a sync changed meanwhile is saved defused; tests |
+| UX-M1 | Major | A message that waited behind a dialog was replaced at once by the dialog's own result | Waiting messages follow a moment after the dialog closes, and one that has barely been seen goes back to the front of the queue; tests |
+| UX-m1 | Minor | "Sign out on all devices" offline locked its sheet for 23 s | Ending every session gets 10 s |
+| UX-m2 | Minor | "Your latest changes had not reached your account" showed for 2.6 s | 7 s; test |
+| UX-m3 | Minor | Undo time after a dialog, "Posting…", the restored label and the drag threshold were untested | Each is asserted and checked against its removal |
+| UX-m4, n4 | Minor/Nit | Handover: no way to see a missing required reviewer; how to drop unexpected rules | `docs/HANDOVER.md` says what the environment page and the next deploy show, and gives `drop` examples; Git Bash note for the openssl command |
+| UX-n1 | Nit | A dialog opened over an error reversed the waiting messages | The error comes back first and the queue keeps its order behind a dialog; test |
+| UX-n2, n3 | Nit | A successful global sign-out said only "Signed out."; the next sign-in waited without saying why | "Signed out here and on all your other devices."; the button says "Finishing the last sign-out…"; tests |
+| S15-N1 | Nit | The EC check could match the certificate's subject | It checks the key's named curve, before any secret is stored |
+
+Also: the database tests read a new user's profile with a short retry, because right after a reset the API may still be reloading.
+
 ### Round 14 (security 8/10, correctness 8.5/10, UX/tests 7.5/10)
 
 | ID | Severity | Finding | Fix |
