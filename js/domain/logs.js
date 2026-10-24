@@ -74,7 +74,8 @@ function cleanSession(s) {
   const exercises = (Array.isArray(s.exercises) ? s.exercises : [])
     .filter((e) => e && typeof e.name === 'string')
     .map((e) => ({ name: e.name.slice(0, 80), target: String(e.target ?? '').slice(0, 20), sets: (Array.isArray(e.sets) ? e.sets : []).map(cleanSet).filter(Boolean) }));
-  const out = { day: s.day.slice(0, 40), exercises, time: typeof s.time === 'string' && ISO_TIME.test(s.time) ? s.time : '' };
+  // The day (routine name) may be as long as routine names are (200).
+  const out = { day: s.day.slice(0, 200), exercises, time: typeof s.time === 'string' && ISO_TIME.test(s.time) ? s.time : '' };
   // An id that is an original-app key (date|day|JSON, stored by an earlier version) becomes its hash.
   if (typeof s.id === 'string' && s.id) out.id = s.id.includes('|') ? legacyId(s.id) : s.id.slice(0, 64);
   if (Number.isFinite(+s.duration) && +s.duration >= 0) out.duration = Math.round(+s.duration);

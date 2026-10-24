@@ -22,7 +22,12 @@ export async function loadDates() {
   if (own.error) return fail(own.error);
   const byId = new Map([...(r.data || []), ...(own.data || [])].map((d) => [d.id, d]));
   // Dates the user said they'd go to are always there too, however many come before them.
-  const replies = await supabase.from('gym_date_rsvps').select('date_id').eq('user_id', account.user.id).in('status', ['going', 'maybe']).limit(100);
+  const replies = await supabase.from('gym_date_rsvps')
+    .select('date_id,gym_dates!inner(starts_at,host_id,cancelled_at)')
+    .eq('user_id', account.user.id).in('status', ['going', 'maybe'])
+    .is('gym_dates.cancelled_at', null).neq('gym_dates.host_id', account.user.id)
+    .gte('gym_dates.starts_at', new Date(Date.now() - 6 * 3600 * 1000 - 360 * 60000).toISOString())
+    .limit(200);
   if (replies.error) return fail(replies.error);
   const missing = [...new Set((replies.data || []).map((x) => x.date_id))].filter((id) => !byId.has(id));
   for (let i = 0; i < missing.length; i += 60) {
@@ -62,7 +67,7 @@ export async function createDate({ startsAt, duration, gym, workout, note, invit
     starts_at: startsAt.toISOString(),
     duration_min: duration,
     gym: gym.trim(),
-    workout: workout || null,
+    workout: workout ? String(workout).slice(0, 40) : null, // the database keeps up to 40 characters
     note: note ? note.trim() : null,
     invite_only: invite,
   }).select('id').single();
