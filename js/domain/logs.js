@@ -92,12 +92,6 @@ export function sanitizeLogs(source) {
   return out;
 }
 
-export function allKeys(logs) {
-  const keys = [];
-  Object.keys(logs).forEach((date) => (logs[date] || []).forEach((s) => keys.push(sessionKey(date, s))));
-  return keys;
-}
-
 /**
  * Merges two histories. The same session (same key) keeps its most recently
  * saved copy. Sessions listed in `deleted`, or saved on a date before that date

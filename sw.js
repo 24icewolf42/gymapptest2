@@ -24,6 +24,7 @@ const FILES = [
   'js/domain/gym-dates.js',
   'js/domain/logs.js',
   'js/domain/plan.js',
+  'js/domain/release.js',
   'js/domain/rest-timer.js',
   'js/domain/weights.js',
   'js/cloud/client.js',

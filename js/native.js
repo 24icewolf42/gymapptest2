@@ -4,6 +4,7 @@ import { $, html, render, toast, scriptURL } from './core/dom.js';
 import { openSheet } from './ui/sheet.js';
 import { handleNativeBack } from './core/router.js';
 import { APP_VERSION } from './version.js';
+import { isNewer, parseRelease, releaseIsNewer } from './domain/release.js';
 
 const APK_REPO = 'roguelineageaccmanager/gymapptest2';
 const APK_URL = `https://github.com/${APK_REPO}/releases/download/latest/rat-tracker.apk`;
@@ -18,34 +19,11 @@ export function isNativeApp() {
   return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 }
 
-/** True when version a is newer than b ("3.0.1" > "3.0.0"). */
-export function isNewer(a, b) {
-  const x = String(a).replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
-  const y = String(b).replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) {
-    if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
-  }
-  return false;
-}
-
 function showBanner(title, sub, onTap) {
   const el = $('updateBanner');
   render(el, html`<button type="button" class="update-btn"><b>${title}</b><small>${sub}</small></button>`);
   el.hidden = false;
   el.querySelector('button').onclick = onTap;
-}
-
-/** Parses "Tracker v3.0.1 (build 57)" into { version, build }. */
-export function parseRelease(name) {
-  const v = /v(\d+\.\d+\.\d+)/.exec(name || '');
-  const b = /\(build (\d+)\)/.exec(name || '');
-  return { version: v ? v[1] : null, build: b ? +b[1] : null };
-}
-
-/** Newer by build number when both are known (catches releases without a version bump). */
-export function releaseIsNewer(release, installed) {
-  if (release.build != null && installed.build != null) return release.build > installed.build;
-  return !!release.version && isNewer(release.version, installed.version);
 }
 
 async function installedBuild() {
