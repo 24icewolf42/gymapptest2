@@ -158,8 +158,10 @@ export function openSession(day, date = ymd(), { key = null, fresh = false } = {
     updatesLastUsed: !existing && date === today,
     doneAt: {}, anyAt: 0, selected: null, wasWaiting: false, prs: {},
     // Food and drink before and after (kept with the draft and saved with the workout).
-    // A draft records food even when it was removed (null), so a removed entry does not come back.
+    // A draft records food only once it was changed in it (even when removed: null),
+    // so a removed entry does not come back and food added elsewhere is not hidden.
     nutrition: sanitizeNutrition(resume && 'nutrition' in resume ? resume.nutrition : existing?.nutrition) || {},
+    foodChanged: !!(resume && 'nutrition' in resume),
   };
   returnFocus = document.activeElement;
   renderSession(resume);
@@ -291,7 +293,7 @@ function saveDraft() {
   if (!s) return;
   const ex = {};
   cards().forEach((card) => { ex[s.exercises[+card.dataset.index].name] = collectSets(card); });
-  writeDraft(s.draftId, { day: s.day, date: s.date, key: s.key, startedAt: s.startedAt, active: Date.now(), ex, nutrition: sanitizeNutrition(s.nutrition) });
+  writeDraft(s.draftId, { day: s.day, date: s.date, key: s.key, startedAt: s.startedAt, active: Date.now(), ex, ...(s.foodChanged ? { nutrition: sanitizeNutrition(s.nutrition) } : {}) });
 }
 
 function autosave(card) {
@@ -542,6 +544,7 @@ async function editFood(side) {
   const result = await foodSheet(side, s.nutrition[side]);
   if (!result || !s) return;
   if (result.entry) s.nutrition[side] = result.entry; else delete s.nutrition[side];
+  s.foodChanged = true;
   saveDraft();
   // Updated in place, so focus stays on the button that opened it.
   const summary = $('sessionList').querySelector(`[data-food-summary="${side}"]`);
