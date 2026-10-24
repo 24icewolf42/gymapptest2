@@ -1,7 +1,9 @@
 // Platform glue: Android back button, APK self-update, the web update check,
 // the "get the app" banner and the offline service worker.
-import { $, toast, toastLater, scriptURL } from './core/dom.js';
+import { $, html, toast, toastLater, scriptURL } from './core/dom.js';
+import { openSheet } from './ui/sheet.js';
 import { emit } from './core/store.js';
+import { isIOS, isStandalone } from './core/platform.js';
 import { handleNativeBack, currentPage } from './core/router.js';
 import { APP_VERSION } from './version.js';
 import { isNewer, parseRelease, releaseIsNewer } from './domain/release.js';
@@ -105,6 +107,21 @@ async function checkWeb(manual) {
   } catch { if (manual) toast('Could not check for updates. Are you online?'); }
 }
 
+/** Step-by-step "Add to Home Screen" for iPhone and iPad (Safari, and Chrome or Edge since iOS 16.4). */
+function showIOSInstall() {
+  return openSheet({
+    title: 'Add Tracker to your Home Screen',
+    body: html`<p class="sheet-text">Tracker then opens full-screen from its own icon, works offline and updates itself.</p>
+      <ol class="plain steps">
+        <li>Tap the <b>Share</b> button (a square with an arrow pointing up): at the bottom in Safari, or in the address bar in Chrome or Edge.</li>
+        <li>Scroll down and choose <b>Add to Home Screen</b>.</li>
+        <li>Tap <b>Add</b>. Then open Tracker from your Home Screen.</li>
+      </ol>
+      <p class="hint">Opened inside another app (for example Instagram or WhatsApp)? First open the page in Safari.</p>`,
+    actions: [{ label: 'Got it', value: true, tone: 'primary' }],
+  });
+}
+
 export function initNative() {
   const native = isNativeApp();
   const App = plugin('App');
@@ -118,23 +135,26 @@ export function initNative() {
 
   // Suggest the Android app, or explain how to add the web app on iPhone/iPad.
   const banner = $('installBanner');
-  const ios = /iPhone|iPad|iPod/i.test(navigator.userAgent)
-    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const ios = isIOS();
+  const standalone = isStandalone();
   if (!native && !standalone && sessionStorage.getItem('hideInstall') !== '1') {
     if (/Android/i.test(navigator.userAgent)) {
       banner.hidden = false;
     } else if (ios) {
       banner.setAttribute('aria-label', 'Add Tracker to your Home Screen');
       $('installTitle').textContent = 'Add Tracker to your Home Screen';
-      $('installHint').textContent = 'Use Safari to install it for quick, offline access.';
+      $('installHint').textContent = 'It then opens like an app, also offline. No App Store needed.';
       $('installLink').hidden = true;
       $('installHelp').hidden = false;
-      $('installHelp').onclick = () => toast('In Safari, tap Share, then Add to Home Screen.');
+      $('installHelp').onclick = showIOSInstall;
       banner.hidden = false;
     }
     $('installClose').onclick = () => { banner.hidden = true; sessionStorage.setItem('hideInstall', '1'); };
   }
+
+  // Ask the browser to keep the app's data (workouts live on the phone), mainly
+  // for iPhone, which may otherwise clear a website's storage it rarely sees.
+  if (!native && standalone) navigator.storage?.persist?.().catch(() => {});
 
   // Offline support for the web version. The Android app ships its files already.
   if (!native && 'serviceWorker' in navigator && location.protocol === 'https:') {
