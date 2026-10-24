@@ -32,7 +32,7 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
           </div>
           ${dismissible ? html`<button type="button" class="icon-btn" data-sheet-close aria-label="Close">${icons.x}</button>` : ''}
         </header>
-        <div class="sheet-body" id="${id}-body">${body}</div>
+        <div class="sheet-body" id="${id}-body">${body}<p class="form-status" aria-live="polite"></p></div>
         ${actions.length ? html`<div class="sheet-actions">${actions.map((a, i) => html`<button type="${a.submit ? 'submit' : 'button'}" class="btn btn-${a.tone || 'secondary'}" data-sheet-action="${i}">${a.label}</button>`)}</div>` : ''}
       </form>`);
     root.appendChild(backdrop);
@@ -83,7 +83,11 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
     const onBack = () => { if (closable()) finish(null, true); else closeLayer = pushLayer(onBack); };
     let closeLayer = pushLayer(onBack);
 
-    backdrop.addEventListener('click', (e) => { if (e.target === backdrop && closable()) finish(null); });
+    backdrop.addEventListener('click', (e) => {
+      if (e.target !== backdrop) return;
+      if (closable()) finish(null);
+      else sheet.focus({ preventScroll: true }); // a tap beside it keeps focus in it
+    });
     if (dismissible) sheet.querySelector('[data-sheet-close]').onclick = () => { if (closable()) finish(null); };
     sheet.querySelectorAll('[data-sheet-action]').forEach((b) => {
       const a = actions[+b.dataset.sheetAction];
@@ -139,13 +143,7 @@ function enableDragToClose(sheet, close) {
 export function markBusy(sheet, button, label = 'Saving…') {
   const closers = [...sheet.querySelectorAll('[data-sheet-close], [data-sheet-action]')].filter((b) => b !== button);
   const fields = [...sheet.querySelectorAll('input, textarea')].filter((f) => !f.readOnly);
-  let status = sheet.querySelector('.form-status');
-  if (!status) {
-    status = document.createElement('p');
-    status.className = 'form-status';
-    status.setAttribute('aria-live', 'polite');
-    sheet.querySelector('.sheet-body').append(status);
-  }
+  const status = sheet.querySelector('.form-status'); // rendered empty with the sheet, so the change is read
   const text = button.textContent;
   sheet.dataset.busy = '1';
   [button, ...closers].forEach((b) => b.setAttribute('aria-disabled', 'true'));

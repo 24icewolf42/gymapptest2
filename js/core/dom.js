@@ -325,7 +325,8 @@ export function toast(message, options = {}) {
   shown++;
   const duration = tone === 'error' ? Math.max(ms, 6000) : action ? Math.max(ms, 10000) : ms;
   if (tone === 'error') errorUntil = Date.now() + duration;
-  scheduleHide(el, duration);
+  if (el.classList.contains('under-sheet')) clearTimeout(toastTimer); // waits, hidden, until the dialog closes
+  else scheduleHide(el, duration);
 }
 
 /**
@@ -340,13 +341,24 @@ export function toastLater() {
 
 const sheetOpen = () => !!document.querySelector('#sheetRoot .sheet-backdrop:not(.closing)');
 
-/** Keeps the toast's Undo out of reach while a dialog is open (called by the sheets). */
+/**
+ * While a dialog is open the toast is hidden (it would cover the dialog's
+ * buttons) and its time is paused; when the dialog closes it is shown and
+ * read again. Called by the sheets.
+ */
 export function updateToastReach() {
-  const open = sheetOpen();
-  const b = document.querySelector('#toast .toast-action');
+  const el = $('toast');
+  if (!el) return;
+  const open = sheetOpen(), was = el.classList.contains('under-sheet');
+  const b = el.querySelector('.toast-action');
   if (b) b.inert = open;
-  // Taps go through to the dialog's buttons under it.
-  $('toast')?.classList.toggle('under-sheet', open);
+  el.classList.toggle('under-sheet', open);
+  if (!el.classList.contains('show') || open === was) return;
+  if (open) clearTimeout(toastTimer);
+  else {
+    el.replaceChildren(...el.childNodes); // read again by screen readers
+    scheduleHide(el, el.classList.contains('has-action') ? 6000 : TOAST_RESUME_MS);
+  }
 }
 
 /** Removes an Undo whose screen has gone (page change, workout closed): it could no longer act. */
@@ -378,7 +390,7 @@ function wireToast(el) {
   if (el.dataset.wired) return;
   el.dataset.wired = '1';
   const hold = () => clearTimeout(toastTimer);
-  const resume = () => { if (el.classList.contains('show')) scheduleHide(el, TOAST_RESUME_MS); };
+  const resume = () => { if (el.classList.contains('show') && !el.classList.contains('under-sheet')) scheduleHide(el, TOAST_RESUME_MS); };
   el.addEventListener('focusin', hold);
   // Only a mouse holds it: a tap fires enter but no leave until something else is tapped.
   el.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') hold(); });
