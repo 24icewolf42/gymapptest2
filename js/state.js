@@ -2,7 +2,7 @@
 // `state` and call the save functions; cloud sync listens for the events.
 import { KEYS, read, write, readText, writeText, remove, emit } from './core/store.js';
 import { ymd } from './core/dates.js';
-import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule, planHashes, isSafeImage, sanitizeWorkoutName } from './domain/plan.js';
+import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule, planHashes, isSafeImage, sanitizeWorkoutName, deepDefang } from './domain/plan.js';
 import { sanitizeLogs, upgradeLastUsed, sessionKey, newSessionId, mergeProgress, normalizeBypass, activeBypass, streak, bestStreak } from './domain/logs.js';
 import { sanitizeWeights, upsertWeight } from './domain/weights.js';
 
@@ -250,6 +250,19 @@ const LOCAL_DATA_KEYS = [KEYS.logs, KEYS.lastUsed, KEYS.weights, KEYS.bypass, KE
 export function hasLocalData() {
   return Object.keys(state.logs).length > 0 || Object.keys(state.workouts).length > 0 || state.weights.length > 0 ||
     Object.keys(state.lastUsed).length > 0 || Object.keys(state.bypassState).length > 0 || !!readText(KEYS.restImage) || (read(KEYS.gyms, []) || []).length > 0;
+}
+
+/**
+ * Defuses markup in data on this phone that may have been entered by someone
+ * else (it joins an account it did not come from), as for backup files: the
+ * original app shows names unescaped on the account's other devices.
+ */
+export function defangLocalData() {
+  [KEYS.workouts, KEYS.schedule, KEYS.logs, KEYS.lastUsed, KEYS.deletedWorkouts, KEYS.restoredWorkouts, KEYS.planTimes].forEach((k) => {
+    const v = read(k, null);
+    if (v != null) write(k, deepDefang(v));
+  });
+  loadState();
 }
 
 /** Removes this phone's training data (used when another account signs in, or on request at sign-out). */

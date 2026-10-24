@@ -706,3 +706,17 @@ test('Try again keeps its place and says how it went', async ({ browser }) => {
   await page.keyboard.press('Enter');
   await expect(page.locator('#toast')).toContainText('Loaded');
 });
+
+test('workouts that belong to no account are defused when they join one', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('dfg'));
+  await page.addInitScript(() => {
+    if (localStorage.getItem('seeded')) return;
+    localStorage.setItem('seeded', '1');
+    localStorage.setItem('gymCustomWorkouts', JSON.stringify({ 'Push<img src=x onerror=alert(1)>': [{ name: 'Dips', cat: 'chest', sets: 2, target: '8', rest: 60, note: '' }], 'Arms <3': [{ name: 'Curl', cat: 'arms', sets: 2, target: '10', rest: 60, note: '' }] }));
+  });
+  await open(page);
+  await signInAs(page, u);
+  const plan = (await u.client.from('workout_plans').select('plan').eq('user_id', u.id).single()).data.plan;
+  expect(Object.keys(plan.workouts).sort()).toEqual(['Arms <3', 'Push‹img src=x onerror=alert(1)>']);
+});

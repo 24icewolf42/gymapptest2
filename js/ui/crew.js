@@ -379,7 +379,7 @@ async function openDateSheet(minutes) {
     if (!sheet.closest('.sheet-backdrop.open')) {
       if (!r.error) {
         const c = await api.cancelDate(r.data.id);
-        toast(c.error ? 'The gym date was posted and could not be taken back. Cancel it in Crew.' : 'Gym date taken back: you closed the sheet while it was being posted.', { tone: c.error ? 'error' : 'default' });
+        toast(c.error ? 'The gym date was posted and could not be taken back. Cancel it in Crew.' : 'Gym date taken back (you closed the sheet while it was being posted). Friends with the app open may already have seen it.', { tone: c.error ? 'error' : 'default' });
         refreshCrew();
       } else {
         // It may still have reached the server (e.g. a timeout): show what is there.

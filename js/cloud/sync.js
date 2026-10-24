@@ -3,7 +3,7 @@
 import { supabase, SITE_URL, errorText, isMissingSchema } from './client.js';
 import {
   state, localPlan, applyPlan, planBase, setPlanBase, setPlanTombstones, saveLogs, saveLastUsed, saveWeights, saveSync, saveBypass, saveTombstones,
-  hasLocalData, clearLocalData,
+  hasLocalData, clearLocalData, defangLocalData,
 } from '../state.js';
 import { mergePlans, planHashes, stableStringify, hashOf } from '../domain/plan.js';
 import { mergeLogs, mergeProgress, mergeBypass, dailySummaries, sessionKey } from '../domain/logs.js';
@@ -127,6 +127,9 @@ async function startSession(user) {
     if (account.user?.id !== user.id) return;
     if (answeredElsewhere(user)) return finishStart(user);
     if (choice !== 'merge') { await endSession(); return; }
+  }
+  if (!owner && hasLocalData()) {
+    defangLocalData(); // data no account owned joins this one
   } else if (owner && owner !== user.id && hasLocalData()) {
     // Another tab of the app is signing in through its form: that tab asks;
     // this one waits for its answer instead of opening the question too.
@@ -152,6 +155,7 @@ async function startSession(user) {
       // The other account's deletions and edit times must not act on this account's plan.
       setPlanTombstones([], []);
       write(KEYS.planTimes, {});
+      defangLocalData(); // another account's data joins this one
       // These weigh-ins are new to this account: a weigh-in it once deleted on
       // the same day must not drop them (a weigh-in it has there still counts).
       state.sync.mergedWeightDates = state.weights.map((x) => x.date);
@@ -548,8 +552,14 @@ async function endSession() {
 export async function changeUsername(name) {
   const username = String(name || '').trim().toLowerCase();
   if (!/^[a-z0-9_]{3,20}$/.test(username)) return 'Use 3–20 letters, numbers or _.';
-  const r = await supabase.from('profiles').update({ username }).eq('id', account.user.id).select('id,username').single();
-  if (r.error) return r.error.code === '23505' ? 'That username is taken.' : errorText(r.error);
+  let r = await supabase.rpc('change_username', { name: username });
+  if (isMissingSchema(r.error)) {
+    // Older database: plain update.
+    r = await supabase.from('profiles').update({ username }).eq('id', account.user.id).select('id').single();
+    if (r.error) return r.error.code === '23505' ? 'That username is taken.' : errorText(r.error);
+  } else if (r.error) return errorText(r.error);
+  else if (r.data === 'taken') return 'That username is taken.';
+  else if (r.data !== 'ok') return 'Use 3–20 letters, numbers or _.';
   account.profile = { ...account.profile, username };
   emit('gym:account');
   return '';
