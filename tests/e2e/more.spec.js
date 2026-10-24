@@ -2059,7 +2059,7 @@ test('an open workout follows a sync that defuses its exercise names', async ({ 
   await open(page);
   await page.evaluate(async () => {
     const { state, savePlan } = await import('/js/state.js');
-    state.workouts.Legs = [{ name: 'Press <b>', cat: 'legs', sets: 2, target: '8', rest: 60, note: '' }];
+    state.workouts.Legs = [{ name: 'Press <b>', cat: 'legs', sets: 2, target: '8 <i>slow</i>', rest: 60, note: '' }];
     savePlan();
   });
   await scheduleToday(page, 'Legs');
@@ -2072,7 +2072,7 @@ test('an open workout follows a sync that defuses its exercise names', async ({ 
   await card.locator('.r').first().fill('5');
   await page.evaluate(async () => {
     const { state, savePlan } = await import('/js/state.js');
-    state.workouts.Legs = state.workouts.Legs.map((e) => ({ ...e, name: 'Press ‹b>' }));
+    state.workouts.Legs = state.workouts.Legs.map((e) => ({ ...e, name: 'Press ‹b>', target: '8 ‹i>slow‹/i>' }));
     savePlan();
     (await import('/js/core/store.js')).emit('gym:plan-updated');
   });
@@ -2085,7 +2085,7 @@ test('an open workout follows a sync that defuses its exercise names', async ({ 
   await sheetAction(page, 'Save workout');
   await expect(session).toBeHidden();
   const { logs, lastUsed } = await page.evaluate(() => ({ logs: JSON.parse(localStorage.getItem('gymLogs')), lastUsed: JSON.parse(localStorage.getItem('gymLastUsed') || '{}') }));
-  expect(Object.values(logs).flat()[0].exercises.map((e) => e.name)).toEqual(['Press ‹b>']);
+  expect(Object.values(logs).flat()[0].exercises.map((e) => [e.name, e.target])).toEqual([['Press ‹b>', '8 ‹i>slow‹/i>']]);
   expect(Object.keys(lastUsed)).not.toContain('Press <b>');
 });
 
@@ -2128,4 +2128,55 @@ test('weigh-ins and username changes name the account they are meant for', async
   await expect(page.locator('#toast')).toContainText('Username changed');
   expect(sent.length).toBeGreaterThan(1);
   expect(new Set(sent)).toEqual(new Set([u.id]));
+});
+
+test('a logged workout defused by a sync while it is being edited stays defused', async ({ page }) => {
+  await offline(page);
+  await page.addInitScript(() => {
+    const d = new Date(), today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    if (!localStorage.getItem('gymLogs')) localStorage.setItem('gymLogs', JSON.stringify({ [today]: [{ id: 'e1', day: 'Push', time: d.toISOString(), exercises: [{ name: 'Press <b>', target: '8', sets: [{ w: '50', r: '8', done: true }] }] }] }));
+  });
+  await open(page);
+  await page.evaluate(async () => {
+    const d = new Date(), today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const { openSession } = await import('/js/ui/session.js');
+    const { sessionKey } = await import('/js/domain/logs.js');
+    const { state } = await import('/js/state.js');
+    openSession('Push', today, { key: sessionKey(today, state.logs[today][0]) });
+  });
+  const session = page.locator('#session');
+  await expect(session).toBeVisible();
+  // The sync defuses the stored copy while the edit is open.
+  await page.evaluate(async () => {
+    const { state, saveLogs } = await import('/js/state.js');
+    Object.values(state.logs).flat().forEach((x) => { x.exercises.forEach((e) => { e.name = e.name.replace('<b', '‹b'); }); });
+    saveLogs();
+  });
+  await session.locator('.ex-card').first().locator('.r').first().fill('9');
+  await session.getByRole('button', { name: /Save/ }).first().click();
+  await sheetAction(page, 'Save workout');
+  await expect(session).toBeHidden();
+  const names = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('gymLogs'))).flat().flatMap((x) => x.exercises.map((e) => e.name)));
+  expect(names).toEqual(['Press ‹b>']);
+});
+
+test('another tab stops syncing when this one signs out and removes the data', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('rt'));
+  await u.client.from('workout_data').insert({ user_id: u.id, logs: { '2026-10-01': [{ id: 'r1', day: 'Push', time: '2026-10-01T10:00:00.000Z', exercises: [{ name: 'Bench', target: '8', sets: [{ w: '60', r: '8', done: true }] }] }] }, progress: {} });
+  const ctx = await newPhone(browser);
+  const one = await ctx.newPage();
+  await open(one); await signInAs(one, u);
+  const two = await ctx.newPage();
+  await open(two);
+  await expect.poll(() => two.evaluate(async () => (await import('/js/cloud/sync.js')).account.ready), { timeout: 15000 }).toBe(true);
+  // Tab 2's data read is slow; tab 1's sign-out takes longer than it waits.
+  let holdRead = true;
+  await two.route('**/rest/v1/workout_data*', async (r) => { if (holdRead && r.request().method() === 'GET') { holdRead = false; await new Promise((res) => setTimeout(res, 6000)); } return r.continue(); });
+  await one.route('**/auth/v1/logout*', async (r) => { await new Promise((res) => setTimeout(res, 9000)); return r.continue(); });
+  two.evaluate(async () => (await import('/js/cloud/sync.js')).syncAll()).catch(() => {});
+  await two.waitForTimeout(300);
+  await one.evaluate(async () => (await import('/js/cloud/sync.js')).signOut({ removeLocalData: true }));
+  await two.waitForTimeout(8000); // tab 2's read has come back
+  expect(await one.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('gymLogs') || '{}')))).toEqual([]);
 });
