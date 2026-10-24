@@ -2,7 +2,7 @@
 // `state` and call the save functions; cloud sync listens for the events.
 import { KEYS, read, write, readText, writeText, remove, emit } from './core/store.js';
 import { ymd } from './core/dates.js';
-import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule, planHashes, isSafeImage } from './domain/plan.js';
+import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule, planHashes, isSafeImage, sanitizeWorkoutName } from './domain/plan.js';
 import { sanitizeLogs, upgradeLastUsed, sessionKey, newSessionId, mergeProgress, normalizeBypass, activeBypass, streak, bestStreak } from './domain/logs.js';
 import { sanitizeWeights, upsertWeight } from './domain/weights.js';
 
@@ -92,7 +92,9 @@ export function savePlan({ silent = false } = {}) {
 
 export function planTombstones() {
   const deleted = read(KEYS.deletedWorkouts, []), restored = read(KEYS.restoredWorkouts, []);
-  return { deleted: Array.isArray(deleted) ? deleted : [], restored: Array.isArray(restored) ? restored : [] };
+  // Names as routines are named (old lists, backups and old cloud rows may hold raw ones).
+  const clean = (list) => (Array.isArray(list) ? [...new Set(list.map(sanitizeWorkoutName).filter(Boolean))] : []);
+  return { deleted: clean(deleted), restored: clean(restored) };
 }
 
 export function setPlanTombstones(deleted, restored) {

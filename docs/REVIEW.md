@@ -107,7 +107,7 @@ After the rework, three independent Opus reviews (security/privacy, data correct
 | R3-N1, N2, N4, N5 | Nit | Android 6 wording, settings "sync", self-referential hash check, table extras | Docs and comments corrected, privacy notice lists what syncs, hash check dropped, TRUNCATE/REFERENCES/TRIGGER/MAINTAIN revoked; test |
 | UX nits (4) | Nit | Weight field kept its value, aria-label on a span, chip tab stops, stepper names | All fixed |
 
-Upstream limits (not fixable in this client): an old-app device re-publishes leaderboard stats after "Stop sharing", and re-uploads routines that were deleted and re-created.
+Upstream limits (not fixable in this client): an old-app device re-publishes leaderboard stats after "Stop sharing", and re-uploads routines that were deleted and re-created. A session without id and time (only from foreign imports) that is deleted in this app stays in the original app, which keys it by its full JSON.
 
 ### Round 2 (security 7/10, correctness 6/10, UX/tests 6/10)
 

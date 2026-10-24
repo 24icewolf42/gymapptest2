@@ -2,9 +2,10 @@
 // Pure functions, no DOM or storage.
 import { mondayIndex, addDays, ymd } from '../core/dates.js';
 
-// Markup characters are removed from names and values: the original app puts
-// them into the page unescaped.
-const plain = (s) => s.replace(/[<>"`]/g, '');
+// Markup characters in names and values become look-alikes: the original app
+// puts them into the page unescaped (see plain() in plan.js).
+const LOOKALIKE = { '<': '‹', '>': '›', '"': '”', '`': '’' };
+const plain = (s) => s.replace(/[<>"`]/g, (c) => LOOKALIKE[c]);
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/;
 
 /**

@@ -34,9 +34,11 @@ function clampInt(value, min, max, fallback) {
   return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
 }
 
-// Markup characters are removed from every name and note: the original app
-// (still in use on some phones) puts them into the page unescaped.
-export const plain = (s) => s.replace(/[<>"`]/g, '');
+// Markup characters in names and notes become look-alikes (Arms <3 -> Arms ‹3):
+// the original app (still on some phones) puts them into the page unescaped.
+// The database does the same for every app version.
+const LOOKALIKE = { '<': '‹', '>': '›', '"': '”', '`': '’' };
+export const plain = (s) => s.replace(/[<>"`]/g, (c) => LOOKALIKE[c]);
 
 function text(value, max) {
   return typeof value === 'string' ? plain(value).trim().slice(0, max) : '';

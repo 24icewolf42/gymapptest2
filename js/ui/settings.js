@@ -233,7 +233,7 @@ async function restoreFrom(text) {
   let data;
   try { data = parseBackup(text); } catch (e) { toast(e.message, { tone: 'error' }); return; }
   const ok = await confirmDialog(account.user
-    ? 'Your workouts on this phone are replaced by the backup. At the next sync, workouts already in your account are merged back in, and what the backup holds comes back even if it was deleted since.'
+    ? 'Everything on this phone is replaced by the backup. At the next sync, your routines and week return to how they are in the backup (also if they were changed or deleted since), and workouts already in your account are merged back in.'
     : 'Everything on this phone is replaced by the backup.', { title: 'Restore this backup?', ok: 'Restore', danger: true });
   if (!ok) return;
   // Replace everything: keys the backup does not have are removed, not kept.
