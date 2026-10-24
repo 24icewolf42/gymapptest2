@@ -1620,3 +1620,153 @@ test('a dragged exercise goes back to its place when the system cancels the drag
   expect(await page.locator('[data-ex]').evaluateAll((els) => els.map((e) => e.dataset.ex))).toEqual(['Pull-up', 'Dips', 'Plank']);
   await expect(page.locator('#toast')).not.toContainText('moved to position');
 });
+
+// ---- round 13 ----
+
+test('a routine the account deleted comes back (defused) when the user restores it from a backup', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('rdr'));
+  const ex = [{ name: 'Dips', cat: 'chest', sets: 2, target: '8', rest: 60, note: '' }];
+  await u.client.from('workout_plans').insert({ user_id: u.id, plan: { workouts: {}, schedule: {}, deletedWorkouts: ['Push <A>'] } });
+  await open(page);
+  await signInAs(page, u);
+  const backup = await page.evaluate(async (e) => {
+    const { makeBackup } = await import('/js/domain/backup.js');
+    const data = { gymLogs: '{}', gymCustomWorkouts: JSON.stringify({ 'Push <A>': e }) };
+    return makeBackup((k) => data[k] ?? null, 'test');
+  }, ex);
+  await page.locator('.page.active [data-open-settings]').first().click();
+  await page.locator('[data-restore]').click();
+  await page.locator('.sheet textarea[name=paste]').fill(backup);
+  await sheetAction(page, 'Restore pasted text');
+  await sheetAction(page, 'Restore');
+  await page.waitForEvent('load');
+  await page.locator('.page.active [data-open-settings]').first().click();
+  await expect(page.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 15000 });
+  const plan = (await u.client.from('workout_plans').select('plan').eq('user_id', u.id).single()).data.plan;
+  expect(Object.keys(plan.workouts)).toEqual(['Push ‹A>']);
+  expect(Object.keys(await page.evaluate(() => JSON.parse(localStorage.getItem('gymCustomWorkouts'))))).toEqual(['Push ‹A>']);
+});
+
+test('a restore made while a sync is uploading is still checked at the next sync', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('rrc'));
+  await open(page);
+  await signInAs(page, u);
+  let release, seen = false;
+  const held = new Promise((r) => { release = r; });
+  await page.route('**/rest/v1/workout_data*', async (r) => { if (r.request().method() !== 'GET' && !seen) { seen = true; await held; } return r.continue(); });
+  await page.evaluate(async () => {
+    const { state, saveLogs } = await import('/js/state.js');
+    state.logs['2026-10-20'] = [{ id: 'mine-1', day: 'Push', time: '2026-10-20T10:00:00.000Z', exercises: [{ name: 'Dips', target: '8', sets: [{ w: '0', r: '8', done: true }] }] }];
+    saveLogs();
+  });
+  await page.locator('.page.active [data-open-settings]').first().click();
+  await page.locator('[data-sync]').click();
+  await expect.poll(() => seen, { timeout: 10000 }).toBe(true);
+  const backup = await page.evaluate(async () => {
+    const { makeBackup } = await import('/js/domain/backup.js');
+    const logs = { '2026-10-21': [{ id: 'foreign-1', day: 'Pull <img src=x>', time: '2026-10-21T10:00:00.000Z', exercises: [{ name: 'Row', target: '8', sets: [{ w: '40', r: '8', done: true }] }] }] };
+    const data = { gymLogs: JSON.stringify(logs), gymCustomWorkouts: '{}' };
+    return makeBackup((k) => data[k] ?? null, 'test');
+  });
+  await page.locator('[data-restore]').click();
+  await page.locator('.sheet textarea[name=paste]').fill(backup);
+  await sheetAction(page, 'Restore pasted text');
+  const loaded = page.waitForEvent('load');
+  await sheetAction(page, 'Restore');
+  await page.waitForTimeout(100);
+  release();
+  await loaded;
+  await page.locator('.page.active [data-open-settings]').first().click();
+  await expect(page.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 15000 });
+  await expect.poll(async () => {
+    const logs = (await u.client.from('workout_data').select('logs').eq('user_id', u.id).single()).data?.logs || {};
+    return (logs['2026-10-21'] || []).map((x) => x.day);
+  }, { timeout: 15000 }).toEqual(['Pull ‹img src=x>']);
+});
+
+test('an open workout follows a rename of its routine and is saved under the new name', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await createWorkout(page, 'Legs', ['Barbell Bench Press']);
+  await scheduleToday(page, 'Legs');
+  await tab(page, 'today');
+  await page.locator('#startToday').click();
+  const session = page.locator('#session');
+  await session.getByRole('button', { name: 'Start workout' }).click();
+  const card = session.locator('.ex-card').first();
+  await card.locator('.w').first().fill('100');
+  await card.locator('.r').first().fill('5');
+  await card.locator('.check').first().click();
+  await page.evaluate(async () => (await import('/js/core/store.js')).emit('gym:routines-renamed', { Legs: 'Legs 2' }));
+  await expect(page.locator('#sessionTitle')).toHaveText('Legs 2');
+  await card.locator('.r').nth(1).fill('5');
+  await session.getByRole('button', { name: 'Finish workout' }).click();
+  await sheetAction(page, 'Save workout');
+  await expect(session).toBeHidden();
+  const { logs, drafts } = await page.evaluate(() => ({ logs: JSON.parse(localStorage.getItem('gymLogs')), drafts: JSON.parse(localStorage.getItem('gymDrafts') || '{}') }));
+  expect(Object.values(logs).flat().map((x) => x.day)).toEqual(['Legs 2']);
+  expect(Object.keys(drafts)).toEqual([]);
+});
+
+test('a drag drops the exercise that was dragged, also when the routine changed meanwhile', async ({ page }) => {
+  await page.context().route('**/cloud-config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: 'window.GYM_CLOUD_CONFIG = {};' }));
+  await open(page);
+  await createWorkout(page, 'Arms', ['Pull-up', 'Dips', 'Plank', 'Push-up']);
+  await page.locator('[data-edit="Arms"]').click();
+  const other = await page.context().newPage();
+  await open(other);
+  const grip = page.locator('[data-ex="Plank"] [data-drag]');
+  const g = await grip.boundingBox(), t = await page.locator('[data-ex="Dips"]').boundingBox();
+  await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(g.x + g.width / 2, t.y + 5, { steps: 8 });
+  // Another tab removes the first exercise during the drag.
+  await other.evaluate(() => {
+    const w = JSON.parse(localStorage.getItem('gymCustomWorkouts'));
+    w.Arms = w.Arms.filter((e) => e.name !== 'Pull-up');
+    localStorage.setItem('gymCustomWorkouts', JSON.stringify(w));
+  });
+  await expect(page.locator('[data-ex="Pull-up"]')).toHaveCount(0);
+  await page.mouse.move(g.x + g.width / 2, t.y + 4, { steps: 2 });
+  await page.mouse.up();
+  const order = await page.evaluate(() => JSON.parse(localStorage.getItem('gymCustomWorkouts')).Arms.map((e) => e.name));
+  expect(order[0]).toBe('Plank');
+  expect(order.sort()).toEqual(['Dips', 'Plank', 'Push-up']);
+});
+
+test('a friend request is never sent from an account that signed in after it was asked for', async ({ browser }) => {
+  const { makeUser, uniqueName, adminClient } = await import('../integration/helpers.js');
+  const a = await makeUser(uniqueName('fra'));
+  const b = await makeUser(uniqueName('frb'));
+  const t1 = await makeUser(uniqueName('frt'));
+  const t2 = await makeUser(uniqueName('frs'));
+  const page = await (await newPhone(browser)).newPage();
+  await open(page); await signInAs(page, a);
+  let release;
+  const held = new Promise((r) => { release = r; });
+  await page.route('**/rest/v1/rpc/find_profile*', async (r) => { await held; return r.continue(); });
+  await tab(page, 'crew');
+  await page.locator('[data-crew-tab="friends"]').click();
+  await page.locator('#friendName').fill(t1.username);
+  await page.keyboard.press('Enter');
+  await page.locator('#friendName').fill(t2.username);
+  await page.keyboard.press('Enter');
+  await page.locator('.page.active [data-open-settings]').first().click();
+  await page.locator('[data-signout]').click();
+  await sheetAction(page, 'Sign out, keep data here');
+  await expect(page.locator('#authForm')).toBeVisible({ timeout: 15000 });
+  const form = page.locator('#authForm');
+  await form.locator('[name=email]').fill(b.email);
+  await form.locator('[name=password]').fill(b.password);
+  await form.locator('[type=submit]').click();
+  const replace = page.locator('.sheet-backdrop.open .sheet').last().getByRole('button', { name: /Replace with my account|Start fresh/ }).first();
+  // Asked only if the phone holds data; A's account here has none.
+  if (await replace.isVisible({ timeout: 3000 }).catch(() => false)) await replace.click();
+  await expect.poll(() => page.evaluate(async () => (await import('/js/cloud/sync.js')).account.user?.email), { timeout: 15000 }).toBe(b.email);
+  release();
+  await page.waitForTimeout(3000);
+  const rows = (await adminClient().from('friend_requests').select('requester_id,target_id').in('target_id', [t1.id, t2.id])).data;
+  expect(rows).toEqual([]);
+});
