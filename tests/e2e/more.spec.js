@@ -221,7 +221,7 @@ test('a taken username at sign-up asks for another one', async ({ page }) => {
   await expect(page.locator('#toast')).toContainText('Username saved');
 });
 
-test('a long weigh-in history syncs in batches, and a weigh-in deleted elsewhere stays deleted', async ({ page }) => {
+test('a long weigh-in history syncs in batches and pages, and a weigh-in deleted elsewhere stays deleted', async ({ page }) => {
   const { makeUser, uniqueName } = await import('../integration/helpers.js');
   const u = await makeUser(uniqueName('w450'));
   // Deleted on another phone: this phone still has an old copy of it.
@@ -231,7 +231,7 @@ test('a long weigh-in history syncs in batches, and a weigh-in deleted elsewhere
     if (localStorage.getItem('seeded')) return;
     localStorage.setItem('seeded', '1');
     const list = [];
-    for (let i = 0; i < 450; i++) {
+    for (let i = 0; i < 1100; i++) {
       const d = new Date(2024, 0, 1 + i);
       list.push({ date: d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'), weight: i === 0 ? 180 : 70 + (i % 10) / 10 });
     }
@@ -239,10 +239,14 @@ test('a long weigh-in history syncs in batches, and a weigh-in deleted elsewhere
   });
   await open(page);
   await signInAs(page, u);
-  const rows = (await u.client.from('body_weight_logs').select('log_date,weight_kg').eq('user_id', u.id)).data;
-  expect(rows).toHaveLength(449);
-  expect(rows.find((r) => r.log_date === '2024-01-01')).toBeUndefined();
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('bodyWeightLogs')).length)).toBe(449);
+  expect((await u.client.from('body_weight_logs').select('log_date', { count: 'exact', head: true }).eq('user_id', u.id)).count).toBe(1099);
+  expect((await u.client.from('body_weight_logs').select('log_date').eq('user_id', u.id).eq('log_date', '2024-01-01')).data).toEqual([]);
+  // A second sync reads more rows than one server page: nothing may look deleted.
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.locator('[data-sync]').click();
+  await expect(page.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 15000 });
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('bodyWeightLogs')).length)).toBe(1099);
 });
 
 test('a sync still running when the data is removed at sign-out does not bring it back', async ({ page }) => {
@@ -329,4 +333,62 @@ test('a link with someone else\'s session does not sign in or take this phone\'s
   await page.waitForTimeout(3000);
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('gymSyncState') || '{}').accountId ?? null)).toBeNull();
   expect((await other.client.from('body_weight_logs').select('log_date').eq('user_id', other.id)).data).toEqual([]);
+});
+
+test('removing the data at sign-out works offline with an expired session', async ({ page, context }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('offout'));
+  await open(page);
+  await signInAs(page, u);
+  // An hour later, with no signal: the access token has expired.
+  await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) => /^sb-.*-auth-token$/.test(k));
+    const s = JSON.parse(localStorage.getItem(key));
+    s.expires_at = Math.floor(Date.now() / 1000) - 60;
+    localStorage.setItem(key, JSON.stringify(s));
+  });
+  await context.setOffline(true);
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.locator('[data-signout]').click();
+  await sheetAction(page, 'Sign out and remove my data');
+  await sheetAction(page, 'Remove anyway');
+  await expect(page.locator('#authForm')).toBeVisible({ timeout: 15000 });
+  expect(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('sb-')))).toEqual([]);
+  await context.setOffline(false);
+  await page.reload();
+  await expect(page.locator('#page-today h1')).toHaveText('Today');
+  await page.locator('.page.active [data-open-settings]').click();
+  await expect(page.locator('#authForm')).toBeVisible();
+});
+
+test('restoring a backup brings back deleted workouts once, also after a day was cleared', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('rst'));
+  const session = { id: 'x1', day: 'Push', time: '2026-10-01T10:00:00.000Z', exercises: [{ name: 'Dips', target: '8', sets: [{ w: '10', r: '8', done: true }] }] };
+  // The original app cleared that day: the session's key and the date are both tombstoned.
+  await u.client.from('workout_data').insert({ user_id: u.id, logs: {}, progress: {}, deleted_sessions: ['x1'], deleted_dates: { '2026-10-01': Date.parse('2026-10-02') } });
+  await open(page);
+  await signInAs(page, u);
+  const backup = await page.evaluate(async (s) => {
+    const { makeBackup } = await import('/js/domain/backup.js');
+    const data = { gymLogs: JSON.stringify({ '2026-10-01': [s] }) };
+    return makeBackup((k) => data[k] ?? null, 'test');
+  }, session);
+  const restore = async () => {
+    await page.locator('.page.active [data-open-settings]').first().click();
+    await page.locator('[data-restore]').click();
+    await page.locator('.sheet textarea[name=paste]').fill(backup);
+    await sheetAction(page, 'Restore pasted text');
+    await sheetAction(page, 'Restore');
+    await page.waitForEvent('load');
+    await page.locator('.page.active [data-open-settings]').first().click();
+    await expect(page.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 15000 });
+    await page.locator('[data-close-settings]').click();
+  };
+  await restore();
+  await restore();
+  const cloud = (await u.client.from('workout_data').select('logs,deleted_dates').eq('user_id', u.id).single()).data;
+  expect(cloud.logs['2026-10-01']).toHaveLength(1);
+  expect(cloud.logs['2026-10-01'][0].exercises[0].name).toBe('Dips');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('gymLogs'))['2026-10-01'])).toHaveLength(1);
 });
