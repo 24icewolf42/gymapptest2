@@ -158,10 +158,9 @@ export function openSession(day, date = ymd(), { key = null, fresh = false } = {
     updatesLastUsed: !existing && date === today,
     doneAt: {}, anyAt: 0, selected: null, wasWaiting: false, prs: {},
     // Food and drink before and after (kept with the draft and saved with the workout).
-    // A draft records food only once it was changed in it (even when removed: null),
-    // so a removed entry does not come back and food added elsewhere is not hidden.
-    nutrition: sanitizeNutrition(resume && 'nutrition' in resume ? resume.nutrition : existing?.nutrition) || {},
-    foodChanged: !!(resume && 'nutrition' in resume),
+    // A draft records food only for the sides changed in it (a removed entry
+    // too), so nothing removed comes back and nothing added elsewhere is hidden.
+    ...draftFood(resume, existing),
   };
   returnFocus = document.activeElement;
   renderSession(resume);
@@ -227,7 +226,7 @@ function renderSession(resume) {
       <h3 id="food-title">Food &amp; drink</h3>
       ${['pre', 'post'].map((side) => html`<div class="food-row">
         <div class="food-text"><b>${side === 'pre' ? 'Before' : 'After'}</b> <span class="muted small" data-food-summary="${side}">${entrySummary(s.nutrition[side], side) || 'Not logged'}</span></div>
-        <button type="button" class="btn btn-soft btn-sm" data-food="${side}" aria-label="${foodLabel(side, s.nutrition[side])}">${s.nutrition[side] ? 'Edit' : 'Add'}</button>
+        <button type="button" class="btn btn-soft btn-sm" data-food="${side}" aria-label="${foodLabel(s.nutrition[side] ? 'Edit' : 'Add', side, s.nutrition[side])}">${s.nutrition[side] ? 'Edit' : 'Add'}</button>
       </div>`)}
     </section>
     ${s.exercises.map((e, i) => html`
@@ -293,7 +292,7 @@ function saveDraft() {
   if (!s) return;
   const ex = {};
   cards().forEach((card) => { ex[s.exercises[+card.dataset.index].name] = collectSets(card); });
-  writeDraft(s.draftId, { day: s.day, date: s.date, key: s.key, startedAt: s.startedAt, active: Date.now(), ex, ...(s.foodChanged ? { nutrition: sanitizeNutrition(s.nutrition) } : {}) });
+  writeDraft(s.draftId, { day: s.day, date: s.date, key: s.key, startedAt: s.startedAt, active: Date.now(), ex, ...(s.foodChanged.length ? { nutrition: sanitizeNutrition(pick(s.nutrition, s.foodChanged)), foodChanged: s.foodChanged } : {}) });
 }
 
 function autosave(card) {
@@ -466,6 +465,20 @@ async function finish() {
 
 // Food and drink before or after the session: what (quick picks and/or a
 // short note), when, and optionally water and protein. No calories on purpose.
+const pick = (obj, keys) => Object.fromEntries(keys.filter((k) => obj[k]).map((k) => [k, obj[k]]));
+
+/** The open workout's food: the saved workout's, with the sides changed in its draft taken from the draft. */
+function draftFood(resume, existing) {
+  const saved = sanitizeNutrition(existing?.nutrition) || {};
+  if (!resume || !('nutrition' in resume)) return { nutrition: saved, foodChanged: [] };
+  // Drafts from before per-side tracking changed both sides.
+  const changed = Array.isArray(resume.foodChanged) ? resume.foodChanged.filter((k) => k === 'pre' || k === 'post') : ['pre', 'post'];
+  const fromDraft = sanitizeNutrition(resume.nutrition) || {};
+  const nutrition = { ...saved };
+  changed.forEach((k) => { if (fromDraft[k]) nutrition[k] = fromDraft[k]; else delete nutrition[k]; });
+  return { nutrition, foodChanged: changed };
+}
+
 /**
  * The food and drink sheet for one side ('pre' or 'post'). Resolves with
  * { entry } (entry null when removed), or null when cancelled.
@@ -535,9 +548,12 @@ export function foodSheet(side, current) {
   });
 }
 
-/** Short label for a food button (read by screen readers with what was logged). */
-export function foodLabel(side, entry) {
-  return `${side === 'pre' ? 'Food and drink before' : 'Food and drink after'}: ${entry ? entrySummary(entry, side) + '. Edit' : 'add'}`;
+/**
+ * Accessible name of a food button: it starts with the button's visible text
+ * (so voice control finds it), then says which side and what was logged.
+ */
+export function foodLabel(visible, side, entry) {
+  return `${visible} ${side === 'pre' ? 'food before' : 'food after'}${entry ? ': ' + entrySummary(entry, side) : ''}`;
 }
 
 async function editFood(side) {
@@ -545,7 +561,7 @@ async function editFood(side) {
   const result = await foodSheet(side, s.nutrition[side]);
   if (!result || !s) return;
   if (result.entry) s.nutrition[side] = result.entry; else delete s.nutrition[side];
-  s.foodChanged = true;
+  if (!s.foodChanged.includes(side)) s.foodChanged = [...s.foodChanged, side];
   saveDraft();
   // Updated in place, so focus stays on the button that opened it.
   const summary = $('sessionList').querySelector(`[data-food-summary="${side}"]`);
@@ -553,7 +569,7 @@ async function editFood(side) {
   if (summary) summary.textContent = entrySummary(s.nutrition[side], side) || 'Not logged';
   if (btn) {
     btn.textContent = s.nutrition[side] ? 'Edit' : 'Add';
-    btn.setAttribute('aria-label', foodLabel(side, s.nutrition[side]));
+    btn.setAttribute('aria-label', foodLabel(btn.textContent, side, s.nutrition[side]));
   }
 }
 

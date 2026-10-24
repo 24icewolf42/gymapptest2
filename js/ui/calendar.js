@@ -3,6 +3,7 @@ import { $, html, render, on, toast, reducedMotion } from '../core/dom.js';
 import { ymd, parseYmd, fmtLong, mondayIndex, MONTHS, DOW_LETTER, fmtDuration, fmtClock } from '../core/dates.js';
 import { state, setBypass, deleteSession, restoreSession, saveLogs, markSessionsDeleted } from '../state.js';
 import { account } from '../cloud/sync.js';
+import { read, write, KEYS } from '../core/store.js';
 import { streak, sessionKey, newSessionId } from '../domain/logs.js';
 import { categoryLabel } from '../domain/catalog.js';
 import { displaySets } from '../domain/plan.js';
@@ -87,6 +88,15 @@ export function pickWorkout(date) {
   });
 }
 
+/** An unsaved edit of a workout that just got an id follows it, so it can still be resumed. */
+function moveDraft(ds, day, oldKey, newKey) {
+  const drafts = read(KEYS.drafts, {}) || {};
+  const from = ds + '|' + day + '|' + oldKey, to = ds + '|' + day + '|' + newKey;
+  if (drafts[from]) { drafts[to] = { ...drafts[from], key: newKey }; delete drafts[from]; write(KEYS.drafts, drafts); }
+  const active = read(KEYS.active, null);
+  if (active && active.date === ds && active.key === oldKey) write(KEYS.active, { ...active, key: newKey });
+}
+
 export async function openDay(ds) {
   const planned = state.schedule[mondayIndex(parseYmd(ds).getDay())];
   const logs = state.logs[ds] || [];
@@ -99,7 +109,7 @@ export async function openDay(ds) {
         <section class="log-session">
           <header class="log-head"><h3>${s.day}</h3><small>${s.duration ? fmtClock(s.duration) : ''}</small></header>
           <ul class="log-food plain">${['pre', 'post'].map((k) => html`<li><span class="food-side">${k === 'pre' ? 'Before' : 'After'}</span><span class="food-what" data-food-text="${k}">${entrySummary(s.nutrition?.[k], k) || 'Not logged'}</span>
-            <button type="button" class="btn btn-ghost btn-sm" data-food-log="${sessionKey(ds, s)}" data-side="${k}" aria-label="${foodLabel(k, s.nutrition?.[k])}">${s.nutrition?.[k] ? 'Change food' : 'Add food'}</button></li>`)}</ul>
+            <button type="button" class="btn btn-ghost btn-sm" data-food-log="${sessionKey(ds, s)}" data-side="${k}" aria-label="${foodLabel(s.nutrition?.[k] ? 'Change' : 'Add', k, s.nutrition?.[k])}">${s.nutrition?.[k] ? 'Change food' : 'Add food'}</button></li>`)}</ul>
           ${s.exercises.map((e) => html`<div class="log-ex"><b>${e.name}</b>
             <ol class="log-sets">${e.sets.map((x) => html`<li><span>${x.w || '–'} kg × ${x.r || '–'}</span>${x.done ? html`<i aria-label="done">${icons.check}</i>` : ''}</li>`)}</ol></div>`)}
           <div class="btn-row">
@@ -133,6 +143,7 @@ export async function openDay(ds) {
             if (!saveLogs()) { state.logs[ds] = state.logs[ds].map((x) => (x === next ? session : x)); toast('This phone’s storage is full, so it was not saved.', { tone: 'error' }); return; }
             if (oldKey !== next.id) {
               markSessionsDeleted([oldKey]);
+              moveDraft(ds, session.day, oldKey, next.id);
               // The sheet's buttons for this workout follow its new identity.
               b.closest('.log-session').querySelectorAll('[data-food-log], [data-edit], [data-del]').forEach((x) => {
                 ['foodLog', 'edit', 'del'].forEach((k) => { if (x.dataset[k] === oldKey) x.dataset[k] = next.id; });
@@ -140,7 +151,7 @@ export async function openDay(ds) {
             }
             b.closest('.log-food').querySelector(`[data-food-text="${side}"]`).textContent = entrySummary(next.nutrition?.[side], side) || 'Not logged';
             b.textContent = next.nutrition?.[side] ? 'Change food' : 'Add food';
-            b.setAttribute('aria-label', foodLabel(side, next.nutrition?.[side]));
+            b.setAttribute('aria-label', foodLabel(next.nutrition?.[side] ? 'Change' : 'Add', side, next.nutrition?.[side]));
           };
         });
       },
