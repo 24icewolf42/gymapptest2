@@ -95,5 +95,10 @@ jobs:
           status="$(curl -sS -o "$RUNNER_TEMP/auth.json" -w '%{http_code}' -X PATCH \
             "https://api.supabase.com/v1/projects/$PROJECT_REF/config/auth" \
             -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H 'Content-Type: application/json' --data "$body")"
-          test "$status" = 200 || { echo "::error::Updating the email template failed (HTTP $status)"; exit 1; }
+          if [ "$status" != 200 ]; then
+            # Only the error message is shown (a successful answer would contain the auth settings).
+            reason="$(jq -r '.message // .msg // .error // empty' "$RUNNER_TEMP/auth.json" 2>/dev/null | head -c 300)"
+            echo "::error::Updating the email template failed (HTTP $status): ${reason:-no reason given}. If it is about SMTP, set up your own SMTP server first (see docs/HANDOVER.md, step 4)."
+            exit 1
+          fi
           echo "Password reset email updated"
