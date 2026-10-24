@@ -50,6 +50,28 @@ All findings are fixed in code. What remains for the app's owner is configuratio
 
 After the rework, three independent Opus reviews (security/privacy, data correctness, UX/accessibility/tests) rated the branch and listed findings. Every critical, major and minor finding and every nit was fixed and re-reviewed.
 
+### Round 13 (security 8.5/10, correctness 8.5/10, UX/tests 6.5/10)
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| UX-M1 | Major | The Undo toast covered a dialog's main button and let taps through, so tapping "Undo" deleted the routine | While a dialog is open the toast is hidden and its time paused; it is shown and read again when the dialog closes; test |
+| UX-M2 | Major | A queued friend request's answer replaced a newer Undo | The answer counts from when the user pressed Enter; test |
+| UX-M3 | Major | Nine round-12 fixes could be reverted with the suite green | Tests for the late sign-in, update-check and APK answers, the second sign-out step, "Not now", "Change password", "Checking…", the status line's live region and the drag auto-scroll; each checked against its removal |
+| mi-1 (correctness) | Minor | A routine the account deleted vanished at sign-in after the user restored, re-created or edited it | Only a copy unchanged since the last sync follows the deletion; others stay, defused; test |
+| mi-2 (correctness), UX-m2 | Minor | A drag dropped the wrong exercise when the list changed meanwhile; holding a grip still near the edge scrolled and moved it | The drop goes by exercise name and is cancelled if either is gone; auto-scroll starts only after the pointer moved; tests |
+| mi-3 (correctness) | Minor | A restore during an upload lost its "untrusted" mark | A restore stops the syncs on their way; test |
+| mi-4 (correctness) | Minor | A workout open during a rename was saved under the old name, leaving a draft | The open workout follows the rename; test |
+| mi-5 (correctness) | Minor | A queued or in-flight friend request could be sent by the next account | Requests are bound to the account that asked; test |
+| UX-m1 | Minor | Crew "Try again" during a running load reported the old failure | A call during a load waits for the newer load; test |
+| UX-m3 | Minor | Sign-out could hold the user in its dialog for 46 s offline | The last sync gets 8 s and the session end 4 s; a forced sign-out does not sync again; tests |
+| UX-m4 | Minor | A double tap on Add queued the same name and ended in an error | A name already on its way is not asked again; test |
+| UX-m5 | Minor | "declines, cancels and unblocks" did not wait for the block | It waits for "is blocked." |
+| UX-m6 | Minor | The busy status line was created with its text, so it might not be read | Every sheet renders an empty live status line |
+| S13-N1 | Nit | Trust decisions use a 32-bit fingerprint | Accepted: the fingerprints stay on the user's phone, and changing the function would make every phone resync all routines as changed |
+| UX-n1, n2 | Nit | A tap beside a sheet that can't close lost focus; the reinstall button came before its steps | Focus stays in the sheet; the steps come first and take focus |
+
+Also: the Android release key is EC P-256 and the backup certificate must be EC with a pass-phrase-protected key (tested: an installed app updates without a reinstall, and the old key can no longer sign updates).
+
 ### Round 12 (security 7.5/10, correctness 8/10, UX/tests 7/10)
 
 | ID | Severity | Finding | Fix |
