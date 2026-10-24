@@ -161,7 +161,7 @@ test('editing an old session shows exactly what was logged', async ({ page }) =>
   const day = await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('gymLogs')))[0]);
   await page.locator(`[data-day="${day}"]`).click();
   await page.locator('.sheet-backdrop.open [data-edit]').click();
-  await expect(page.locator('#session h3')).toHaveText(['Bench', 'Dips']);
+  await expect(page.locator('#session .ex-card h3')).toHaveText(['Bench', 'Dips']);
   await page.locator('#session .r').first().fill('9');
   await page.locator('#sessionMain').click();
   await sheetAction(page, 'Save workout');
