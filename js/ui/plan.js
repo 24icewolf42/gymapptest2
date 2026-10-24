@@ -45,6 +45,7 @@ function weekView() {
 function exerciseRow(e, i, count) {
   return html`<li class="ex-edit" data-ex="${e.name}" data-key="ex-${e.name}">
     <div class="ex-edit-head">
+      <span class="drag-handle" data-drag aria-hidden="true" title="Drag to reorder">${icons.grip}</span>
       <div class="row-main"><b>${e.name}</b><small>${categoryLabel(e.cat)}</small></div>
       <button type="button" class="icon-btn sm" data-move="-1" aria-label="Move ${e.name} up"${busyAttr(i === 0)}>${icons.up}</button>
       <button type="button" class="icon-btn sm" data-move="1" aria-label="Move ${e.name} down"${busyAttr(i === count - 1)}>${icons.down}</button>
@@ -174,8 +175,50 @@ async function chooseForDay(i) {
   savePlan();
 }
 
+// Drag an exercise by its grip to reorder (from upstream v2.12.3). The
+// up/down buttons do the same with a tap or the keyboard.
+function enableDragReorder(page) {
+  page.addEventListener('pointerdown', (e) => {
+    const handle = e.target.closest('[data-drag]');
+    if (!handle || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    const row = handle.closest('.ex-edit'), listEl = row?.parentElement;
+    if (!row || !listEl) return;
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    const rows = [...listEl.children];
+    const from = rows.indexOf(row), startY = e.clientY;
+    let to = from;
+    row.classList.add('dragging');
+    const move = (ev) => {
+      const dy = ev.clientY - startY;
+      row.style.transform = `translateY(${dy}px)`;
+      const mid = row.getBoundingClientRect().top + row.offsetHeight / 2;
+      to = rows.filter((r) => r !== row && r.getBoundingClientRect().top + r.offsetHeight / 2 < mid).length;
+      rows.forEach((r, i) => r.classList.toggle('drop-before', r !== row && i === (to >= from ? to + 1 : to)));
+    };
+    const end = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+      row.classList.remove('dragging');
+      row.style.transform = '';
+      rows.forEach((r) => r.classList.remove('drop-before'));
+      const l = list();
+      if (!l || to === from) return;
+      const [item] = l.splice(from, 1);
+      l.splice(to, 0, item);
+      savePlan();
+      toast(`${item.name} moved to position ${to + 1}.`);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  });
+}
+
 export function initPlan() {
   const page = $('page-plan');
+  enableDragReorder(page);
   on(page, 'click', '[data-day]', (e, b) => chooseForDay(+b.dataset.day));
   on(page, 'click', '[data-edit]', (e, b) => openEditor(b.dataset.edit));
   on(page, 'click', '[data-close-editor]', () => { closeEditor(); renderPlan(); });

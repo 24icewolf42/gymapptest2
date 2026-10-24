@@ -521,3 +521,8 @@ body.session-open:has(#restBar:not([hidden])) .toast { bottom: calc(172px + var(
 .card-head > div { min-width: 0; }
 .card-head small { overflow-wrap: anywhere; }
 .toast-action:focus-visible { outline: 3px solid currentColor; outline-offset: 2px; }
+.drag-handle { display: grid; place-items: center; flex: none; width: 32px; height: 44px; margin-left: -8px; color: var(--dim); cursor: grab; touch-action: none; }
+.drag-handle .icon { width: 18px; height: 18px; }
+.ex-edit.dragging { position: relative; z-index: 5; box-shadow: 0 12px 30px rgba(0, 0, 0, .55); cursor: grabbing; }
+.ex-edit.drop-before { box-shadow: 0 -3px 0 var(--accent); }
+@media (prefers-reduced-motion: no-preference) { .ex-edit { transition: box-shadow .15s; } }

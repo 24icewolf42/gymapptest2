@@ -1336,3 +1336,21 @@ test('a saving prompt whose step fails unexpectedly is not left stuck', async ({
   await page.keyboard.press('Escape');
   await expect(page.locator('.sheet-backdrop.open')).toHaveCount(0);
 });
+
+test('an exercise can be dragged by its grip to a new place (and the buttons still work)', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await createWorkout(page, 'Upper', ['Pull-up', 'Dips', 'Plank']);
+  await page.locator('[data-edit="Upper"]').click();
+  const grip = page.locator('[data-ex="Plank"] [data-drag]');
+  const target = page.locator('[data-ex="Pull-up"]');
+  const g = await grip.boundingBox(), t = await target.boundingBox();
+  await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(g.x + g.width / 2, t.y + 5, { steps: 12 });
+  await page.mouse.up();
+  expect(await page.locator('[data-ex]').evaluateAll((els) => els.map((e) => e.dataset.ex))).toEqual(['Plank', 'Pull-up', 'Dips']);
+  await expect(page.locator('#toast')).toContainText('Plank moved to position 1');
+  await page.locator('[data-ex="Plank"] [data-move="1"]').click();
+  expect(await page.locator('[data-ex]').evaluateAll((els) => els.map((e) => e.dataset.ex))).toEqual(['Pull-up', 'Plank', 'Dips']);
+});
