@@ -379,11 +379,17 @@ async function openDateSheet(minutes) {
     const button = sheet.querySelector('[type=submit]');
     // Busy, not disabled: disabling the focused button would push focus out of the sheet.
     if (button.getAttribute('aria-disabled') === 'true') return;
+    // Said in the status line; the sheet stays closable (closing takes the date back).
+    const status = sheet.querySelector('.form-status'), label = button.textContent;
     button.setAttribute('aria-disabled', 'true');
     button.setAttribute('aria-busy', 'true');
+    button.textContent = 'Posting…';
+    status.textContent = 'Posting…';
     const r = await api.createDate({ ...draft, workout: form('workout').value, inviteIds });
     button.removeAttribute('aria-disabled');
     button.removeAttribute('aria-busy');
+    button.textContent = label;
+    status.textContent = '';
     // Closed while sending: the user changed their mind, so the date is taken back.
     if (!sheet.closest('.sheet-backdrop.open')) {
       if (!r.error) {

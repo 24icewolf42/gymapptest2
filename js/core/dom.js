@@ -295,7 +295,9 @@ export function toast(message, options = {}) {
   // next result replaces it (they have moved on).
   // A background message also waits while an error is still to be read; none is dropped.
   const busy = el.classList.contains('show') && (el.classList.contains('has-action') || Date.now() < errorUntil);
-  if (!action && background && busy) {
+  // Behind a dialog nothing can be seen: a message waits until it closes
+  // (an Undo is kept, hidden, so it can be used afterwards).
+  if (!action && ((background && busy) || el.classList.contains('under-sheet'))) {
     if (!waiting.some((w) => w.message === message)) waiting.push({ message, options });
     return;
   }
@@ -343,8 +345,9 @@ const sheetOpen = () => !!document.querySelector('#sheetRoot .sheet-backdrop:not
 
 /**
  * While a dialog is open the toast is hidden (it would cover the dialog's
- * buttons) and its time is paused; when the dialog closes it is shown and
- * read again. Called by the sheets.
+ * buttons). An Undo waits, hidden and with its time paused, and is shown and
+ * read again when the dialog closes; a plain message just goes. Messages that
+ * arrive meanwhile wait and follow. Called by the sheets.
  */
 export function updateToastReach() {
   const el = $('toast');
@@ -353,11 +356,17 @@ export function updateToastReach() {
   const b = el.querySelector('.toast-action');
   if (b) b.inert = open;
   el.classList.toggle('under-sheet', open);
-  if (!el.classList.contains('show') || open === was) return;
-  if (open) clearTimeout(toastTimer);
-  else {
+  if (open === was) return;
+  const shown = el.classList.contains('show'), undo = el.classList.contains('has-action');
+  if (open) {
+    if (shown && undo) clearTimeout(toastTimer);
+    else if (shown) hideToast(el);
+  } else if (shown) {
     el.replaceChildren(...el.childNodes); // read again by screen readers
-    scheduleHide(el, el.classList.contains('has-action') ? 6000 : TOAST_RESUME_MS);
+    scheduleHide(el, undo ? 6000 : TOAST_RESUME_MS);
+  } else {
+    const w = waiting.shift();
+    if (w) toast(w.message, w.options);
   }
 }
 

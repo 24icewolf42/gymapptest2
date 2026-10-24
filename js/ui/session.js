@@ -6,7 +6,7 @@ import { KEYS, read, write, remove, emit, listen } from '../core/store.js';
 import { ymd, parseYmd, fmtLong, fmtClock, fmtShort, relativeDay } from '../core/dates.js';
 import { pushLayer } from '../core/router.js';
 import { state, saveLogs, saveLastUsed, markSessionsDeleted } from '../state.js';
-import { sanitizeWorkout, rowCount, REST_DEFAULTS, DEFAULT_REST } from '../domain/plan.js';
+import { sanitizeWorkout, rowCount, REST_DEFAULTS, DEFAULT_REST, defang } from '../domain/plan.js';
 import { bestWeight, trimSets, sessionKey, newSessionId } from '../domain/logs.js';
 import { restState, roundToStep, muscleGroup } from '../domain/rest-timer.js';
 import { categoryLabel, CATALOG, looksUnilateral } from '../domain/catalog.js';
@@ -446,6 +446,25 @@ async function finish() {
 export function initSession() {
   // Routines renamed by the sync's defusing: the running workout and drafts follow.
   listen('gym:routines-renamed', (e) => Object.entries(e.detail || {}).forEach(([from, to]) => renameRunningWorkout(from, to)));
+  // A sync defused exercise names in the open workout's routine: the workout
+  // follows, so it is saved (and its last-used values kept) under the new names.
+  listen('gym:plan-updated', () => {
+    const names = new Set((state.workouts[s?.day] || []).map((e) => e.name));
+    if (!s || !names.size) return;
+    let changed = false;
+    s.exercises = s.exercises.map((e, i) => {
+      const clean = defang(e.name);
+      if (names.has(e.name) || clean === e.name || !names.has(clean)) return e;
+      changed = true;
+      const title = document.getElementById('ex-title-' + i);
+      if (title) title.textContent = clean;
+      // Its last-used values move along, so there are not two for one exercise.
+      if (state.lastUsed[e.name] && !state.lastUsed[clean]) state.lastUsed[clean] = { ...state.lastUsed[e.name], updatedAt: Date.now() };
+      delete state.lastUsed[e.name];
+      return { ...e, name: clean };
+    });
+    if (changed) { saveDraft(); saveLastUsed(); }
+  });
   const root = $('session');
   replaceContent(root, html`
     <header class="session-top">
