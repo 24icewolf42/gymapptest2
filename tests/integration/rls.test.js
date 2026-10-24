@@ -315,6 +315,11 @@ describe('hardening', () => {
     const r2 = await u.client.rpc('save_my_weights', { entries: [{ log_date: '2026-03-01', weight_kg: 70, fresh: false }, { log_date: '2026-03-02', weight_kg: 71 }] });
     expect(r2.data.map((x) => x.log_date)).toEqual(['2026-03-02']);
     expect((await u.client.from('body_weight_logs').select('weight_kg').eq('log_date', '2026-03-01')).data).toEqual([]);
+    // A copy changed after the deletion (an offline phone of the original app) survives.
+    const later = new Date(Date.now() + 60000).toISOString();
+    const r4 = await u.client.rpc('save_my_weights', { entries: [{ log_date: '2026-03-01', weight_kg: 69, updated_at: later }] });
+    expect(r4.data).toHaveLength(1);
+    await u.client.from('body_weight_logs').delete().eq('user_id', u.id).eq('log_date', '2026-03-01');
     // ...but an entry made again on a phone does.
     const r3 = await u.client.rpc('save_my_weights', { entries: [{ log_date: '2026-03-01', weight_kg: 72, fresh: true }] });
     expect(r3.data).toHaveLength(1);

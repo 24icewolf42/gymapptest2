@@ -180,8 +180,10 @@ create trigger body_weight_before_write before insert or update on public.body_w
 
 -- Weigh-ins uploaded by a phone running this version, stored with server time.
 -- An entry marked fresh was changed on that phone since its last upload and
--- overrides a deletion made elsewhere; any other entry is only a copy the phone
--- still holds, so a deletion recorded here wins and the entry is skipped.
+-- overrides a deletion made elsewhere. Any other entry is a copy the phone
+-- holds: a deletion recorded here wins unless the copy is newer than it
+-- (updated_at, the time the entry was last changed), so stale copies stay
+-- deleted and entries made after the deletion survive.
 -- Returns the rows written, with their server time.
 drop function if exists public.save_my_weights(jsonb);
 create function public.save_my_weights(entries jsonb)
@@ -205,7 +207,11 @@ begin
     d := (e ->> 'log_date')::date;
     if coalesce((e ->> 'fresh')::boolean, false) then
       delete from private.body_weight_tombstones t where t.user_id = auth.uid() and t.log_date = d;
-    elsif exists (select 1 from private.body_weight_tombstones t where t.user_id = auth.uid() and t.log_date = d) then
+    elsif exists (
+      select 1 from private.body_weight_tombstones t
+      where t.user_id = auth.uid() and t.log_date = d
+        and (e ->> 'updated_at' is null or t.deleted_at >= (e ->> 'updated_at')::timestamptz)
+    ) then
       continue;
     end if;
     insert into public.body_weight_logs as b (user_id, log_date, weight_kg, updated_at)
