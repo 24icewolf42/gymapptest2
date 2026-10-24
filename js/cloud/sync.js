@@ -137,6 +137,7 @@ async function startSession(user) {
   }
   if (!owner && hasLocalData()) {
     state.sync.untrusted = { plan: true, data: true }; // data no account owned joins this one
+    state.sync.joinedSessions = Object.entries(state.logs).flatMap(([d, list]) => list.map((x) => sessionKey(d, x)));
     // Deletions and edit times made before (maybe by someone else) must not act on the account's plan.
     setPlanTombstones([], []);
     write(KEYS.planTimes, {});
@@ -346,7 +347,7 @@ const SYNC = {
       if (stale()) return false;
       if (r.error) throw r.error;
       // Routines from another person's use of this phone, new to this account: defuse markup.
-      if (state.sync.untrusted?.plan && defangNewRoutines(r.data?.plan?.workouts)) emit('gym:plan-updated');
+      if (state.sync.untrusted?.plan && defangNewRoutines(r.data?.plan)) emit('gym:plan-updated');
       // No cloud plan (first sync, or the row was removed): there is no common base.
       const merged = mergePlans(r.data?.plan, localPlan(), r.data ? planBase() : null);
       const local = localPlan();
@@ -376,23 +377,27 @@ const SYNC = {
       if (r.error) throw r.error;
       const remote = r.data || {};
       const has = (c) => columns.includes(c);
-      if (state.sync.untrusted?.data) defangNewSessions(remote);
       // Sessions brought back from a backup, or added from another account's
       // phone, must not be removed by this account's deletions: a deleted key
       // gets a new id (derived from the old one, so restoring twice gives one
       // copy), and a session on a day cleared after it (the original app's
       // delete) gets the current time, so both apps keep it.
       const restored = new Set([...(state.sync.restoredSessions || []), ...(state.sync.mergedSessions || [])]);
-      if (restored.size) {
+      // Sessions joining with data that belonged to no account: a day the
+      // account cleared later must not delete what it never saw (a deleted
+      // key, though, means the account saw it and deleted it).
+      const joined = new Set(state.sync.joinedSessions || []);
+      if (restored.size || joined.size) {
         const gone = new Set(Array.isArray(remote.deleted_sessions) ? remote.deleted_sessions : []);
         const cleared = remote.deleted_dates || {};
         let rekeyed = false;
         Object.keys(state.logs).forEach((d) => {
           state.logs[d] = state.logs[d].map((x) => {
             const k = sessionKey(d, x);
-            if (!restored.has(k)) return x;
+            if (!restored.has(k) && !joined.has(k)) return x;
             const clearedAt = Number(cleared[d]) || Date.parse(cleared[d]) || 0;
             const hidden = clearedAt && clearedAt >= (Date.parse(x.time) || 0);
+            if (!restored.has(k) && (gone.has(k) || !hidden)) return x; // joined: only the cleared-day case
             if (!gone.has(k) && !hidden) return x;
             let id = k;
             do { id = 'r' + hashOf(id).replace(':', ''); } while (gone.has(id));
@@ -402,6 +407,8 @@ const SYNC = {
         });
         if (rekeyed) saveLogs({ silent: true });
       }
+      // After the step above (it matches sessions by their original keys).
+      if (state.sync.untrusted?.data) defangNewSessions(remote);
 
       const deleted = [...new Set([...state.deletedSessions, ...(Array.isArray(remote.deleted_sessions) ? remote.deleted_sessions : [])])];
       const deletedDates = { ...(remote.deleted_dates || {}) };
@@ -424,7 +431,7 @@ const SYNC = {
       if (has('deleted_dates')) Object.assign(row, { deleted_dates: deletedDates, daily_summaries: dailySummaries(logs) });
       const changed = !r.data || Object.keys(row).some((k) => k !== 'updated_at' && k !== 'user_id' && !same(remote[k] ?? null, row[k]));
       if (!changed || await casWrite('workout_data', uid, r.data?.updated_at ?? null, row)) {
-        if (restored.size && !stale()) { state.sync.restoredSessions = []; state.sync.mergedSessions = []; saveSync(); }
+        if ((restored.size || joined.size) && !stale()) { state.sync.restoredSessions = []; state.sync.mergedSessions = []; state.sync.joinedSessions = []; saveSync(); }
         if (state.sync.untrusted?.data && !stale()) { state.sync.untrusted = { ...state.sync.untrusted, data: false }; saveSync(); }
         return true;
       }

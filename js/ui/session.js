@@ -71,9 +71,9 @@ export function renameRunningWorkout(from, to) {
   const drafts = readDrafts();
   let changed = false;
   Object.keys(drafts).forEach((k) => {
-    // Keys are date|routine|session; routine names may contain "|" themselves.
+    // Keys are date|routine|session and names may contain "|": go by the draft's own routine.
     const prefix = k.slice(0, 11) + from + '|';
-    if (!k.startsWith(prefix)) return;
+    if (drafts[k].day !== from || !k.startsWith(prefix)) return;
     drafts[k.slice(0, 11) + to + '|' + k.slice(prefix.length)] = { ...drafts[k], day: to };
     delete drafts[k];
     changed = true;

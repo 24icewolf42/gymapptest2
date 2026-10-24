@@ -251,6 +251,8 @@ async function restoreFrom(text) {
   // What the backup holds comes back, also if it was deleted in the account since.
   state.sync.restoredSessions = Object.entries(state.logs).flatMap(([d, list]) => list.map((x) => sessionKey(d, x)));
   state.sync.dirtyWeightDates = state.weights.map((x) => x.date);
+  // A backup file can come from anyone: what it adds to the account is defused at the next sync.
+  state.sync.untrusted = { plan: true, data: true };
   localStorage.setItem(KEYS.sync, JSON.stringify(state.sync));
   // The backup's routines and week count as changed now, so they win over
   // deletions and edits made in the account since.

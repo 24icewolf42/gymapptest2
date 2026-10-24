@@ -99,8 +99,10 @@ export function sanitizeWorkout(list) {
 }
 
 export function sanitizeWorkoutName(name) {
-  // Kept as typed (the original app allows "|" too and identifies routines by name).
-  const n = text(name, 40);
+  // Kept exactly as stored, spaces and length included: the original app
+  // identifies routines by name and does not trim them (a copied routine can
+  // be "Legs "). Only the app's own name prompts trim and limit what is typed.
+  const n = typeof name === 'string' && name.trim() ? name.slice(0, 200) : '';
   return n === '__proto__' ? '' : n;
 }
 

@@ -21,6 +21,15 @@ export async function loadDates() {
   if (r.error) return fail(r.error);
   if (own.error) return fail(own.error);
   const byId = new Map([...(r.data || []), ...(own.data || [])].map((d) => [d.id, d]));
+  // Dates the user said they'd go to are always there too, however many come before them.
+  const replies = await supabase.from('gym_date_rsvps').select('date_id').eq('user_id', account.user.id).in('status', ['going', 'maybe']).limit(100);
+  if (replies.error) return fail(replies.error);
+  const missing = [...new Set((replies.data || []).map((x) => x.date_id))].filter((id) => !byId.has(id));
+  for (let i = 0; i < missing.length; i += 60) {
+    const more = await query().in('id', missing.slice(i, i + 60));
+    if (more.error) return fail(more.error);
+    (more.data || []).forEach((d) => byId.set(d.id, d));
+  }
   const dates = [...byId.values()]
     .filter((d) => new Date(new Date(d.starts_at).getTime() + d.duration_min * 60000).toISOString() >= since)
     .sort((a, b) => Date.parse(a.starts_at) - Date.parse(b.starts_at));

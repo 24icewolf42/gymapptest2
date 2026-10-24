@@ -259,9 +259,12 @@ export function hasLocalData() {
  * (a name the account already has is the user's own and stays, so nothing is
  * duplicated in the original app). Returns true if anything changed.
  */
-export function defangNewRoutines(remoteWorkouts) {
-  const remote = remoteWorkouts && typeof remoteWorkouts === 'object' ? remoteWorkouts : {};
-  const known = new Set(Object.keys(remote));
+export function defangNewRoutines(remotePlan) {
+  const remote = remotePlan?.workouts && typeof remotePlan.workouts === 'object' ? remotePlan.workouts : {};
+  // Names the account deleted count as known too: such a routine must stay
+  // deleted under its own name, not come back under a defused one.
+  const deletedThere = Array.isArray(remotePlan?.deletedWorkouts) ? remotePlan.deletedWorkouts : [];
+  const known = new Set([...Object.keys(remote), ...deletedThere]);
   let changed = false;
   const next = {};
   Object.entries(state.workouts).forEach(([name, list]) => {
