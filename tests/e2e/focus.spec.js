@@ -186,7 +186,7 @@ test('an Undo toast stays while it has focus, survives other messages, then focu
   await page.waitForTimeout(11000);
   await expect(undo).toBeFocused();
   // A message from the background (e.g. a friend's gym date) does not replace it.
-  await page.evaluate(async () => (await import('/js/core/dom.js')).toast('A friend is going to the gym today at 18:00'));
+  await page.evaluate(async () => (await import('/js/core/dom.js')).toast('A friend is going to the gym today at 18:00', { background: true }));
   await expect(undo).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(page.locator('[data-ex="Dips"]')).toHaveCount(1);

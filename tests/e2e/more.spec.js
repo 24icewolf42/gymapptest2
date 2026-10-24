@@ -449,7 +449,10 @@ test('a taken username is asked about once, not at every start', async ({ page }
   await sheetAction(page, 'Cancel');
   await page.reload();
   await expect(page.locator('#page-today h1')).toHaveText('Today');
-  await page.waitForTimeout(3000);
+  // Wait until the profile (which used to trigger the question) has loaded.
+  await page.locator('.page.active [data-open-settings]').first().click();
+  await expect(page.locator('#page-settings h2').first()).toHaveText(/^@user_/, { timeout: 15000 });
+  await expect(page.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 15000 });
   await expect(page.locator('.sheet-backdrop.open')).toHaveCount(0);
 });
 
@@ -488,5 +491,119 @@ test('a routine deleted in another tab while it is open is announced and can be 
   await expect(a.locator('#toast')).toContainText('Legs was deleted or renamed');
   await expect(a.locator('#page-plan [data-key="mine"]')).toBeFocused();
   await a.locator('#toast .toast-action').click();
-  await expect(a.locator('[data-edit="Legs"]')).toHaveCount(1);
+  // Back, with the editor open again.
+  await expect(a.locator('#page-plan h1')).toHaveText('Legs');
+  expect(await a.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('gymCustomWorkouts'))))).toContain('Legs');
+});
+
+test('dialogs are described, toasts stay clear of the rest timer, and stacked sheets stay modal', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  // A confirm dialog is described by its message.
+  await page.evaluate(async () => { (await import('/js/ui/sheet.js')).confirmDialog('Really?'); });
+  const dlg = page.locator('.sheet-backdrop.open [role=dialog]');
+  const descId = await dlg.getAttribute('aria-describedby');
+  await expect(page.locator(`[id="${descId}"]`)).toHaveText('Really?');
+  // A second sheet on top; the lower one closes by itself: the page must stay inert.
+  await page.evaluate(async () => {
+    const { openSheet } = await import('/js/ui/sheet.js');
+    window.__lower = null;
+    openSheet({ title: 'Lower', onMount: (s, finish) => { window.__lower = finish; } });
+    await new Promise((r) => setTimeout(r, 50));
+    openSheet({ title: 'Upper', dismissible: false, actions: [{ label: 'OK', value: 1 }] });
+  });
+  await page.waitForTimeout(100);
+  await page.evaluate(() => window.__lower(null));
+  expect(await page.evaluate(() => [document.getElementById('app').inert, document.getElementById('bottomNav').inert])).toEqual([true, true]);
+  await expect(page.locator('.sheet-backdrop.open [role=alertdialog]')).toBeVisible();
+});
+
+test('show more days, the Undo shortcut and the rest-timer toast behave', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await createWorkout(page, 'Legs', ['Dips', 'Plank']);
+  await page.evaluate(() => localStorage.setItem('gymPlanSchedule', JSON.stringify({ 0: 'Legs', 1: 'Legs', 2: 'Legs', 3: 'Legs', 4: 'Legs', 5: 'Legs', 6: 'Legs' })));
+  await page.reload();
+  await expect(page.locator('#page-today h1')).toHaveText('Today');
+  for (let i = 0; i < 3; i++) { await page.locator('[data-more]').focus(); await page.keyboard.press('Enter'); }
+  await expect(page.locator('[data-more]')).toHaveCount(0);
+  const rows = await page.locator('#page-today [data-preview]').evaluateAll((els) => els.map((e) => e.dataset.preview));
+  expect(await page.evaluate(() => document.activeElement.dataset.preview)).toBe(rows[42]);
+  // Workout: the Undo toast for a removed set sits above the rest countdown.
+  await page.locator('#startToday').click();
+  await page.locator('#sessionMain').click();
+  const card = page.locator('#session .ex-card').first();
+  await card.locator('.w').first().fill('10');
+  await card.locator('.r').first().fill('5');
+  await card.locator('.check').first().click();
+  await expect(page.locator('#restBar')).toBeVisible();
+  await card.locator('.w').nth(1).fill('10');
+  await card.locator('[data-remove]').click();
+  await expect(page.locator('#toast .toast-action')).toBeVisible();
+  const toast = await page.locator('#toast').boundingBox();
+  const bar = await page.locator('#restBar').boundingBox();
+  expect(toast.y + toast.height <= bar.y || toast.y >= bar.y + bar.height).toBe(true);
+});
+
+test('Undo: Ctrl+Z is ignored under a dialog, Escape dismisses it, and it goes away with its page', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await createWorkout(page, 'Upper', ['Pull-up', 'Dips']);
+  await page.locator('[data-edit="Upper"]').click();
+  await page.locator('[data-ex="Dips"] [data-remove]').click();
+  await expect(page.locator('#toast .toast-action')).toBeVisible();
+  await page.evaluate(async () => { (await import('/js/ui/sheet.js')).confirmDialog('Open dialog'); });
+  await page.keyboard.press('Control+z');
+  await expect(page.locator('[data-ex="Dips"]')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.sheet-backdrop.open')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#toast .toast-action')).toHaveCount(0);
+  // A new Undo, then a page change: it goes.
+  await page.locator('[data-ex="Pull-up"] [data-remove]').click();
+  await expect(page.locator('#toast .toast-action')).toBeVisible();
+  await tab(page, 'stats');
+  await expect(page.locator('#toast.show')).toHaveCount(0);
+});
+
+test('a background message waits behind an Undo; the user\'s own next result replaces it', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await createWorkout(page, 'Upper', ['Pull-up', 'Dips']);
+  await page.locator('[data-edit="Upper"]').click();
+  await page.locator('[data-ex="Dips"] [data-remove]').click();
+  await page.evaluate(async () => (await import('/js/core/dom.js')).toast('A friend is going', { background: true }));
+  await expect(page.locator('#toast .toast-action')).toBeVisible();
+  await page.locator('[data-ex="Pull-up"] [data-sets="1"]').click();
+  await expect(page.locator('#planStatus')).toHaveText(/Pull-up: \d+ sets/);
+  await page.evaluate(async () => (await import('/js/core/dom.js')).toast('Saved by you'));
+  await expect(page.locator('#toast')).toContainText('Saved by you');
+});
+
+test('the "someone else used this phone" question is asked only in the tab that signed in', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const x = await makeUser(uniqueName('swx'));
+  const y = await makeUser(uniqueName('swy'));
+  const ctx = await newPhone(browser);
+  const one = await ctx.newPage();
+  await open(one);
+  await signInAs(one, x);
+  await createWorkout(one, 'Push', ['Dips']);
+  await one.locator('.page.active [data-open-settings]').click();
+  await one.locator('[data-signout]').click();
+  await sheetAction(one, 'Sign out, keep data here');
+  await expect(one.locator('#authForm')).toBeVisible({ timeout: 15000 });
+  const two = await ctx.newPage();
+  await open(two);
+  await tab(two, 'stats');
+  await two.locator('#weightInput').focus();
+  await one.locator('#authForm [name=email]').fill(y.email);
+  await one.locator('#authForm [name=password]').fill(y.password);
+  await one.locator('#authForm [type=submit]').click();
+  await expect(one.getByText('Someone else used this phone')).toBeVisible({ timeout: 15000 });
+  await two.waitForTimeout(1500);
+  await expect(two.locator('.sheet-backdrop.open')).toHaveCount(0);
+  await expect(two.locator('#weightInput')).toBeFocused();
+  await sheetAction(one, 'Add them to my account');
+  await expect(one.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 15000 });
 });
