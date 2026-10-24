@@ -1177,3 +1177,54 @@ test('a slow Crew retry that succeeds leaves focus where the user moved to', asy
   errors[0].length = 0;
   expect(errors.flat()).toEqual([]);
 });
+
+test('a defused name that is taken gets a number, and deletions alone on a phone never hit an account', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('s11'));
+  const ex = [{ name: 'Dips', cat: 'chest', sets: 2, target: '8', rest: 60, note: '' }];
+  await u.client.from('workout_plans').insert({ user_id: u.id, plan: { workouts: { Push: ex }, schedule: {} } });
+  await page.addInitScript((e) => {
+    if (localStorage.getItem('seeded')) return;
+    localStorage.setItem('seeded', '1');
+    localStorage.setItem('gymCustomWorkouts', JSON.stringify({ 'Legs‹img src=x>': e, 'Legs<img src=x>': e }));
+    localStorage.setItem('gymDeletedWorkouts', JSON.stringify(['Push']));
+  }, ex);
+  await open(page);
+  await signInAs(page, u);
+  const plan = (await u.client.from('workout_plans').select('plan').eq('user_id', u.id).single()).data.plan;
+  expect(Object.keys(plan.workouts).sort()).toEqual(['Legs‹img src=x>', 'Legs‹img src=x> 2', 'Push']);
+});
+
+test('a session that ended while the app was closed makes the phone cautious', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('s112'));
+  await open(page);
+  await signInAs(page, u);
+  // The session ends elsewhere (e.g. a password change) while the app is closed.
+  await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('sb-')).forEach((k) => localStorage.removeItem(k)));
+  await page.reload();
+  await expect(page.locator('#page-today h1')).toHaveText('Today');
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('gymSyncState')).untrusted)).toEqual({ plan: true, data: true });
+});
+
+test('"Sign out on all devices" signs out the other devices too', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('s113'));
+  const phone = await (await newPhone(browser)).newPage();
+  const tablet = await (await newPhone(browser)).newPage();
+  await open(phone); await signInAs(phone, u);
+  await open(tablet); await signInAs(tablet, u);
+  await phone.locator('.page.active [data-open-settings]').click();
+  await phone.locator('[data-signout]').click();
+  await sheetAction(phone, 'Sign out on all devices');
+  await expect(phone.locator('#authForm')).toBeVisible({ timeout: 15000 });
+  // The tablet's session is no longer valid at the server.
+  const ok = await tablet.evaluate(async () => {
+    const { supabase } = await import('/js/cloud/client.js');
+    const { data } = await supabase.auth.getSession();
+    const r = await fetch(supabase.supabaseUrl + '/auth/v1/user', { headers: { apikey: supabase.supabaseKey, Authorization: 'Bearer ' + data.session?.access_token } });
+    const refresh = await supabase.auth.refreshSession();
+    return [r.status, !!refresh.error];
+  });
+  expect(ok[1]).toBe(true);
+});

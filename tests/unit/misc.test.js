@@ -124,3 +124,21 @@ describe('backup files', () => {
     expect(out.gymRestImage).toBeUndefined();
   });
 });
+
+describe('cutting text', () => {
+  it('never splits a character', async () => {
+    const { cut } = await import('../../js/core/text.js');
+    expect(cut('a'.repeat(39) + '💪💪', 40)).toBe('a'.repeat(39) + '💪');
+    expect(cut('short', 40)).toBe('short');
+  });
+});
+
+describe('future workout times', () => {
+  it('lose against real edits and do not escape a cleared day', async () => {
+    const { mergeLogs } = await import('../../js/domain/logs.js');
+    const s = (time, w) => ({ id: 'a', day: 'Push', time, exercises: [{ name: 'Dips', target: '8', sets: [{ w, r: '8', done: true }] }] });
+    const merged = mergeLogs({ '2026-10-01': [s('2099-01-01T00:00:00Z', '1')] }, { '2026-10-01': [s('2026-10-02T00:00:00Z', '50')] });
+    expect(merged['2026-10-01'][0].exercises[0].sets[0].w).toBe('50');
+    expect(mergeLogs({}, { '2026-10-01': [s('2099-01-01T00:00:00Z', '1')] }, { deletedDates: { '2026-10-01': Date.parse('2026-10-05') } })).toEqual({});
+  });
+});

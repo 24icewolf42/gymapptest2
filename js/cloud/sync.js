@@ -5,7 +5,7 @@ import {
   state, localPlan, applyPlan, planBase, setPlanBase, setPlanTombstones, saveLogs, saveLastUsed, saveWeights, saveSync, saveBypass, saveTombstones,
   hasLocalData, clearLocalData, defangNewRoutines,
 } from '../state.js';
-import { mergePlans, planHashes, stableStringify, hashOf, defang, deepDefang as deepDefangValue } from '../domain/plan.js';
+import { mergePlans, planHashes, stableStringify, hashOf, defang, stringsOf, defangUnknown } from '../domain/plan.js';
 import { mergeLogs, mergeProgress, mergeBypass, dailySummaries, sessionKey, sanitizeLogs } from '../domain/logs.js';
 import { mergeWeights } from '../domain/weights.js';
 import { emit, listen, writeText, readText, read, write, remove, KEYS } from '../core/store.js';
@@ -78,10 +78,11 @@ async function handleAuth(event, session) {
   if (event === 'PASSWORD_RECOVERY') emit('gym:password-recovery');
   const user = session?.user || null;
   if (!user) {
-    if (account.user) {
-      retire();
-      // However the session ended (here, elsewhere, expired): what is added to
-      // this phone from now on may be someone else's.
+    if (account.user) retire();
+    // However the session ended (here, elsewhere, expired, even while the app
+    // was closed): what is on or added to this phone from now on may be
+    // someone else's.
+    if ((account.user || state.sync.accountId) && !(state.sync.untrusted?.plan && state.sync.untrusted?.data)) {
       state.sync.untrusted = { plan: true, data: true };
       saveSync();
     }
@@ -288,11 +289,18 @@ function defangNewSessions(remote) {
   const theirs = new Map();
   const remoteLogs = sanitizeLogs(remote.logs || {});
   Object.entries(remoteLogs).forEach(([d, list]) => list.forEach((x) => theirs.set(sessionKey(d, x), stableStringify(x))));
+  // Text the account already has (its routine names, exercise names...) is the user's own and stays.
+  const known = stringsOf(remote.logs || {});
+  stringsOf(remote.progress || {}, known);
+  // Workouts the account deleted are left alone: the merge removes them under their own key.
+  const gone = new Set(Array.isArray(remote.deleted_sessions) ? remote.deleted_sessions : []);
+  const fix = (s) => (known.has(s) ? s : defang(s));
   let changed = false;
   Object.keys(state.logs).forEach((d) => {
     state.logs[d] = state.logs[d].map((x) => {
-      if (theirs.get(sessionKey(d, x)) === stableStringify(x)) return x;
-      const clean = { ...x, day: defang(x.day), exercises: x.exercises.map((e) => ({ ...e, name: defang(e.name), target: defang(e.target || ''), sets: e.sets.map((s) => ({ ...s, w: defang(s.w), r: defang(s.r) })) })) };
+      const k = sessionKey(d, x);
+      if (gone.has(k) || theirs.get(k) === stableStringify(x)) return x;
+      const clean = { ...x, day: fix(x.day), exercises: x.exercises.map((e) => ({ ...e, name: fix(e.name), target: fix(e.target || ''), sets: e.sets.map((s) => ({ ...s, w: fix(s.w), r: fix(s.r) })) })) };
       if (JSON.stringify(clean) !== JSON.stringify(x)) changed = true;
       return clean;
     });
@@ -303,8 +311,8 @@ function defangNewSessions(remote) {
   let liftsChanged = false;
   Object.entries(state.lastUsed).forEach(([k, v]) => {
     const same = Object.hasOwn(theirLifts, k) && stableStringify(theirLifts[k]) === stableStringify(v);
-    const key = same || Object.hasOwn(theirLifts, k) ? k : defang(k);
-    const value = same ? v : deepDefangValue(v);
+    const key = same || Object.hasOwn(theirLifts, k) || known.has(k) ? k : defang(k);
+    const value = same ? v : defangUnknown(v, known);
     if (key !== k || stableStringify(value) !== stableStringify(v)) liftsChanged = true;
     lifts[key] = value;
   });
@@ -357,7 +365,8 @@ const SYNC = {
       if (stale()) return false;
       if (r.error) throw r.error;
       // Routines from another person's use of this phone, new to this account: defuse markup.
-      if (state.sync.untrusted?.plan && defangNewRoutines(r.data?.plan)) emit('gym:plan-updated');
+      const renames = state.sync.untrusted?.plan ? defangNewRoutines(r.data?.plan) : null;
+      if (renames) { emit('gym:routines-renamed', renames); emit('gym:plan-updated'); }
       // No cloud plan (first sync, or the row was removed): there is no common base.
       const merged = mergePlans(r.data?.plan, localPlan(), r.data ? planBase() : null);
       const local = localPlan();
@@ -594,13 +603,13 @@ export async function updatePassword(password) {
  * successful final sync, unless `force` (the user accepted losing unsynced data).
  * Returns '' on success or a message explaining why nothing was removed.
  */
-export async function signOut({ removeLocalData = false, force = false } = {}) {
+export async function signOut({ removeLocalData = false, force = false, everywhere = false } = {}) {
   let synced = true;
   if (account.user && account.ready) synced = await syncAll();
   if (removeLocalData && !synced && !force) return 'not-synced';
   account.ready = false;
   retire(); // a sync still in flight must not write the account's data back
-  await endSession();
+  await endSession(everywhere);
   if (removeLocalData) clearLocalData();
   else {
     // Whatever is added to this phone from now on may be someone else's:
@@ -616,10 +625,10 @@ export async function signOut({ removeLocalData = false, force = false } = {}) {
  * fails (e.g. offline with an expired token), which would sign the account in
  * again at the next start; then the session is removed here instead.
  */
-async function endSession() {
+async function endSession(everywhere = false) {
   stopBeat();
-  // This device only: signing out here must not sign out the user's other devices.
-  const r = await supabase.auth.signOut({ scope: 'local' }).catch((error) => ({ error }));
+  // This device only, unless the user asks to end every session (e.g. a lost phone).
+  const r = await supabase.auth.signOut({ scope: everywhere ? 'global' : 'local' }).catch((error) => ({ error }));
   if (!r?.error) return;
   const key = supabase.auth.storageKey;
   [key, key + '-code-verifier', key + '-user'].forEach((k) => localStorage.removeItem(k));

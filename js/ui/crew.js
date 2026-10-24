@@ -1,5 +1,6 @@
 // Crew tab: gym dates, friends and the leaderboard. All server traffic runs in
 // the background; results patch the page in place (render() keeps focus).
+import { cut } from '../core/text.js';
 import { $, html, render, on, toast, avatar, haptic, busyAttr } from '../core/dom.js';
 import { KEYS, read, write, listen, emit } from '../core/store.js';
 import { ymd, fmtTime, relativeDay, relativeFromNow, toLocalInput } from '../core/dates.js';
@@ -519,7 +520,7 @@ export function initCrew() {
     const item = (crew.shared || []).find((x) => x.id === b.dataset.copyShared);
     if (!item) return;
     const name = await promptDialog({
-      title: 'Copy routine', label: 'Name in your plan', value: sanitizeWorkoutName(item.title).trim().slice(0, 40), maxLength: 40, ok: 'Copy',
+      title: 'Copy routine', label: 'Name in your plan', value: cut(sanitizeWorkoutName(item.title).trim(), 40), maxLength: 40, ok: 'Copy',
       validate: (v) => (!sanitizeWorkoutName(v) ? 'Give it a name.' : Object.hasOwn(state.workouts, sanitizeWorkoutName(v)) ? 'You already have a routine with that name.' : ''),
     });
     if (!name) return;

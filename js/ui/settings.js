@@ -261,8 +261,9 @@ async function restoreFrom(text) {
   // deletions and edits made in the account since.
   const now = Date.now(), names = Object.keys(state.workouts);
   write(KEYS.planTimes, { workouts: Object.fromEntries(names.map((n) => [n, now])), schedule: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [d, now])), restImage: now });
-  const { deleted, restored } = planTombstones();
-  setPlanTombstones(deleted.filter((n) => !names.includes(n)), [...new Set([...restored, ...names])]);
+  // Deletion records are not taken from a backup file either (the account keeps its own).
+  const { restored } = planTombstones();
+  setPlanTombstones([], [...new Set([...restored, ...names])]);
   toast('Backup restored.');
   setTimeout(() => location.reload(), 600);
 }
@@ -335,16 +336,17 @@ export function initSettings() {
   on(page, 'click', '[data-signout]', async () => {
     const choice = await openSheet({
       title: 'Sign out?',
-      body: html`<p class="sheet-text">If someone else uses this phone, remove your workouts from it. They stay in your account.</p>`,
+      body: html`<p class="sheet-text">If someone else uses this phone, remove your workouts from it. They stay in your account. Signing out here keeps your other devices signed in; if one was lost or shared, sign out everywhere.</p>`,
       actions: [
         { label: 'Sign out, keep data here', value: 'keep', tone: 'secondary' },
         { label: 'Sign out and remove my data', value: 'remove', tone: 'danger' },
+        { label: 'Sign out on all devices', value: 'everywhere', tone: 'secondary' },
         { label: 'Cancel', value: null, tone: 'ghost' },
       ],
     });
     if (!choice || signingOut) return;
     signingOut = true; renderSettings();
-    const r = await signOut({ removeLocalData: choice === 'remove' });
+    const r = await signOut({ removeLocalData: choice === 'remove', everywhere: choice === 'everywhere' });
     signingOut = false; renderSettings();
     if (r === 'not-synced') {
       const next = await openSheet({

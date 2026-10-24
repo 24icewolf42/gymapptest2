@@ -3,6 +3,7 @@
 import { supabase, errorText, isMissingSchema } from './client.js';
 import { account } from './sync.js';
 import { sanitizeWorkout, plain, deepPlain } from '../domain/plan.js';
+import { cut } from '../core/text.js';
 
 const ok = (data) => ({ data, error: '' });
 const fail = (error, fallback) => ({ data: null, error: errorText(error, fallback), missing: isMissingSchema(error) });
@@ -111,7 +112,7 @@ export async function loadSharedWorkouts() {
 }
 
 export async function shareWorkout(title, workout) {
-  const r = await supabase.from('shared_workouts').insert({ owner_id: account.user.id, title: plain(String(title)).trim().slice(0, 80) || 'Routine', workout: deepPlain(sanitizeWorkout(workout)) });
+  const r = await supabase.from('shared_workouts').insert({ owner_id: account.user.id, title: cut(plain(String(title)).trim(), 80) || 'Routine', workout: deepPlain(sanitizeWorkout(workout)) });
   return r.error ? fail(r.error) : ok(true);
 }
 

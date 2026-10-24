@@ -2,7 +2,7 @@
 // Every opened session has its own draft, so editing an old workout never
 // touches the one that is running.
 import { $, html, replaceContent, appendContent, on, toast, haptic, reducedMotion, dismissUndo } from '../core/dom.js';
-import { KEYS, read, write, remove, emit } from '../core/store.js';
+import { KEYS, read, write, remove, emit, listen } from '../core/store.js';
 import { ymd, parseYmd, fmtLong, fmtClock, fmtShort, relativeDay } from '../core/dates.js';
 import { pushLayer } from '../core/router.js';
 import { state, saveLogs, saveLastUsed, markSessionsDeleted } from '../state.js';
@@ -438,6 +438,8 @@ async function finish() {
 }
 
 export function initSession() {
+  // Routines renamed by the sync's defusing: the running workout and drafts follow.
+  listen('gym:routines-renamed', (e) => Object.entries(e.detail || {}).forEach(([from, to]) => renameRunningWorkout(from, to)));
   const root = $('session');
   replaceContent(root, html`
     <header class="session-top">

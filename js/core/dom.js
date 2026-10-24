@@ -434,7 +434,7 @@ function avatarHue(name) {
 }
 
 export function avatar(name, size = 'md') {
-  const label = String(name || '?').slice(0, 1).toUpperCase();
+  const label = (Array.from(String(name || '?'))[0] || '?').toUpperCase();
   return html`<span class="avatar avatar-${size} hue-${avatarHue(name)}" aria-hidden="true">${label}</span>`;
 }
 

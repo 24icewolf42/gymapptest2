@@ -1,6 +1,7 @@
 // Gym dates API: list, create, reply, check in, cancel, and live updates.
 import { supabase, errorText, isMissingSchema } from './client.js';
 import { account } from './sync.js';
+import { cut } from '../core/text.js';
 
 const fail = (error) => ({ data: null, error: errorText(error), missing: isMissingSchema(error) });
 
@@ -67,7 +68,7 @@ export async function createDate({ startsAt, duration, gym, workout, note, invit
     starts_at: startsAt.toISOString(),
     duration_min: duration,
     gym: gym.trim(),
-    workout: workout ? String(workout).slice(0, 40) : null, // the database keeps up to 40 characters
+    workout: workout ? cut(workout, 40) : null, // the database keeps up to 40 characters
     note: note ? note.trim() : null,
     invite_only: invite,
   }).select('id').single();

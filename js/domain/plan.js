@@ -1,4 +1,5 @@
 // Workout routines and the weekly schedule. Pure functions, no DOM or storage.
+import { cut } from '../core/text.js';
 import { UNILATERAL_PATTERN } from './catalog.js';
 
 export const MAX_SETS = 20;
@@ -58,8 +59,19 @@ export const deepPlain = deep(plain);
 /** defang() applied to every string and key (for backup files). */
 export const deepDefang = deep(defang);
 
+/** Every string and key in a JSON value (what an account already has). */
+export function stringsOf(value, out = new Set()) {
+  if (typeof value === 'string') out.add(value);
+  else if (Array.isArray(value)) value.forEach((v) => stringsOf(v, out));
+  else if (value && typeof value === 'object') Object.entries(value).forEach(([k, v]) => { out.add(k); stringsOf(v, out); });
+  return out;
+}
+
+/** defang() for strings the account does not already have; known ones stay as they are. */
+export const defangUnknown = (value, known) => deep((s) => (known.has(s) ? s : defang(s)))(value);
+
 function text(value, max) {
-  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+  return typeof value === 'string' ? cut(value.trim(), max) : '';
 }
 
 /** A rest-day picture as this app stores it (a resized photo); anything else is dropped. */
@@ -102,7 +114,7 @@ export function sanitizeWorkoutName(name) {
   // Kept exactly as stored, spaces and length included: the original app
   // identifies routines by name and does not trim them (a copied routine can
   // be "Legs "). Only the app's own name prompts trim and limit what is typed.
-  const n = typeof name === 'string' && name.trim() ? name.slice(0, 200) : '';
+  const n = typeof name === 'string' && name.trim() ? cut(name, 200) : '';
   return n === '__proto__' ? '' : n;
 }
 

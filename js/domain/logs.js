@@ -1,6 +1,7 @@
 // Workout history: { "YYYY-MM-DD": [ { day, exercises: [{ name, target, sets: [{ w, r, done }] }], time, duration } ] }
 // Pure functions, no DOM or storage.
 import { mondayIndex, addDays, ymd } from '../core/dates.js';
+import { cut } from '../core/text.js';
 
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/;
 
@@ -66,16 +67,16 @@ export function canonicalLogDate(raw, session) {
 
 function cleanSet(s) {
   if (!s || typeof s !== 'object') return null;
-  return { w: String(s.w ?? '').slice(0, 12), r: String(s.r ?? '').slice(0, 12), done: !!s.done };
+  return { w: cut(s.w, 12), r: cut(s.r, 12), done: !!s.done };
 }
 
 function cleanSession(s) {
   if (!s || typeof s !== 'object' || typeof s.day !== 'string' || !s.day) return null;
   const exercises = (Array.isArray(s.exercises) ? s.exercises : [])
     .filter((e) => e && typeof e.name === 'string')
-    .map((e) => ({ name: e.name.slice(0, 80), target: String(e.target ?? '').slice(0, 20), sets: (Array.isArray(e.sets) ? e.sets : []).map(cleanSet).filter(Boolean) }));
+    .map((e) => ({ name: cut(e.name, 80), target: cut(e.target, 20), sets: (Array.isArray(e.sets) ? e.sets : []).map(cleanSet).filter(Boolean) }));
   // The day (routine name) may be as long as routine names are (200).
-  const out = { day: s.day.slice(0, 200), exercises, time: typeof s.time === 'string' && ISO_TIME.test(s.time) ? s.time : '' };
+  const out = { day: cut(s.day, 200), exercises, time: typeof s.time === 'string' && ISO_TIME.test(s.time) ? s.time : '' };
   // An id that is an original-app key (date|day|JSON, stored by an earlier version) becomes its hash.
   if (typeof s.id === 'string' && s.id) out.id = s.id.includes('|') ? legacyId(s.id) : s.id.slice(0, 64);
   if (Number.isFinite(+s.duration) && +s.duration >= 0) out.duration = Math.round(+s.duration);
@@ -117,16 +118,20 @@ export function sanitizeLogs(source) {
 export function mergeLogs(remote, local, { deleted = [], deletedDates = {} } = {}) {
   // The original app's tombstones for JSON-keyed sessions match by their hash.
   const gone = new Set(deleted.flatMap((k) => (typeof k === 'string' && k.includes('|{') ? [k, legacyId(k)] : [k])));
+  // A time in the future (a bad clock or a crafted file) counts as the oldest,
+  // so it can neither win over real edits nor escape a cleared day.
+  const latest = Date.now() + 24 * 3600 * 1000;
+  const at = (s) => { const t = Date.parse(s.time) || 0; return t > latest ? 0 : t; };
   const merged = {};
   [sanitizeLogs(remote), sanitizeLogs(local)].forEach((logs) => Object.keys(logs).forEach((date) => logs[date].forEach((s) => {
     const key = sessionKey(date, s);
     if (gone.has(key)) return;
     const clearedAt = Number(deletedDates[date]) || Date.parse(deletedDates[date]) || 0;
-    if (clearedAt && (Date.parse(s.time) || 0) <= clearedAt) return;
+    if (clearedAt && at(s) <= clearedAt) return;
     const list = merged[date] || (merged[date] = []);
     const i = list.findIndex((x) => sessionKey(date, x) === key);
     if (i < 0) list.push(s);
-    else if ((Date.parse(s.time) || 0) >= (Date.parse(list[i].time) || 0)) list[i] = s;
+    else if (at(s) >= at(list[i])) list[i] = s;
   })));
   Object.values(merged).forEach((list) => list.sort(byTime));
   return merged;

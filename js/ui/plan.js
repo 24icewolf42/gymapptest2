@@ -1,4 +1,5 @@
 // Plan: weekly schedule, routine library and the routine editor.
+import { cut } from '../core/text.js';
 import { $, html, render, on, toast, busyAttr } from '../core/dom.js';
 import { DOW, fmtClock } from '../core/dates.js';
 import { pushLayer } from '../core/router.js';
@@ -34,7 +35,7 @@ function weekView() {
     ${names.length ? html`<div class="routine-list" data-key="routines">${names.map((n) => {
       const days = scheduledDays(state.schedule, n);
       return html`<button type="button" class="routine" data-edit="${n}" data-key="routine-${n}">
-        <span class="routine-mark" aria-hidden="true">${n.slice(0, 1).toUpperCase()}</span>
+        <span class="routine-mark" aria-hidden="true">${(Array.from(n)[0] || '').toUpperCase()}</span>
         <span class="row-main"><b>${n}</b><small>${workoutSummary(state.workouts[n])} · ${days ? days + (days === 1 ? ' day a week' : ' days a week') : 'not scheduled'}</small></span>
         <span class="chev">${icons.chevron}</span></button>`;
     })}</div>` : html`<div class="empty-inline" data-key="no-routines"><p>No workouts yet.</p><p class="muted">Create one like Push, Pull, Legs, Upper or Lower.</p></div>`}
@@ -280,7 +281,7 @@ export function initPlan() {
     if (x) add(x.name, x.cat, x.unilateral);
   });
   on(page, 'click', '[data-add-custom]', async (e, b) => {
-    const name = b.dataset.addCustom.trim().slice(0, 80);
+    const name = cut(b.dataset.addCustom.trim(), 80);
     const cat = await openSheet({
       title: 'Which muscle?', subtitle: name,
       body: html`<div class="chips wrap">${Object.entries(CATEGORIES).map(([k, v]) => html`<button type="button" class="chip" data-cat="${k}">${v}</button>`)}</div>`,
