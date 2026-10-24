@@ -19,7 +19,7 @@ Supabase project, your app id and your `cloud-config.js` are unchanged.
 - **Your v2.12.x changes are kept:** drag to reorder exercises (by the grip
   on the left; the arrows still work), auto-scroll while dragging, and no tab
   swipe from rows that scroll sideways.
-- **Tests:** every push runs about 250 automated tests (logic, database
+- **Tests:** every pull request and every push to `main` runs about 250 automated tests (logic, database
   rules, the app in a browser).
 - The code is split into small files under `js/` instead of one big
   `index.html`. `docs/REVIEW.md` lists every problem found and how it was fixed.
@@ -107,10 +107,16 @@ where f.status = 'accepted' order by f.created_at;
 1. **Actions → Set up Android release signing (run once) → Run workflow.**
    Approve it when GitHub asks. It creates the key (EC, with a random
    password) inside GitHub; it never exists on anyone's computer.
-2. Download the `release-key-backup` artifact from that run and keep it with
-   `backup-key.pem`. Don't unpack it: it opens only with your pass phrase, and
-   unpacked it would be the key without protection.
-3. Delete the artifact (on the run's page) and the `ADMIN_GH_TOKEN` secret.
+2. **Within one day** (GitHub deletes it after that), download the
+   `release-key-backup` artifact from that run. Keep it with `backup-key.pem`,
+   **outside the repo folder**. Don't unpack it: it opens only with your pass
+   phrase, and unpacked it would be the key without protection. If you miss
+   the day, the only way to a backup is a new key, and every user has to
+   reinstall the app.
+3. Delete the artifact (on the run's page) and the `ADMIN_GH_TOKEN` secret,
+   then revoke the token itself: GitHub → Settings → Developer settings →
+   Fine-grained tokens → Delete. Deleting the secret alone leaves the token
+   working.
 
 **Without this backup, no update can ever be installed over the app again**
 if the GitHub secrets are lost.
@@ -122,7 +128,8 @@ step when asked. It builds, signs and publishes the `latest` release. Phones
 that already have the app update normally; they don't need a reinstall. Check
 on your phone: Settings → Check for updates.
 
-From now on every push to `main` does this by itself after the tests pass.
+From now on every push to `main` builds a new release after the tests pass;
+with required reviewers set (step 1), signing waits for your approval.
 
 ## Day to day
 
@@ -131,5 +138,6 @@ From now on every push to `main` does this by itself after the tests pass.
   installed copies keep the old file). The tests remind you.
 - For a new version, change `js/version.js`, `Version` and `VERSION` in
   `sw.js` together.
-- New database changes go in a new file in `supabase/migrations/`; merging it
-  to `main` starts the deploy (with your approval).
+- New database changes go in a new file in `supabase/migrations/`. Then run
+  `npm run schema` (it updates `supabase/schema.sql`, the one-file version for
+  new projects). Merging it to `main` starts the deploy (with your approval).
