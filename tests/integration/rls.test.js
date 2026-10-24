@@ -363,15 +363,20 @@ describe('hardening', () => {
     expect((await u.client.from('body_weight_logs').insert({ user_id: u.id, log_date: '8980-01-01', weight_kg: 70 })).error).not.toBeNull();
   });
 
-  it('refuses markup in shared routines, plans and logs, which the original app would run', async () => {
+  it('keeps markup out of what the original app shows: shares are refused, plans and logs cleaned', async () => {
     const a = await makeUser(uniqueName('mk'));
-    const bad = [{ name: '<img src=x onerror=alert(1)>', sets: 3 }];
+    const bad = [{ name: '<img src=x onerror="alert(1)">', sets: 3, note: 'ends with \\' }];
     expect((await a.client.from('shared_workouts').insert({ owner_id: a.id, title: 'Push', workout: bad })).error).not.toBeNull();
-    expect((await a.client.from('shared_workouts').insert({ owner_id: a.id, title: 'Push', workout: [{ name: "Farmer's walk" }] })).error).toBeNull();
-    expect((await a.client.from('workout_plans').insert({ user_id: a.id, plan: { workouts: { P: bad } } })).error).not.toBeNull();
-    expect((await a.client.from('workout_plans').insert({ user_id: a.id, plan: { workouts: {}, restImage: 'rest.png" onerror="x' } })).error).not.toBeNull();
-    expect((await a.client.from('workout_plans').insert({ user_id: a.id, plan: { workouts: {}, restImage: 'data:image/jpeg;base64,AAAA' } })).error).toBeNull();
-    expect((await a.client.from('workout_data').insert({ user_id: a.id, logs: { '2026-01-01': [{ day: 'P', exercises: [{ name: '<b>x</b>', sets: [] }] }] }, progress: {} })).error).not.toBeNull();
+    expect((await a.client.from('shared_workouts').insert({ owner_id: a.id, title: 'Push', workout: [{ name: "Farmer's walk", note: 'back\\' }] })).error).toBeNull();
+    // Both apps rewrite plans and history in full, so these are cleaned instead of refused.
+    expect((await a.client.from('workout_plans').insert({ user_id: a.id, plan: { workouts: { 'Arms <3': bad }, restImage: 'rest.png' } })).error).toBeNull();
+    const plan = (await a.client.from('workout_plans').select('plan').eq('user_id', a.id).single()).data.plan;
+    expect(Object.keys(plan.workouts)).toEqual(['Arms ‹3']);
+    expect(plan.workouts['Arms ‹3'][0]).toMatchObject({ name: '‹img src=x onerror=”alert(1)”›', note: 'ends with \\' });
+    expect(plan.restImage).toBeUndefined();
+    expect((await a.client.from('workout_data').insert({ user_id: a.id, logs: { '2026-01-01': [{ day: 'P', exercises: [{ name: '<b>x</b>', sets: [] }] }] }, progress: {} })).error).toBeNull();
+    const logs = (await a.client.from('workout_data').select('logs').eq('user_id', a.id).single()).data.logs;
+    expect(logs['2026-01-01'][0].exercises[0].name).toBe('‹b›x‹/b›');
   });
 
   it('limits shared routines and gym dates per account', async () => {
