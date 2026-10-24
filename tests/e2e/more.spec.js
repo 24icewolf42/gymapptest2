@@ -720,3 +720,67 @@ test('workouts that belong to no account are defused when they join one', async 
   const plan = (await u.client.from('workout_plans').select('plan').eq('user_id', u.id).single()).data.plan;
   expect(Object.keys(plan.workouts).sort()).toEqual(['Arms <3', 'Push‹img src=x onerror=alert(1)>']);
 });
+
+test('prompts describe their field, the Undo ring is solid, and Escape in a workout only dismisses the Undo', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await page.evaluate(async () => { (await import('/js/ui/sheet.js')).promptDialog({ title: 'Choose another username', label: 'Username', hint: '@anna was already taken, so you got @user_1 for now.' }); });
+  const input = page.locator('.sheet-backdrop.open input[name=value]');
+  const ids = (await input.getAttribute('aria-describedby')).split(' ');
+  await expect(page.locator(`[id="${ids[0]}"]`)).toContainText('was already taken');
+  await page.keyboard.press('Escape');
+  expect(await page.evaluate(() => [...document.styleSheets].flatMap((s) => [...s.cssRules]).some((r) => r.selectorText === '.toast-action:focus-visible' && r.style.outlineStyle === 'solid' && parseFloat(r.style.outlineWidth) >= 2))).toBe(true);
+  await createWorkout(page, 'Pull', ['Lat Pulldown']);
+  await scheduleToday(page, 'Pull');
+  await tab(page, 'today');
+  await page.locator('#startToday').click();
+  await page.locator('#sessionMain').click();
+  const card = page.locator('#session .ex-card').first();
+  await card.locator('.w').last().fill('10');
+  await card.locator('[data-remove]').click();
+  await expect(page.locator('#toast .toast-action')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#toast .toast-action')).toHaveCount(0);
+  await expect(page.locator('#session')).toBeVisible();
+});
+
+test('an Undo shown while a dialog is open waits behind it', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await page.evaluate(async () => {
+    (await import('/js/ui/sheet.js')).confirmDialog('Busy');
+    await new Promise((r) => setTimeout(r, 50));
+    (await import('/js/core/dom.js')).toast('Removed.', { action: { label: 'Undo', onClick: () => {} } });
+  });
+  expect(await page.evaluate(() => document.querySelector('#toast .toast-action').inert)).toBe(true);
+});
+
+test('an available update is offered in Settings and announced, not laid over the page', async ({ page }) => {
+  await offline(page);
+  await page.route('**/Version*', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ version: '9.9.9' }) }));
+  await open(page);
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('gym:check-update', { detail: { manual: false } })));
+  await expect(page.locator('#toast')).toContainText('Open Settings');
+  await page.locator('.page.active [data-open-settings]').click();
+  await expect(page.locator('[data-apply-update]')).toBeVisible();
+});
+
+test('Crew "Try again" stays in place, then reports success', async ({ browser }) => {
+  const { pa, errors } = await friendsPair(browser, 'crt');
+  let fail = true;
+  await pa.route('**/rest/v1/gym_dates*', (r) => (fail && r.request().method() === 'GET' ? r.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"down"}' }) : r.continue()));
+  await tab(pa, 'crew');
+  await pa.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  const retry = pa.locator('[data-retry]').first();
+  await expect(retry).toBeVisible();
+  await retry.focus();
+  await pa.keyboard.press('Enter');
+  await expect(pa.locator('#toastAlert')).not.toBeEmpty();
+  await expect(retry).toBeFocused();
+  fail = false;
+  await pa.keyboard.press('Enter');
+  await expect(pa.locator('#toast')).toContainText('Loaded');
+  await expect(pa.locator('#crew-tab-dates')).toBeFocused();
+  errors[0].length = 0;
+  expect(errors.flat()).toEqual([]);
+});

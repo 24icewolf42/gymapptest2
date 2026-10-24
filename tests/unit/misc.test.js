@@ -117,10 +117,10 @@ describe('catalog', () => {
 });
 
 describe('backup files', () => {
-  it('defuse markup from a backup but keep names like "Arms <3", and drop a rest picture that is not an image', async () => {
+  it('defuse tags from a backup but keep names like "Arms <3" and quotes, and drop a rest picture that is not an image', async () => {
     const { parseBackup } = await import('../../js/domain/backup.js');
     const out = parseBackup(JSON.stringify({ gymLogs: '{}', gymCustomWorkouts: { 'Arms <3': [{ name: '<b>x</b>', note: 'seat "4"' }] }, gymRestImage: 'rest.png" onerror="x' }));
-    expect(JSON.parse(out.gymCustomWorkouts)).toEqual({ 'Arms <3': [{ name: '‹b>x‹/b>', note: 'seat ”4”' }] });
+    expect(JSON.parse(out.gymCustomWorkouts)).toEqual({ 'Arms <3': [{ name: '‹b>x‹/b>', note: 'seat "4"' }] });
     expect(out.gymRestImage).toBeUndefined();
   });
 });

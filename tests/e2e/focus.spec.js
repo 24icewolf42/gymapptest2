@@ -122,11 +122,13 @@ test('unblocking and the weight-sharing switch keep focus', async ({ browser }) 
   await expect(share).toBeChecked();
   await expect(pa.locator('#toast')).toContainText('Friends can see your latest weight');
   await expect(share).toBeFocused();
-  // Unblocking removes the row: focus moves to the next blocked person.
+  // Unblocking removes the row: focus goes to the section, not to the next
+  // person's Unblock (a second Enter would unblock them too).
   await pa.locator(`[data-unblock="${b.id}"]`).focus();
   await pa.keyboard.press('Enter');
   await expect(pa.locator(`[data-unblock="${b.id}"]`)).toHaveCount(0);
-  await expect(pa.locator(`[data-unblock="${c.id}"]`)).toBeFocused();
+  await expect(pa.locator('#page-settings h2', { hasText: 'Privacy' })).toBeFocused();
+  expect(c.id).toBeTruthy();
   expect(errors).toEqual([]);
 });
 
