@@ -225,7 +225,7 @@ function renderSession(resume) {
       <h3 id="food-title">Food &amp; drink</h3>
       ${['pre', 'post'].map((side) => html`<div class="food-row">
         <div class="food-text"><b>${side === 'pre' ? 'Before' : 'After'}</b> <span class="muted small" data-food-summary="${side}">${entrySummary(s.nutrition[side], side) || 'Not logged'}</span></div>
-        <button type="button" class="btn btn-soft btn-sm" data-food="${side}" aria-label="${side === 'pre' ? 'Food and drink before' : 'Food and drink after'}: ${s.nutrition[side] ? 'edit' : 'add'}">${s.nutrition[side] ? 'Edit' : 'Add'}</button>
+        <button type="button" class="btn btn-soft btn-sm" data-food="${side}" aria-label="${foodLabel(side, s.nutrition[side])}">${s.nutrition[side] ? 'Edit' : 'Add'}</button>
       </div>`)}
     </section>
     ${s.exercises.map((e, i) => html`
@@ -464,11 +464,14 @@ async function finish() {
 
 // Food and drink before or after the session: what (quick picks and/or a
 // short note), when, and optionally water and protein. No calories on purpose.
-async function editFood(side) {
-  if (!s) return;
-  const now = s.nutrition[side] || { items: [], note: '', when: '' };
+/**
+ * The food and drink sheet for one side ('pre' or 'post'). Resolves with
+ * { entry } (entry null when removed), or null when cancelled.
+ */
+export function foodSheet(side, current) {
+  const now = current || { items: [], note: '', when: '' };
   const label = side === 'pre' ? 'Before training' : 'After training';
-  const result = await openSheet({
+  return openSheet({
     title: label,
     subtitle: 'Food and drink. Saved with this workout; friends never see it.',
     className: 'food-sheet',
@@ -477,12 +480,12 @@ async function editFood(side) {
         <div class="chips wrap">${ITEMS.map(([id, name]) => html`<button type="button" class="chip${now.items.includes(id) ? ' on' : ''}" aria-pressed="${now.items.includes(id) ? 'true' : 'false'}" data-item="${id}">${name}</button>`)}</div></fieldset>
       <label class="field"><span>Details (optional)</span><input class="input" name="note" maxlength="${NOTE_MAX}" value="${now.note}" placeholder="e.g. banana and oats" autocomplete="off"></label>
       <fieldset class="field"><legend>When</legend>
-        <div class="chips wrap" role="radiogroup" aria-label="When">${TIMES[side].map(([id, name], i) => html`<button type="button" class="chip${now.when === id ? ' on' : ''}" role="radio" aria-checked="${now.when === id ? 'true' : 'false'}" tabindex="${now.when === id || (!now.when && i === 0) ? '0' : '-1'}" data-when="${id}">${name}</button>`)}</div></fieldset>
+        <div class="chips wrap" role="radiogroup">${TIMES[side].map(([id, name], i) => html`<button type="button" class="chip${now.when === id ? ' on' : ''}" role="radio" aria-checked="${now.when === id ? 'true' : 'false'}" tabindex="${now.when === id || (!now.when && i === 0) ? '0' : '-1'}" data-when="${id}">${name}</button>`)}</div></fieldset>
       <div class="food-amounts">
-        <label class="field"><span>Water (ml, optional)</span><input class="input" name="water" type="number" inputmode="numeric" min="0" max="5000" step="1" value="${now.water ?? ''}"></label>
-        <label class="field"><span>Protein (g, optional)</span><input class="input" name="protein" type="number" inputmode="decimal" min="0" max="300" step="0.1" value="${now.protein ?? ''}"></label>
+        <label class="field"><span>Water (ml, optional)</span><input class="input" name="water" aria-describedby="food-error" type="number" inputmode="numeric" min="0" max="5000" step="1" value="${now.water ?? ''}"></label>
+        <label class="field"><span>Protein (g, optional)</span><input class="input" name="protein" aria-describedby="food-error" type="number" inputmode="decimal" min="0" max="300" step="0.1" value="${now.protein ?? ''}"></label>
       </div>
-      <p class="form-error" aria-live="polite"></p>`,
+      <p class="form-error" id="food-error" aria-live="polite"></p>`,
     actions: [
       {
         label: 'Save', tone: 'primary', submit: true,
@@ -502,7 +505,7 @@ async function editFood(side) {
           });
         },
       },
-      ...(s.nutrition[side] ? [{ label: 'Remove', tone: 'ghost', value: { entry: null } }] : []),
+      ...(current ? [{ label: 'Remove', tone: 'ghost', value: { entry: null } }] : []),
       { label: 'Cancel', tone: 'ghost', value: null },
     ],
     onMount: (sheet) => {
@@ -521,12 +524,22 @@ async function editFood(side) {
         b.onclick = () => {
           // A second tap clears the choice (it is optional).
           const on = b.getAttribute('aria-checked') !== 'true';
-          radios.forEach((x) => { const sel = x === b && on; x.setAttribute('aria-checked', String(sel)); x.classList.toggle('on', sel); x.tabIndex = sel || (!on && x === radios[0]) ? 0 : -1; });
-          if (on) b.tabIndex = 0;
+          // The chip used keeps the tab stop, also when its choice was cleared.
+          radios.forEach((x) => { const sel = x === b && on; x.setAttribute('aria-checked', String(sel)); x.classList.toggle('on', sel); x.tabIndex = x === b ? 0 : -1; });
         };
       });
     },
   });
+}
+
+/** Short label for a food button (read by screen readers with what was logged). */
+export function foodLabel(side, entry) {
+  return `${side === 'pre' ? 'Food and drink before' : 'Food and drink after'}: ${entry ? entrySummary(entry, side) + '. Edit' : 'add'}`;
+}
+
+async function editFood(side) {
+  if (!s) return;
+  const result = await foodSheet(side, s.nutrition[side]);
   if (!result || !s) return;
   if (result.entry) s.nutrition[side] = result.entry; else delete s.nutrition[side];
   saveDraft();
@@ -536,7 +549,7 @@ async function editFood(side) {
   if (summary) summary.textContent = entrySummary(s.nutrition[side], side) || 'Not logged';
   if (btn) {
     btn.textContent = s.nutrition[side] ? 'Edit' : 'Add';
-    btn.setAttribute('aria-label', `${side === 'pre' ? 'Food and drink before' : 'Food and drink after'}: ${s.nutrition[side] ? 'edit' : 'add'}`);
+    btn.setAttribute('aria-label', foodLabel(side, s.nutrition[side]));
   }
 }
 

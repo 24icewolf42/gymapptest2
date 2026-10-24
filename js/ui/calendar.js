@@ -1,13 +1,13 @@
 // Calendar: every month from the first log to six months ahead, with streak.
 import { $, html, render, on, toast, reducedMotion } from '../core/dom.js';
 import { ymd, parseYmd, fmtLong, mondayIndex, MONTHS, DOW_LETTER, fmtDuration, fmtClock } from '../core/dates.js';
-import { state, setBypass, deleteSession, restoreSession } from '../state.js';
+import { state, setBypass, deleteSession, restoreSession, saveLogs } from '../state.js';
 import { account } from '../cloud/sync.js';
 import { streak, sessionKey } from '../domain/logs.js';
 import { categoryLabel } from '../domain/catalog.js';
 import { displaySets } from '../domain/plan.js';
 import { entrySummary } from '../domain/nutrition.js';
-import { openSession } from './session.js';
+import { openSession, foodSheet, foodLabel } from './session.js';
 import { gymDateDays } from './crew.js';
 import { openSheet, confirmDialog } from './sheet.js';
 import { icons } from './icons.js';
@@ -98,7 +98,8 @@ export async function openDay(ds) {
       body: html`${logs.map((s) => html`
         <section class="log-session">
           <header class="log-head"><h3>${s.day}</h3><small>${s.duration ? fmtClock(s.duration) : ''}</small></header>
-          ${s.nutrition ? html`<dl class="log-food">${['pre', 'post'].filter((k) => s.nutrition[k]).map((k) => html`<div><dt>${k === 'pre' ? 'Before' : 'After'}</dt><dd>${entrySummary(s.nutrition[k], k)}</dd></div>`)}</dl>` : ''}
+          <dl class="log-food">${['pre', 'post'].map((k) => html`<div><dt>${k === 'pre' ? 'Before' : 'After'}</dt><dd data-food-text="${k}">${entrySummary(s.nutrition?.[k], k) || 'Not logged'}</dd>
+            <button type="button" class="link-btn inline" data-food-log="${sessionKey(ds, s)}" data-side="${k}" aria-label="${foodLabel(k, s.nutrition?.[k])}">${s.nutrition?.[k] ? 'Edit' : 'Add'}</button></div>`)}</dl>
           ${s.exercises.map((e) => html`<div class="log-ex"><b>${e.name}</b>
             <ol class="log-sets">${e.sets.map((x) => html`<li><span>${x.w || '–'} kg × ${x.r || '–'}</span>${x.done ? html`<i aria-label="done">${icons.check}</i>` : ''}</li>`)}</ol></div>`)}
           <div class="btn-row">
@@ -110,6 +111,26 @@ export async function openDay(ds) {
       onMount: (sheet, close) => {
         sheet.querySelectorAll('[data-edit]').forEach((b) => { b.onclick = () => close({ edit: b.dataset.edit, name: b.dataset.name }); });
         sheet.querySelectorAll('[data-del]').forEach((b) => { b.onclick = () => close({ del: b.dataset.del, name: b.dataset.name }); });
+        // Food and drink of a saved workout, saved straight to it (e.g. "After", once home).
+        sheet.querySelectorAll('[data-food-log]').forEach((b) => {
+          b.onclick = async () => {
+            const side = b.dataset.side;
+            const find = () => (state.logs[ds] || []).find((x) => sessionKey(ds, x) === b.dataset.foodLog);
+            const res = await foodSheet(side, find()?.nutrition?.[side]);
+            const session = find();
+            if (!res || !session) return;
+            const nutrition = { ...(session.nutrition || {}) };
+            if (res.entry) nutrition[side] = res.entry; else delete nutrition[side];
+            // A newer save time, so this copy wins the merge on every device.
+            const next = { ...session, time: new Date().toISOString() };
+            if (Object.keys(nutrition).length) next.nutrition = nutrition; else delete next.nutrition;
+            state.logs[ds] = state.logs[ds].map((x) => (x === session ? next : x));
+            if (!saveLogs()) { state.logs[ds] = state.logs[ds].map((x) => (x === next ? session : x)); toast('This phone’s storage is full, so it was not saved.', { tone: 'error' }); return; }
+            b.closest('.log-food').querySelector(`[data-food-text="${side}"]`).textContent = entrySummary(next.nutrition?.[side], side) || 'Not logged';
+            b.textContent = next.nutrition?.[side] ? 'Edit' : 'Add';
+            b.setAttribute('aria-label', foodLabel(side, next.nutrition?.[side]));
+          };
+        });
       },
     });
     if (!action) return;
