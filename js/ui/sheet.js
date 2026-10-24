@@ -45,7 +45,9 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
     const behind = [...document.querySelectorAll('#app, #bottomNav, #activeBar, #session, #sheetRoot > .sheet-backdrop')].filter((el) => el !== backdrop && !el.inert);
     behind.forEach((el) => { el.inert = true; });
     let done = false;
-    const entry = { close: () => { if (dismissible) finish(null); }, backdrop, behind, previousFocus: document.activeElement };
+    // While it saves (prompt submit), the sheet can't be closed: the result must be seen.
+    const closable = () => dismissible && !sheet.dataset.busy;
+    const entry = { close: () => { if (closable()) finish(null); }, backdrop, behind, previousFocus: document.activeElement };
     open.push(entry);
 
     const finish = (value, fromBack) => {
@@ -78,21 +80,21 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
       resolve(value === undefined ? null : value);
     };
     // Back closes the sheet, unless it must be answered: then it stays.
-    const onBack = () => { if (dismissible) finish(null, true); else closeLayer = pushLayer(onBack); };
+    const onBack = () => { if (closable()) finish(null, true); else closeLayer = pushLayer(onBack); };
     let closeLayer = pushLayer(onBack);
 
-    backdrop.addEventListener('click', (e) => { if (e.target === backdrop && dismissible) finish(null); });
-    if (dismissible) sheet.querySelector('[data-sheet-close]').onclick = () => finish(null);
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop && closable()) finish(null); });
+    if (dismissible) sheet.querySelector('[data-sheet-close]').onclick = () => { if (closable()) finish(null); };
     sheet.querySelectorAll('[data-sheet-action]').forEach((b) => {
       const a = actions[+b.dataset.sheetAction];
-      if (!a.submit) b.onclick = () => (a.onClick ? a.onClick(finish, sheet) : finish(a.value));
+      if (!a.submit) b.onclick = () => { if (!sheet.dataset.busy) (a.onClick ? a.onClick(finish, sheet) : finish(a.value)); };
     });
     sheet.addEventListener('submit', (e) => {
       e.preventDefault();
       const a = actions.find((x) => x.submit);
       if (a) a.onClick ? a.onClick(finish, sheet) : finish(a.value);
     });
-    if (dismissible) enableDragToClose(sheet, () => finish(null));
+    if (dismissible) enableDragToClose(sheet, () => { if (closable()) finish(null); });
     onMount?.(sheet, finish);
     requestAnimationFrame(() => {
       backdrop.classList.add('open');
@@ -164,9 +166,16 @@ export function promptDialog({ title, label, value = '', placeholder = '', maxLe
           if (error) { showError(error); return; }
           // submit(v) saves on the server and returns an error to show, or '' (the prompt stays open on an error).
           if (submit) {
+            const label = button.textContent;
             button.setAttribute('aria-disabled', 'true');
+            button.textContent = 'Saving…';
+            sheet.dataset.busy = '1';
+            sheet.setAttribute('aria-busy', 'true');
             const failed = await submit(v);
+            delete sheet.dataset.busy;
+            sheet.removeAttribute('aria-busy');
             button.removeAttribute('aria-disabled');
+            button.textContent = label;
             if (failed) { showError(failed); return; }
           }
           finish(v);

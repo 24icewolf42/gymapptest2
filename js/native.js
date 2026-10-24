@@ -25,11 +25,14 @@ export function isNativeApp() {
 let offer = null;
 /** The update on offer: { title, action, apply }, or null. */
 export const updateOffer = () => offer;
-const announceOffer = () => toast(currentPage() === 'settings' ? `${offer.title}: “${offer.action}” is below.` : `${offer.title}. Open Settings to ${offer.action.toLowerCase()}.`);
+// Found in the background it waits behind an Undo or an error; asked for, it answers at once.
+const announceOffer = (manual) => toast(currentPage() === 'settings'
+  ? `${offer.title}. “${offer.action}” is just above “Check for updates”.`
+  : `${offer.title}. Open Settings to ${offer.action.toLowerCase()}.`, { background: !manual });
 function offerUpdate(title, action, onTap, manual = false) {
   const first = !offer;
   offer = { title, action, apply: onTap };
-  if (first || manual) announceOffer();
+  if (first || manual) announceOffer(manual);
   emit('gym:update-ready');
 }
 
@@ -71,7 +74,7 @@ async function checkApk(manual) {
     const rel = r.ok ? parseRelease((await r.json()).name) : null;
     if (rel && releaseIsNewer(rel, await installedBuild())) {
       offerUpdate(`Update available${rel.version ? ': v' + rel.version : ''}`, 'Download and install', installUpdate, manual);
-    } else if (manual) { if (offer) announceOffer(); else toast('You have the latest version.'); }
+    } else if (manual) { if (offer) announceOffer(true); else toast('You have the latest version.'); }
   } catch { if (manual) toast('Could not check for updates. Are you online?'); }
 }
 
@@ -97,7 +100,7 @@ async function checkWeb(manual) {
     // Only offer newer versions, so a stale cached file never prompts a downgrade.
     if (data && data.version && isNewer(data.version, APP_VERSION)) {
       offerUpdate('New version available', 'Reload now', applyWebUpdate, manual);
-    } else if (manual) { if (offer) announceOffer(); else toast('You have the latest version.'); }
+    } else if (manual) { if (offer) announceOffer(true); else toast('You have the latest version.'); }
   } catch { if (manual) toast('Could not check for updates. Are you online?'); }
 }
 
