@@ -116,10 +116,23 @@ export function initNative() {
   if (!native) setInterval(() => check(false), 30 * 60 * 1000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) check(false); });
 
-  // Suggest the Android app to Android browser users (once per session).
+  // Suggest the Android app, or explain how to add the web app on iPhone/iPad.
   const banner = $('installBanner');
-  if (!native && /Android/i.test(navigator.userAgent) && !matchMedia('(display-mode: standalone)').matches && sessionStorage.getItem('hideInstall') !== '1') {
-    banner.hidden = false;
+  const ios = /iPhone|iPad|iPod/i.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  if (!native && !standalone && sessionStorage.getItem('hideInstall') !== '1') {
+    if (/Android/i.test(navigator.userAgent)) {
+      banner.hidden = false;
+    } else if (ios) {
+      banner.setAttribute('aria-label', 'Add Tracker to your Home Screen');
+      $('installTitle').textContent = 'Add Tracker to your Home Screen';
+      $('installHint').textContent = 'Use Safari to install it for quick, offline access.';
+      $('installLink').hidden = true;
+      $('installHelp').hidden = false;
+      $('installHelp').onclick = () => toast('In Safari, tap Share, then Add to Home Screen.');
+      banner.hidden = false;
+    }
     $('installClose').onclick = () => { banner.hidden = true; sessionStorage.setItem('hideInstall', '1'); };
   }
 
