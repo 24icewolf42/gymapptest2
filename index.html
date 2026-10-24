@@ -11,6 +11,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://aiiyombsmvlbhifxgkhp.supabase.co wss://aiiyombsmvlbhifxgkhp.supabase.co; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types tracker">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
   <script src="js/theme-boot.js"></script>
   <link rel="stylesheet" href="css/app.css">
   <title>Tracker</title>
@@ -22,9 +23,10 @@
   </div>
 
   <main id="app">
-    <aside id="installBanner" class="install-banner" aria-label="Android app available" hidden>
-      <div><b>Get the Tracker app</b><small>Install it on your phone for the full app experience.</small></div>
-      <a class="btn btn-primary btn-sm" href="https://github.com/roguelineageaccmanager/gymapptest2/releases/download/latest/rat-tracker.apk">Install</a>
+    <aside id="installBanner" class="install-banner" aria-label="Install Tracker" hidden>
+      <div><b id="installTitle">Get the Tracker app</b><small id="installHint">Install it on your phone for the full app experience.</small></div>
+      <a class="btn btn-primary btn-sm" id="installLink" href="https://github.com/roguelineageaccmanager/gymapptest2/releases/download/latest/rat-tracker.apk">Install</a>
+      <button type="button" class="btn btn-primary btn-sm" id="installHelp" hidden>How to add</button>
       <button type="button" class="icon-btn sm" id="installClose" aria-label="Dismiss">&times;</button>
     </aside>
     <section class="page active" id="page-today" aria-label="Today"></section>
