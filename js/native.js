@@ -63,10 +63,11 @@ function installUpdate() {
     .then(() => toast('Tap Install when Android asks.'))
     .catch((e) => {
       if (e && e.code === 'SIGNATURE_MISMATCH') {
-        // The release key changed: Android only allows this as a fresh install.
+        // The installed app was not signed by the release key or its predecessor
+        // (e.g. a test build): Android only allows the release as a fresh install.
         openSheet({
           title: 'One-time reinstall needed',
-          body: html`<p class="sheet-text">This update is signed with a new, private key. Newer phones move to it automatically, but this phone (Android 8 or older) can't install it over the old app.</p>
+          body: html`<p class="sheet-text">This update is signed with a different key than the app on this phone (for example a test build), so Android can't install it over it.</p>
             <ol class="plain"><li>Settings → Backup → Save file (or sign in, so your data is in your account).</li><li>Uninstall Tracker.</li><li>Install the new version from the link below, then restore or sign in.</li></ol>`,
           actions: [{ label: 'Open download page', value: 'open', tone: 'primary' }, { label: 'Later', value: null, tone: 'ghost' }],
         }).then((v) => { if (v) window.open(APK_URL, '_blank'); });

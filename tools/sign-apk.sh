@@ -9,7 +9,8 @@
 # Android 9+ follows a signed key rotation (APK signature v3 lineage) from that
 # key to the private release key, so installed apps update without a reinstall,
 # and the old key loses the right to sign further updates on those phones.
-# Android 6-8 cannot rotate; there the app asks for a one-time reinstall.
+# Android 6-8 cannot rotate: there the v1/v2 signatures still come from the old
+# key, so updates install as before and the old key keeps working on them.
 set -euo pipefail
 in="$1"; out="$2"
 APKSIGNER="${APKSIGNER:-$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)}"

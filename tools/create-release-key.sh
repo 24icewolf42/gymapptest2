@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Creates the Android release key and the signed rotation from the old, public
 # debug key (LEGACY_KEYSTORE) to it, and stores both as GitHub secrets via `gh`
-# (GH_TOKEN/GH_REPO from the environment). Writes an encrypted backup to $1.
+# (GH_TOKEN/GH_REPO from the environment) in the "production" environment.
+# Writes a backup to $1, encrypted to the owner's certificate (BACKUP_CERT, PEM),
+# so only the holder of the matching private key can open it.
 # Used by .github/workflows/android-signing-setup.yml; never run it on a laptop.
 set -euo pipefail
 out="${1:?usage: create-release-key.sh <backup-file>}"
-: "${BACKUP_PASSPHRASE:?}"
+: "${BACKUP_CERT:?}"
 : "${LEGACY_KEYSTORE:?}"
 APKSIGNER="${APKSIGNER:-$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)}"
 GH="${GH:-gh}"
@@ -19,19 +21,29 @@ keytool -genkeypair -noprompt -keystore release.keystore -storetype PKCS12 -alia
   -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=Tracker, O=Tracker" \
   -storepass "$pass" -keypass "$pass" 2>/dev/null
 sha="$(keytool -list -v -keystore release.keystore -storepass "$pass" | grep -m1 'SHA256:' | sed 's/.*SHA256: *//')"
-# Rotation proof: the old key vouches for the new one; the old key may not roll back.
+# Rotation proof: the old key vouches for the new one. The old key is public, so
+# it keeps only what an update needs and loses rollback, shared user id and
+# account authentication. It must keep the permission capability: the app
+# declares a signature permission (from androidx), and without it Android
+# refuses the update with INSTALL_FAILED_DUPLICATE_PERMISSION (tested on API 35).
 "$APKSIGNER" rotate --out lineage.bin \
-  --old-signer --ks "$LEGACY_KEYSTORE" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --set-rollback false \
+  --old-signer --ks "$LEGACY_KEYSTORE" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android \
+  --set-installed-data true --set-permission true --set-rollback false --set-shared-uid false --set-auth false \
   --new-signer --ks release.keystore --ks-key-alias tracker --ks-pass "pass:$pass" --key-pass "pass:$pass"
-base64 -w0 release.keystore | $GH secret set ANDROID_KEYSTORE_BASE64
-base64 -w0 lineage.bin | $GH secret set ANDROID_SIGNING_LINEAGE_BASE64
-printf '%s' "$pass" | $GH secret set ANDROID_KEYSTORE_PASSWORD
-printf '%s' "$pass" | $GH secret set ANDROID_KEY_PASSWORD
-printf '%s' "tracker" | $GH secret set ANDROID_KEY_ALIAS
+# Environment secrets: only jobs that run in "production" (with its approval
+# and branch rules) can read them. The fingerprint is public.
+base64 -w0 release.keystore | $GH secret set --env production ANDROID_KEYSTORE_BASE64
+base64 -w0 lineage.bin | $GH secret set --env production ANDROID_SIGNING_LINEAGE_BASE64
+printf '%s' "$pass" | $GH secret set --env production ANDROID_KEYSTORE_PASSWORD
+printf '%s' "$pass" | $GH secret set --env production ANDROID_KEY_PASSWORD
+printf '%s' "tracker" | $GH secret set --env production ANDROID_KEY_ALIAS
 $GH variable set ANDROID_CERT_SHA256 --body "$sha"
 echo "Release certificate SHA-256: $sha"
 
-# Encrypted backup for the owner (secrets cannot be read back from GitHub).
+# Backup for the owner (secrets cannot be read back from GitHub), encrypted to
+# their certificate: there is no passphrase to guess.
+printf '%s\n' "$BACKUP_CERT" > owner.pem
+openssl x509 -in owner.pem -noout
 printf 'alias=tracker\npassword=%s\nsha256=%s\n' "$pass" "$sha" > key-info.txt
 tar -czf backup.tgz release.keystore lineage.bin key-info.txt
-printf '%s' "$BACKUP_PASSPHRASE" | openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -pass stdin -in backup.tgz -out "$out"
+openssl cms -encrypt -binary -aes256 -outform DER -in backup.tgz -out "$out" owner.pem

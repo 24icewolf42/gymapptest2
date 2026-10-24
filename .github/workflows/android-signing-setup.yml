@@ -1,17 +1,17 @@
 name: Set up Android release signing (run once)
 
 # Creates the private release key inside GitHub Actions and stores it as
-# repository secrets, so it never exists on anyone's computer or in the repo.
-# The APK workflow then signs every release with it.
+# secrets of the "production" environment, so it never exists on anyone's
+# computer or in the repo. The APK workflow then signs every release with it.
 #
-# Needed once before running:
-#   secret ADMIN_GH_TOKEN               fine-grained token for this repository with
-#                                       "Secrets: read and write" and "Variables: read and write"
-#   secret KEYSTORE_BACKUP_PASSPHRASE   long passphrase that encrypts the backup copy
-# Afterwards download the "release-key-backup" artifact (encrypted keystore and
-# rotation proof) and keep it somewhere safe: without the key, updates can never
-# be installed over the app.
-# You can then delete ADMIN_GH_TOKEN.
+# Needed once before running, in the "production" environment:
+#   secret   ADMIN_GH_TOKEN          fine-grained token for this repository with
+#                                    "Environments", "Secrets" and "Variables": read and write
+#   variable KEYSTORE_BACKUP_CERT    the owner's certificate (PEM) the backup is encrypted to
+# Afterwards download the "release-key-backup" artifact (keystore and rotation
+# proof, readable only with the certificate's private key), keep it somewhere
+# safe and delete the artifact: without the key, updates can never be installed
+# over the app. Then delete ADMIN_GH_TOKEN.
 
 on:
   workflow_dispatch:
@@ -32,7 +32,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.ADMIN_GH_TOKEN }}
       GH_REPO: ${{ github.repository }}
-      BACKUP_PASSPHRASE: ${{ secrets.KEYSTORE_BACKUP_PASSPHRASE }}
+      BACKUP_CERT: ${{ vars.KEYSTORE_BACKUP_CERT }}
     steps:
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
@@ -42,8 +42,8 @@ jobs:
       - name: Check settings
         run: |
           test -n "$GH_TOKEN" || { echo "::error::Add the ADMIN_GH_TOKEN secret first"; exit 1; }
-          test "${#BACKUP_PASSPHRASE}" -ge 20 || { echo "::error::Add a KEYSTORE_BACKUP_PASSPHRASE secret of at least 20 characters"; exit 1; }
-          if gh secret list | grep -q '^ANDROID_KEYSTORE_BASE64'; then
+          printf '%s\n' "$BACKUP_CERT" | openssl x509 -noout 2>/dev/null || { echo "::error::Add the KEYSTORE_BACKUP_CERT variable (a PEM certificate) first"; exit 1; }
+          if gh secret list --env production | grep -q '^ANDROID_KEYSTORE_BASE64'; then
             if [ "${{ inputs.replace_existing }}" != "true" ]; then
               echo "::error::A release key already exists. Re-run with 'Replace an existing key' only if it is lost or leaked."
               exit 1
@@ -61,15 +61,15 @@ jobs:
       - name: Create the key and store it as secrets
         run: |
           git show 108ba0b:android-signing/debug.keystore > "$RUNNER_TEMP/legacy.keystore"
-          LEGACY_KEYSTORE="$RUNNER_TEMP/legacy.keystore" bash tools/create-release-key.sh "$RUNNER_TEMP/release-key-backup.tgz.enc"
+          LEGACY_KEYSTORE="$RUNNER_TEMP/legacy.keystore" bash tools/create-release-key.sh "$RUNNER_TEMP/release-key-backup.p7m"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-key-backup
-          path: ${{ runner.temp }}/release-key-backup.tgz.enc
-          retention-days: 7
+          path: ${{ runner.temp }}/release-key-backup.p7m
+          retention-days: 1
 
       - name: How to restore the backup
         run: |
-          echo "Decrypt with: openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in release-key-backup.tgz.enc -out backup.tgz"
-          echo "(it asks for KEYSTORE_BACKUP_PASSPHRASE), then: tar -xzf backup.tgz"
+          echo "Decrypt with: openssl cms -decrypt -binary -inform DER -in release-key-backup.p7m -inkey <your private key> -out backup.tgz"
+          echo "then: tar -xzf backup.tgz. Delete the artifact once you have it."
