@@ -175,7 +175,8 @@ async function chooseForDay(i) {
   savePlan();
 }
 
-// Drag an exercise by its grip to reorder (from upstream v2.12.3). The
+// Drag an exercise by its grip to reorder (from upstream v2.12.3); near the
+// top or bottom edge the page scrolls on its own (upstream e622386). The
 // up/down buttons do the same with a tap or the keyboard.
 function enableDragReorder(page) {
   page.addEventListener('pointerdown', (e) => {
@@ -186,17 +187,31 @@ function enableDragReorder(page) {
     e.preventDefault();
     handle.setPointerCapture(e.pointerId);
     const rows = [...listEl.children];
-    const from = rows.indexOf(row), startY = e.clientY;
-    let to = from;
+    const from = rows.indexOf(row), startY = e.clientY, startScroll = window.scrollY;
+    let to = from, pointerY = e.clientY, raf = 0;
     row.classList.add('dragging');
-    const move = (ev) => {
-      const dy = ev.clientY - startY;
-      row.style.transform = `translateY(${dy}px)`;
+    const update = () => {
+      // The row follows the finger, also while the page scrolls under it.
+      row.style.transform = `translateY(${pointerY - startY + window.scrollY - startScroll}px)`;
       const mid = row.getBoundingClientRect().top + row.offsetHeight / 2;
       to = rows.filter((r) => r !== row && r.getBoundingClientRect().top + r.offsetHeight / 2 < mid).length;
       rows.forEach((r, i) => r.classList.toggle('drop-before', r !== row && i === (to >= from ? to + 1 : to)));
     };
-    const end = () => {
+    const autoScroll = () => {
+      const top = 110, bottom = window.innerHeight - 130; // clear of the header and the bottom bar
+      const speed = pointerY < top ? -(4 + 20 * Math.min(1, (top - pointerY) / top))
+        : pointerY > bottom ? 4 + 20 * Math.min(1, (pointerY - bottom) / 110) : 0;
+      if (speed) {
+        const before = window.scrollY;
+        window.scrollBy(0, Math.round(speed));
+        if (window.scrollY !== before) update();
+      }
+      raf = requestAnimationFrame(autoScroll);
+    };
+    const move = (ev) => { pointerY = ev.clientY; update(); };
+    // pointerup drops the row; pointercancel (the system took the gesture) puts it back.
+    const end = (ev) => {
+      cancelAnimationFrame(raf);
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', end);
       handle.removeEventListener('pointercancel', end);
@@ -204,7 +219,7 @@ function enableDragReorder(page) {
       row.style.transform = '';
       rows.forEach((r) => r.classList.remove('drop-before'));
       const l = list();
-      if (!l || to === from) return;
+      if (ev.type === 'pointercancel' || !l || to === from) return;
       const [item] = l.splice(from, 1);
       l.splice(to, 0, item);
       savePlan();
@@ -213,6 +228,7 @@ function enableDragReorder(page) {
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', end);
     handle.addEventListener('pointercancel', end);
+    raf = requestAnimationFrame(autoScroll);
   });
 }
 
