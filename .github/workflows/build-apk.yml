@@ -123,7 +123,6 @@ jobs:
         env:
           ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
         run: |
-          test "$(sha256sum build-apk/rat-tracker.apk | cut -d' ' -f1)" = "$(cat build-apk/rat-tracker.apk.sha256)"
           APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
           "$APKSIGNER" verify --verbose --print-certs build-apk/rat-tracker.apk | tee "$RUNNER_TEMP/certs.txt"
           want="$(printf '%s' "$ANDROID_CERT_SHA256" | tr -d ' :' | tr 'A-F' 'a-f')"

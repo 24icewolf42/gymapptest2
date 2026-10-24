@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Brings a Supabase database's migration history in line with this repo and
 # applies new migrations. Used by .github/workflows/supabase-deploy.yml.
-#   DB_ARGS="--linked --password …" tools/deploy-db.sh            # live project (after `supabase link`)
+#   DB_ARGS=--linked tools/deploy-db.sh                          # live project (after `supabase link`; password from SUPABASE_DB_PASSWORD)
 #   DB_ARGS="--db-url postgresql://…" tools/deploy-db.sh          # any database, e.g. for testing
 #   DRY_RUN=true …                                                 # only show what would happen
 set -euo pipefail
