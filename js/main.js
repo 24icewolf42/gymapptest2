@@ -15,8 +15,10 @@ import { openSheet } from './ui/sheet.js';
 import { navIcons } from './ui/icons.js';
 import { initNative } from './native.js';
 import { fmtClock } from './core/dates.js';
+import { initTheme, applyTheme } from './ui/theme.js';
 
 loadState();
+initTheme();
 
 // Bottom navigation
 const NAV_LABELS = { today: 'Today', plan: 'Plan', calendar: 'Calendar', stats: 'Stats', crew: 'Crew' };
@@ -85,6 +87,7 @@ paintActive();
 window.addEventListener('storage', (e) => {
   if (e.key !== null && !e.key.startsWith('gym')) return;
   loadState();
+  applyTheme();
   paintActive();
   refresh();
   // Another tab answered the account question: close it here too.

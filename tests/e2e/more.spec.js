@@ -2259,4 +2259,57 @@ test('a custom rest-day picture shows on rest days and in "Coming up"', async ({
   await page.locator('[data-pick-image]').click();
   await (await chooser2).setFiles({ name: 'photo.heic', mimeType: 'image/heic', buffer: Buffer.from('not really a picture') });
   await expect(page.locator('#toast')).toContainText('format can’t be used');
+||||||| parent of 5498b45 (feat(theme): add light theme, color presets and own primary color)
+// ---- features: theming ----
+
+test('appearance: light or dark, a preset or own color, kept readable and remembered', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await page.locator('.page.active [data-open-settings]').click();
+  const root = page.locator('html');
+  const accent = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
+  await page.locator('[data-base="light"]').click();
+  await expect(root).toHaveAttribute('data-theme', 'light');
+  await expect(page.locator('[data-base="light"]')).toHaveAttribute('aria-checked', 'true');
+  // Lime on white would be unreadable: it is shown darker, and the user is told.
+  expect(await accent()).not.toBe('#c8f53d');
+  await expect(page.locator('[data-key="color-adjusted"]')).toBeVisible();
+  // Arrow keys move through the colors (a radio group), and choosing one applies it.
+  await page.locator('[data-preset="lime"]').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('[data-preset="ocean"]')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('[data-preset="ocean"]')).toHaveAttribute('aria-checked', 'true');
+  const ratio = await page.evaluate(async () => {
+    const { contrast } = await import('/js/domain/theme.js');
+    const s = getComputedStyle(document.documentElement);
+    return contrast(s.getPropertyValue('--accent').trim(), '#ffffff');
+  });
+  expect(ratio).toBeGreaterThanOrEqual(4.5);
+  // Own color.
+  await page.locator('[data-custom-color]').evaluate((el) => { el.value = '#ffaa00'; el.dispatchEvent(new Event('change', { bubbles: true })); });
+  await expect(page.locator('.color-pick')).toContainText('(chosen)');
+  await page.locator('[data-base="dark"]').click();
+  await expect(root).not.toHaveAttribute('data-theme', 'light');
+  expect(await accent()).toBe('#ffaa00');
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#0d0e10');
+  // Remembered after a reload.
+  await page.reload();
+  await expect(page.locator('#page-today h1')).toHaveText('Today');
+  expect(await accent()).toBe('#ffaa00');
+  // "Match phone" follows the phone.
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.locator('[data-base="system"]').click();
+  await expect(root).toHaveAttribute('data-theme', 'light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(root).not.toHaveAttribute('data-theme', 'light');
+});
+
+test('a theme from a backup file cannot inject CSS', async ({ page }) => {
+  await offline(page);
+  await page.addInitScript(() => localStorage.setItem('gymSettings', JSON.stringify({ weightStep: 0, theme: { base: 'light', preset: 'custom', color: 'red; background: url(https://evil.example/x)' } })));
+  await open(page);
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).not.toContain('url');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
 });

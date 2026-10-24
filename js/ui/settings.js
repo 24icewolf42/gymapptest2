@@ -14,6 +14,8 @@ import { loadBlocks, unblock } from '../cloud/social.js';
 import { openSheet, confirmDialog, promptDialog, markBusy } from './sheet.js';
 import { icons } from './icons.js';
 import { APP_VERSION } from '../version.js';
+import { PRESETS, sanitizeTheme } from '../domain/theme.js';
+import { applyTheme, currentTheme } from './theme.js';
 import { updateOffer } from '../native.js';
 
 const MIN_AGE = 14;
@@ -125,6 +127,21 @@ function accountCard() {
   </section>`;
 }
 
+function appearanceCard() {
+  const t = currentTheme();
+  const bases = [['dark', 'Dark'], ['light', 'Light'], ['system', 'Match phone']];
+  const radio = (on, attrs, label, swatch = '') => html`<button type="button" class="chip${on ? ' on' : ''}" role="radio" aria-checked="${on ? 'true' : 'false'}" tabindex="${on ? '0' : '-1'}"${attrs}>${swatch}${label}</button>`;
+  return html`<section class="card" data-key="appearance">
+    <h2>Appearance</h2>
+    <div class="field"><span id="baseLabel">Theme</span>
+      <div class="chips wrap" role="radiogroup" aria-labelledby="baseLabel">${bases.map(([v, l]) => radio(t.base === v, raw(` data-base="${v}"`), l))}</div></div>
+    <div class="field"><span id="colorLabel">Color</span>
+      <div class="chips wrap" role="radiogroup" aria-labelledby="colorLabel">${PRESETS.map((p) => radio(t.preset === p.id, raw(` data-preset="${p.id}"`), p.name, html`<span class="swatch swatch-${p.id}" aria-hidden="true"></span>`))}</div>
+      <label class="color-pick"><input type="color" data-custom-color value="${t.preset === 'custom' ? t.color : t.accent}"> <span>Your own color${t.preset === 'custom' ? ' (chosen)' : ''}</span></label>
+      ${t.adjusted ? html`<p class="hint" data-key="color-adjusted">Shown a little ${t.shown === 'light' ? 'darker' : 'lighter'} than chosen, so text in it stays readable.</p>` : ''}</div>
+  </section>`;
+}
+
 function trainingCard() {
   const steps = [[0, 'Exact'], [0.5, '0.5 kg'], [1, '1 kg'], [2.5, '2.5 kg'], [5, '5 kg']];
   return html`<section class="card" data-key="training">
@@ -176,6 +193,7 @@ export function renderSettings() {
       <button type="button" class="icon-btn" data-close-settings aria-label="Back">${icons.back}</button>
       <div class="grow"><p class="eyebrow">Tracker v${APP_VERSION}</p><h1 class="h1-sm">Settings</h1></div></header>
     <div data-key="account-${account.user ? 'in' : 'out'}">${accountCard()}</div>
+    ${appearanceCard()}
     ${trainingCard()}
     ${backupCard()}
     ${dangerCard()}
@@ -427,6 +445,15 @@ export function initSettings() {
     unblocking.delete(id);
   });
   on(page, 'click', '[data-step]', (e, b) => { state.settings.weightStep = +b.dataset.step; saveSettings(); renderSettings(); });
+  const setTheme = (change) => {
+    state.settings.theme = sanitizeTheme({ ...sanitizeTheme(state.settings.theme), ...change });
+    saveSettings();
+    applyTheme();
+    renderSettings();
+  };
+  on(page, 'click', '[data-base]', (e, b) => setTheme({ base: b.dataset.base }));
+  on(page, 'click', '[data-preset]', (e, b) => setTheme({ preset: b.dataset.preset }));
+  on(page, 'change', '[data-custom-color]', (e, input) => setTheme({ preset: 'custom', color: input.value }));
   on(page, 'click', '[data-pick-image]', () => $('restFile').click());
   on(page, 'change', '#restFile', async (e, input) => {
     const file = input.files && input.files[0];

@@ -3,7 +3,7 @@
 // "Reload now" in Settings (the page sends 'skip-waiting').
 const VERSION = '3.0.0';
 // Hash of the cached files (tools/sw-hash.mjs), so every change re-caches.
-const BUILD = '8d1c86f9163a';
+const BUILD = 'dd469d58c2cc';
 const CACHE = 'tracker-' + VERSION + '-' + BUILD;
 
 const FILES = [
@@ -29,6 +29,7 @@ const FILES = [
   'js/domain/plan.js',
   'js/domain/release.js',
   'js/domain/rest-timer.js',
+  'js/domain/theme.js',
   'js/domain/weights.js',
   'js/cloud/client.js',
   'js/cloud/gym-dates.js',
@@ -43,6 +44,7 @@ const FILES = [
   'js/ui/settings.js',
   'js/ui/sheet.js',
   'js/ui/stats.js',
+  'js/ui/theme.js',
   'js/ui/today.js',
   'fonts/inter-400.woff',
   'fonts/inter-600.woff',
