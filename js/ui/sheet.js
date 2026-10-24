@@ -142,7 +142,7 @@ export async function confirmDialog(message, { title = 'Are you sure?', ok = 'OK
  * Asks for one value. `input` adds attributes for the field
  * (e.g. { inputmode: 'numeric', autocomplete: 'one-time-code' }).
  */
-export function promptDialog({ title, label, value = '', placeholder = '', maxLength = 80, hint = '', ok = 'Save', type = 'text', validate, input = {}, submit }) {
+export function promptDialog({ title, label, value = '', placeholder = '', maxLength = 80, hint = '', ok = 'Save', type = 'text', validate, input = {}, submit, trim = true }) {
   const extra = Object.entries({ autocomplete: 'off', ...input }).map(([k, v]) => html` ${k}="${v}"`);
   // The hint (why this is asked) and any error describe the field.
   const hintId = 'prompt-hint-' + ++counter, errorId = 'prompt-error-' + counter;
@@ -158,7 +158,7 @@ export function promptDialog({ title, label, value = '', placeholder = '', maxLe
       {
         label: ok, tone: 'primary', submit: true,
         onClick: async (finish, sheet) => {
-          const field = sheet.querySelector('input[name=value]'), v = field.value.trim();
+          const field = sheet.querySelector('input[name=value]'), v = trim ? field.value.trim() : field.value;
           const button = sheet.querySelector('[type=submit]');
           if (button.getAttribute('aria-disabled') === 'true') return;
           const showError = (error) => { sheet.querySelector('.form-error').textContent = error; field.focus(); };
@@ -179,7 +179,8 @@ export function promptDialog({ title, label, value = '', placeholder = '', maxLe
               status.textContent = on ? 'Saving…' : '';
             };
             busy(true);
-            const failed = await submit(v);
+            // A step that throws (e.g. the session ended) must not leave the prompt stuck.
+            const failed = await Promise.resolve().then(() => submit(v)).catch((e) => (e && e.message) || 'Something went wrong. Try again.');
             busy(false);
             if (failed) { showError(failed); return; }
           }

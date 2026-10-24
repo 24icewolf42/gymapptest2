@@ -1276,3 +1276,63 @@ test('"Sign out on all devices" signs out the other devices too', async ({ brows
   });
   expect(ok[1]).toBe(true);
 });
+
+test('deletion records and ids seeded on a shared phone never make markup "known"', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('s12'));
+  const evil = 'Legs<img src=x onerror=alert(1)>';
+  const ex = [{ name: 'Dips', cat: 'chest', sets: 2, target: '8', rest: 60, note: '' }];
+  // An earlier cycle left the raw name only as a deletion record in the account.
+  await u.client.from('workout_plans').insert({ user_id: u.id, plan: { workouts: { Push: ex }, schedule: {}, deletedWorkouts: [evil] } });
+  await page.addInitScript(({ e, x }) => {
+    if (localStorage.getItem('seeded')) return;
+    localStorage.setItem('seeded', '1');
+    localStorage.setItem('gymCustomWorkouts', JSON.stringify({ [e]: x, 'Arms<b>': x }));
+    const d = new Date(), today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    localStorage.setItem('gymActive', JSON.stringify({ day: 'Arms<b>', date: today, key: 'new:x', startedAt: Date.now() }));
+  }, { e: evil, x: ex });
+  await open(page);
+  await signInAs(page, u);
+  const plan = (await u.client.from('workout_plans').select('plan').eq('user_id', u.id).single()).data.plan;
+  expect(JSON.stringify(plan.workouts)).not.toContain('<img');
+  expect(Object.keys(plan.workouts)).toContain('Arms‹b>');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('gymActive'))?.day)).toBe('Arms‹b>');
+});
+
+test('the user\'s own unsynced workout survives a sign-out and sign-in unchanged', async ({ page, context }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('own'));
+  const ex = [{ name: 'Bench <B', cat: 'chest', sets: 1, target: '8', rest: 60, note: '' }];
+  await u.client.from('workout_plans').insert({ user_id: u.id, plan: { workouts: { 'Push <A>': ex }, schedule: {} } });
+  await open(page);
+  await signInAs(page, u);
+  // Logged offline, then signed out keeping the data.
+  await context.setOffline(true);
+  await page.evaluate(async () => {
+    const st = await import('/js/state.js');
+    st.state.logs['2026-10-20'] = [{ id: 'own1', day: 'Arms <C', time: '2026-10-20T10:00:00.000Z', exercises: [{ name: 'Curl <D', target: '8', sets: [{ w: '50', r: '8', done: true }] }] }];
+    st.saveLogs();
+  });
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.locator('[data-signout]').click();
+  await sheetAction(page, 'Sign out, keep data here');
+  await expect(page.locator('#authForm')).toBeVisible({ timeout: 15000 });
+  await context.setOffline(false);
+  await page.locator('[data-close-settings]').click();
+  await signInAs(page, u);
+  const logs = (await u.client.from('workout_data').select('logs').eq('user_id', u.id).single()).data.logs;
+  // Text the account never had, but logged by the user before signing out: unchanged.
+  expect(logs['2026-10-20'][0]).toMatchObject({ day: 'Arms <C', exercises: [{ name: 'Curl <D' }] });
+});
+
+test('a saving prompt whose step fails unexpectedly is not left stuck', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await page.evaluate(async () => { (await import('/js/ui/sheet.js')).promptDialog({ title: 'Name', label: 'Name', submit: async () => { throw new Error('Session ended'); } }); });
+  await page.locator('.sheet-backdrop.open input[name=value]').fill('anna');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.sheet-backdrop.open .form-error')).toHaveText('Session ended');
+  await expect(page.locator('.sheet-backdrop.open [type=submit]')).toHaveText('Save');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.sheet-backdrop.open')).toHaveCount(0);
+});

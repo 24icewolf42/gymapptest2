@@ -3,7 +3,7 @@
 import { supabase, SITE_URL, errorText, isMissingSchema } from './client.js';
 import {
   state, localPlan, applyPlan, planBase, setPlanBase, setPlanTombstones, saveLogs, saveLastUsed, saveWeights, saveSync, saveBypass, saveTombstones,
-  hasLocalData, clearLocalData, defangNewRoutines,
+  hasLocalData, clearLocalData, defangNewRoutines, markUntrusted, trustedSnapshot,
 } from '../state.js';
 import { mergePlans, planHashes, stableStringify, hashOf, defang, stringsOf, defangUnknown } from '../domain/plan.js';
 import { mergeLogs, mergeProgress, mergeBypass, dailySummaries, sessionKey, sanitizeLogs } from '../domain/logs.js';
@@ -82,10 +82,7 @@ async function handleAuth(event, session) {
     // However the session ended (here, elsewhere, expired, even while the app
     // was closed): what is on or added to this phone from now on may be
     // someone else's.
-    if ((account.user || state.sync.accountId) && !(state.sync.untrusted?.plan && state.sync.untrusted?.data)) {
-      state.sync.untrusted = { plan: true, data: true };
-      saveSync();
-    }
+    if ((account.user || state.sync.accountId) && !(state.sync.untrusted?.plan && state.sync.untrusted?.data)) markUntrusted({ snapshot: true });
     account.user = null;
     account.profile = null;
     account.ready = false;
@@ -143,7 +140,7 @@ async function startSession(user) {
     if (choice !== 'merge') { await endSession(); return; }
   }
   if (!owner && hasLocalData()) {
-    state.sync.untrusted = { plan: true, data: true }; // data no account owned joins this one
+    markUntrusted(); // data no account owned joins this one
     state.sync.joinedSessions = Object.entries(state.logs).flatMap(([d, list]) => list.map((x) => sessionKey(d, x)));
     // Deletions and edit times made before (maybe by someone else) must not act on the account's plan.
     setPlanTombstones([], []);
@@ -173,7 +170,7 @@ async function startSession(user) {
       // The other account's deletions and edit times must not act on this account's plan.
       setPlanTombstones([], []);
       write(KEYS.planTimes, {});
-      state.sync.untrusted = { plan: true, data: true }; // another account's data joins this one
+      markUntrusted(); // another account's data joins this one
       // These weigh-ins are new to this account: a weigh-in it once deleted on
       // the same day must not drop them (a weigh-in it has there still counts).
       state.sync.mergedWeightDates = state.weights.map((x) => x.date);
@@ -284,13 +281,30 @@ function queue(area, delay = 800) {
  * the account does not have yet: markup in their names is defused (the
  * original app shows them unescaped). What the account already has stays.
  */
+// Both areas synced after a distrusted phase: the snapshot is no longer needed.
+function settleTrust() {
+  if (!state.sync.untrusted?.plan && !state.sync.untrusted?.data) remove(KEYS.trustedSnapshot);
+  saveSync();
+}
+
+let lastRemoteWorkouts = null; // the account's routines, from the plan sync that runs first
+
 function defangNewSessions(remote) {
   // Only workouts exactly as the account has them are trusted; a changed copy is defused.
   const theirs = new Map();
   const remoteLogs = sanitizeLogs(remote.logs || {});
   Object.entries(remoteLogs).forEach(([d, list]) => list.forEach((x) => theirs.set(sessionKey(d, x), stableStringify(x))));
-  // Text the account already has (its routine names, exercise names...) is the user's own and stays.
-  const known = stringsOf(remote.logs || {});
+  // Text the account already shows (workout and exercise names, targets,
+  // weights, lifts) is the user's own and stays; ids and times are not text
+  // anyone sees, and can be seeded, so they never count as known.
+  const snap = trustedSnapshot();
+  const known = new Set();
+  // The account's routines (names, exercises) are its text too.
+  stringsOf(lastRemoteWorkouts || {}, known);
+  Object.values(remoteLogs).forEach((list) => list.forEach((x) => {
+    known.add(x.day);
+    x.exercises.forEach((e) => { known.add(e.name); known.add(e.target); e.sets.forEach((st) => { known.add(st.w); known.add(st.r); }); });
+  }));
   stringsOf(remote.progress || {}, known);
   // Workouts the account deleted are left alone: the merge removes them under their own key.
   const gone = new Set(Array.isArray(remote.deleted_sessions) ? remote.deleted_sessions : []);
@@ -299,7 +313,7 @@ function defangNewSessions(remote) {
   Object.keys(state.logs).forEach((d) => {
     state.logs[d] = state.logs[d].map((x) => {
       const k = sessionKey(d, x);
-      if (gone.has(k) || theirs.get(k) === stableStringify(x)) return x;
+      if (gone.has(k) || theirs.get(k) === stableStringify(x) || snap.sessions?.[k] === hashOf(x)) return x;
       const clean = { ...x, day: fix(x.day), exercises: x.exercises.map((e) => ({ ...e, name: fix(e.name), target: fix(e.target || ''), sets: e.sets.map((s) => ({ ...s, w: fix(s.w), r: fix(s.r) })) })) };
       if (JSON.stringify(clean) !== JSON.stringify(x)) changed = true;
       return clean;
@@ -310,7 +324,7 @@ function defangNewSessions(remote) {
   const lifts = {};
   let liftsChanged = false;
   Object.entries(state.lastUsed).forEach(([k, v]) => {
-    const same = Object.hasOwn(theirLifts, k) && stableStringify(theirLifts[k]) === stableStringify(v);
+    const same = (Object.hasOwn(theirLifts, k) && stableStringify(theirLifts[k]) === stableStringify(v)) || snap.lifts?.[k] === hashOf(v);
     const key = same || Object.hasOwn(theirLifts, k) || known.has(k) ? k : defang(k);
     const value = same ? v : defangUnknown(v, known);
     if (key !== k || stableStringify(value) !== stableStringify(v)) liftsChanged = true;
@@ -365,6 +379,7 @@ const SYNC = {
       if (stale()) return false;
       if (r.error) throw r.error;
       // Routines from another person's use of this phone, new to this account: defuse markup.
+      lastRemoteWorkouts = r.data?.plan?.workouts || {};
       const renames = state.sync.untrusted?.plan ? defangNewRoutines(r.data?.plan) : null;
       if (renames) { emit('gym:routines-renamed', renames); emit('gym:plan-updated'); }
       // No cloud plan (first sync, or the row was removed): there is no common base.
@@ -376,7 +391,7 @@ const SYNC = {
       if (stale()) return false;
       if (wrote) {
         setPlanBase(planHashes(merged));
-        if (state.sync.untrusted?.plan) { state.sync.untrusted = { ...state.sync.untrusted, plan: false }; saveSync(); }
+        if (state.sync.untrusted?.plan) { state.sync.untrusted = { ...state.sync.untrusted, plan: false }; settleTrust(); }
         return true;
       }
     }
@@ -458,7 +473,7 @@ const SYNC = {
       const changed = !r.data || Object.keys(row).some((k) => k !== 'updated_at' && k !== 'user_id' && !same(remote[k] ?? null, row[k]));
       if (!changed || await casWrite('workout_data', uid, r.data?.updated_at ?? null, row)) {
         if ((restored.size || joined.size) && !stale()) { state.sync.restoredSessions = []; state.sync.mergedSessions = []; state.sync.joinedSessions = []; saveSync(); }
-        if (state.sync.untrusted?.data && !stale()) { state.sync.untrusted = { ...state.sync.untrusted, data: false }; saveSync(); }
+        if (state.sync.untrusted?.data && !stale()) { state.sync.untrusted = { ...state.sync.untrusted, data: false }; settleTrust(); }
         return true;
       }
     }
@@ -609,13 +624,13 @@ export async function signOut({ removeLocalData = false, force = false, everywhe
   if (removeLocalData && !synced && !force) return 'not-synced';
   account.ready = false;
   retire(); // a sync still in flight must not write the account's data back
-  await endSession(everywhere);
+  const ended = await endSession(everywhere);
+  if (everywhere && !ended) return 'everywhere-failed';
   if (removeLocalData) clearLocalData();
   else {
     // Whatever is added to this phone from now on may be someone else's:
-    // at the next sign-in, what is new to the account gets defused.
-    state.sync.untrusted = { plan: true, data: true };
-    saveSync();
+    // at the next sign-in, what changed since now and is new to the account gets defused.
+    markUntrusted({ snapshot: true });
   }
   return '';
 }
@@ -629,10 +644,11 @@ async function endSession(everywhere = false) {
   stopBeat();
   // This device only, unless the user asks to end every session (e.g. a lost phone).
   const r = await supabase.auth.signOut({ scope: everywhere ? 'global' : 'local' }).catch((error) => ({ error }));
-  if (!r?.error) return;
+  if (!r?.error) return true;
   const key = supabase.auth.storageKey;
   [key, key + '-code-verifier', key + '-user'].forEach((k) => localStorage.removeItem(k));
   await handleAuth('SIGNED_OUT', null);
+  return false;
 }
 
 export async function changeUsername(name) {

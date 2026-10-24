@@ -23,6 +23,7 @@ export const KEYS = Object.freeze({
   sync: 'gymSyncState',
   formSignIn: 'gymFormSignInAt',
   usernameAsked: 'gymUsernameAsked',
+  trustedSnapshot: 'gymTrustedSnapshot',
   asking: 'trackerAccountQuestionAt', // not 'gym…': other tabs must not reload on its heartbeat
   gyms: 'gymFavoriteGyms',
   // Shared with the original app's sync format:

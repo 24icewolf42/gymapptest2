@@ -2,7 +2,7 @@
 // `state` and call the save functions; cloud sync listens for the events.
 import { KEYS, read, write, readText, writeText, remove, emit } from './core/store.js';
 import { ymd } from './core/dates.js';
-import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule, planHashes, isSafeImage, sanitizeWorkoutName, deepDefang, defang, sanitizeWorkout, stableStringify, stringsOf, defangUnknown } from './domain/plan.js';
+import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule, planHashes, isSafeImage, sanitizeWorkoutName, defang, sanitizeWorkout, stableStringify, stringsOf, defangUnknown, hashOf } from './domain/plan.js';
 import { sanitizeLogs, upgradeLastUsed, sessionKey, newSessionId, mergeProgress, normalizeBypass, activeBypass, streak, bestStreak } from './domain/logs.js';
 import { sanitizeWeights, upsertWeight } from './domain/weights.js';
 
@@ -245,7 +245,7 @@ export function saveSync() {
 const LOCAL_DATA_KEYS = [KEYS.logs, KEYS.lastUsed, KEYS.weights, KEYS.bypass, KEYS.bypassState, KEYS.workouts, KEYS.schedule,
   KEYS.deletedWorkouts, KEYS.restoredWorkouts, KEYS.planUpdatedAt, KEYS.planTimes, KEYS.planBase, KEYS.draft, KEYS.drafts,
   KEYS.active, KEYS.sync, KEYS.deletedSessions, KEYS.deletedDates, KEYS.legacyStats, KEYS.gyms, KEYS.restImage,
-  KEYS.switchBackup, KEYS.settings];
+  KEYS.switchBackup, KEYS.settings, KEYS.trustedSnapshot];
 
 export function hasLocalData() {
   return Object.keys(state.logs).length > 0 || Object.keys(state.workouts).length > 0 || state.weights.length > 0 ||
@@ -263,16 +263,18 @@ export function hasLocalData() {
  */
 export function defangNewRoutines(remotePlan) {
   const remote = remotePlan?.workouts && typeof remotePlan.workouts === 'object' ? remotePlan.workouts : {};
-  // Names the account deleted count as known too: such a routine must stay
-  // deleted under its own name, not come back under a defused one.
-  const deletedThere = Array.isArray(remotePlan?.deletedWorkouts) ? remotePlan.deletedWorkouts : [];
-  const known = new Set([...Object.keys(remote), ...deletedThere]);
-  // Text the account already has anywhere (a name, a note) is the user's own and stays.
-  const knownText = stringsOf(remotePlan || {});
+  const deletedThere = new Set(Array.isArray(remotePlan?.deletedWorkouts) ? remotePlan.deletedWorkouts : []);
+  // Text the account already shows (its routines and their exercises) is the
+  // user's own and stays. Only those fields count: deletion records or edit
+  // times can be seeded by anyone and are never trusted as "known".
+  const knownText = stringsOf(remote);
+  const snap = trustedSnapshot();
   let changed = false;
   const next = {}, renames = {};
   Object.entries(state.workouts).forEach(([name, list]) => {
-    if (known.has(name)) {
+    // Unchanged since the user's session ended: the user's own.
+    if (snap.routines?.[name] === hashOf(list)) { next[name] = list; return; }
+    if (Object.hasOwn(remote, name)) {
       // A routine the account has: only exercises exactly as the account has
       // them are trusted; anything changed (name, note, target...) is defused.
       const theirs = new Map(sanitizeWorkout(Array.isArray(remote[name]) ? remote[name] : []).map((e) => [e.name, stableStringify(e)]));
@@ -281,6 +283,9 @@ export function defangNewRoutines(remotePlan) {
       next[name] = cleanList;
       return;
     }
+    // A routine the account deleted stays deleted: if its name would need
+    // defusing, it is dropped here (renaming would bring it back as a new one).
+    if (deletedThere.has(name) && defang(name) !== name) { changed = true; return; }
     const cleanList = defangUnknown(list, knownText);
     // Never fall back to the raw name: a taken cleaned name gets a number.
     let clean = defang(name);
@@ -289,15 +294,59 @@ export function defangNewRoutines(remotePlan) {
     if (clean !== name || JSON.stringify(cleanList) !== JSON.stringify(list)) changed = true;
     next[clean] = cleanList;
   });
+  // Unsaved drafts and a running workout may hold someone else's names too
+  // (also of a routine that is gone): names that are no routine here are defused.
+  const routineName = (day) => renames[day] || (Object.hasOwn(next, day) ? day : defang(day));
+  const draftText = stringsOf(next, new Set(knownText));
+  const drafts = read(KEYS.drafts, null);
+  if (drafts) {
+    const cleanDrafts = {};
+    Object.entries(drafts).forEach(([k, v]) => {
+      if (snap.drafts?.[k] === hashOf(v)) { cleanDrafts[k] = v; return; }
+      const day = routineName(v.day || '');
+      const key = day !== v.day && k.startsWith(k.slice(0, 11) + v.day + '|') ? k.slice(0, 11) + day + '|' + k.slice(11 + v.day.length + 1) : k;
+      // Exercise names of the (kept) routine stay, so ticked sets still match.
+      cleanDrafts[key] = { ...defangUnknown(v, draftText), day, key: v.key };
+    });
+    if (stableStringify(cleanDrafts) !== stableStringify(drafts)) { write(KEYS.drafts, cleanDrafts); changed = true; }
+  }
+  const active = read(KEYS.active, null);
+  if (active?.day && routineName(active.day) !== active.day) { write(KEYS.active, { ...active, day: routineName(active.day) }); changed = true; }
   if (!changed) return null;
-  Object.keys(state.schedule).forEach((d) => { if (renames[state.schedule[d]]) state.schedule[d] = renames[state.schedule[d]]; });
+  Object.keys(state.schedule).forEach((d) => {
+    const v = state.schedule[d];
+    if (v && !Object.hasOwn(next, v)) state.schedule[d] = renames[v] || null;
+  });
   state.workouts = next;
   persistPlan();
-  // Unsaved drafts may hold someone else's names too.
-  const drafts = read(KEYS.drafts, null);
-  if (drafts) write(KEYS.drafts, Object.fromEntries(Object.entries(drafts).map(([k, v]) => [k, { ...deepDefang(v), day: v.day, key: v.key }])));
   return renames;
 }
+
+/**
+ * From now on, data on this phone may come from someone else. With snapshot
+ * (a session ended), what is on the phone right now is the user's own: its
+ * fingerprints are kept, and only what changes after this point is distrusted.
+ * Without (a restore, another account's data), everything is distrusted.
+ */
+export function markUntrusted({ snapshot = false } = {}) {
+  const already = state.sync.untrusted?.plan || state.sync.untrusted?.data;
+  if (!snapshot) remove(KEYS.trustedSnapshot);
+  else if (!already) {
+    const sessions = {};
+    Object.entries(state.logs).forEach(([d, list]) => list.forEach((x) => { sessions[sessionKey(d, x)] = hashOf(x); }));
+    write(KEYS.trustedSnapshot, {
+      routines: Object.fromEntries(Object.entries(state.workouts).map(([n, l]) => [n, hashOf(l)])),
+      sessions,
+      lifts: Object.fromEntries(Object.entries(state.lastUsed).map(([k, v]) => [k, hashOf(v)])),
+      drafts: Object.fromEntries(Object.entries(read(KEYS.drafts, {}) || {}).map(([k, v]) => [k, hashOf(v)])),
+    });
+  }
+  state.sync.untrusted = { plan: true, data: true };
+  saveSync();
+}
+
+/** Fingerprints of what was on the phone when the last session ended (see markUntrusted). */
+export const trustedSnapshot = () => read(KEYS.trustedSnapshot, null) || {};
 
 /** Removes this phone's training data (used when another account signs in, or on request at sign-out). */
 export function clearLocalData() {

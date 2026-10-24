@@ -7,9 +7,8 @@ const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\
 
 /**
  * Id for a session the original app keys by its full JSON (no id, no time).
- * A short hash of that key: the key itself contains quotes, which the
- * database refuses in workout history. The original app's tombstone for the
- * session hashes to the same id (see mergeLogs).
+ * A short hash of that key (which embeds the whole session as JSON). The
+ * original app's tombstone for the session hashes to the same id (see mergeLogs).
  */
 function legacyId(key) {
   let h = 2166136261;

@@ -254,8 +254,10 @@ async function restoreFrom(text) {
   // What the backup holds comes back, also if it was deleted in the account since.
   state.sync.restoredSessions = Object.entries(state.logs).flatMap(([d, list]) => list.map((x) => sessionKey(d, x)));
   state.sync.dirtyWeightDates = state.weights.map((x) => x.date);
-  // A backup file can come from anyone: what it adds to the account is defused at the next sync.
+  // A backup file can come from anyone: what it adds to the account is defused at the next sync
+  // (all of it: nothing restored counts as unchanged since a sign-out).
   state.sync.untrusted = { plan: true, data: true };
+  localStorage.removeItem(KEYS.trustedSnapshot);
   localStorage.setItem(KEYS.sync, JSON.stringify(state.sync));
   // The backup's routines and week count as changed now, so they win over
   // deletions and edits made in the account since.
@@ -347,6 +349,10 @@ export function initSettings() {
     signingOut = true; renderSettings();
     const r = await signOut({ removeLocalData: choice === 'remove', everywhere: choice === 'everywhere' });
     signingOut = false; renderSettings();
+    if (r === 'everywhere-failed') {
+      toast('Signed out here, but your other devices could not be signed out (no connection?). Try again online, or change your password.', { tone: 'error' });
+      return;
+    }
     if (r === 'not-synced') {
       const next = await openSheet({
         title: 'Not synced yet',
@@ -475,11 +481,10 @@ export function initSettings() {
   listen('gym:password-recovery', async () => {
     if (askingPassword) return;
     askingPassword = true;
-    const pw = await promptDialog({ title: 'Choose a new password', label: 'New password', type: 'password', maxLength: 72, ok: 'Save password', input: { autocomplete: 'new-password' }, validate: (v) => (v.length >= 8 ? '' : 'Use at least 8 characters.') });
+    // Kept exactly as typed (the sign-in form does not trim either); a refusal keeps the prompt open.
+    const pw = await promptDialog({ title: 'Choose a new password', label: 'New password', type: 'password', maxLength: 72, ok: 'Save password', input: { autocomplete: 'new-password' }, trim: false, validate: (v) => (v.length >= 8 ? '' : 'Use at least 8 characters.'), submit: updatePassword });
     askingPassword = false;
-    if (!pw) return;
-    const r = await updatePassword(pw);
-    toast(r || 'Password changed.', { tone: r ? 'error' : 'default' });
+    if (pw) toast('Password changed.');
   });
 }
 
