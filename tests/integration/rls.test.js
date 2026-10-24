@@ -330,6 +330,18 @@ describe('hardening', () => {
     expect((await u.client.rpc('save_my_weights', { entries: many })).error).not.toBeNull();
   });
 
+  it('refuses weigh-ins and username changes meant for another account', async () => {
+    const a = await makeUser(uniqueName('ea')), b = await makeUser(uniqueName('eb'));
+    const entries = [{ log_date: '2026-04-01', weight_kg: 61.5, fresh: true }];
+    const wrong = await b.client.rpc('save_my_weights', { entries, expected_user: a.id });
+    expect(wrong.error?.code).toBe('42501');
+    expect((await b.client.from('body_weight_logs').select('log_date').eq('user_id', b.id)).data).toEqual([]);
+    expect((await b.client.rpc('save_my_weights', { entries, expected_user: b.id })).data.map((x) => x.outcome)).toEqual(['saved']);
+    expect((await b.client.rpc('change_username', { name: uniqueName('ec'), expected_user: a.id })).error?.code).toBe('42501');
+    expect((await b.client.rpc('change_username', { name: uniqueName('ed'), expected_user: b.id })).data).toBe('ok');
+    expect((await b.client.rpc('save_my_weights', { entries, expected_user: null })).error?.code).toBe('42501');
+  });
+
   it('does not let a reply move to another date or a host delete a date', async () => {
     const host = await makeUser(uniqueName('h'));
     const fr = await makeUser(uniqueName('f'));

@@ -62,7 +62,8 @@ begin
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public'
     and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute'))
-    and p.oid::regprocedure::text not in ('change_username(text)', 'delete_my_account()', 'find_profile(text)', 'friend_summaries()', 'gym_date_counts(uuid[])', 'my_blocks()', 'save_my_weights(jsonb)');
+    and p.oid::regprocedure::text not in ('change_username(text)', 'delete_my_account()', 'find_profile(text)', 'friend_summaries()', 'gym_date_counts(uuid[])', 'my_blocks()', 'save_my_weights(jsonb)',
+      'change_username(text,uuid)', 'save_my_weights(jsonb,uuid)'); -- the last two from 20261025000000 (for new projects and the tests)
   if extra is not null then
     raise exception 'Unexpected functions callable through the API: %', extra;
   end if;

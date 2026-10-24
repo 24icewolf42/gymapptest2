@@ -1563,7 +1563,8 @@ begin
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public'
     and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute'))
-    and p.oid::regprocedure::text not in ('change_username(text)', 'delete_my_account()', 'find_profile(text)', 'friend_summaries()', 'gym_date_counts(uuid[])', 'my_blocks()', 'save_my_weights(jsonb)');
+    and p.oid::regprocedure::text not in ('change_username(text)', 'delete_my_account()', 'find_profile(text)', 'friend_summaries()', 'gym_date_counts(uuid[])', 'my_blocks()', 'save_my_weights(jsonb)',
+      'change_username(text,uuid)', 'save_my_weights(jsonb,uuid)'); -- the last two from 20261025000000 (for new projects and the tests)
   if extra is not null then
     raise exception 'Unexpected functions callable through the API: %', extra;
   end if;
@@ -1593,3 +1594,40 @@ begin
   end if;
 end;
 $$;
+
+-- ===== 20261025000000_expected_user.sql =====
+-- Writes made for one account only. All browser tabs share one stored login,
+-- so a request that a sync started for account A can be sent after account B
+-- signed in in another tab, and would then be saved in B's account. These
+-- variants take the account the app means and refuse anything else. The
+-- one-argument versions stay for app versions that do not send it yet.
+
+create function public.save_my_weights(entries jsonb, expected_user uuid)
+returns table (log_date date, updated_at timestamptz, outcome text)
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if expected_user is distinct from auth.uid() then
+    raise exception 'This request belongs to an account that is no longer signed in.' using errcode = '42501';
+  end if;
+  return query select * from public.save_my_weights(entries);
+end
+$$;
+revoke all on function public.save_my_weights(jsonb, uuid) from public, anon;
+grant execute on function public.save_my_weights(jsonb, uuid) to authenticated;
+
+create function public.change_username(name text, expected_user uuid)
+returns text
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if expected_user is distinct from auth.uid() then
+    raise exception 'This request belongs to an account that is no longer signed in.' using errcode = '42501';
+  end if;
+  return public.change_username(name);
+end
+$$;
+revoke all on function public.change_username(text, uuid) from public, anon;
+grant execute on function public.change_username(text, uuid) to authenticated;
