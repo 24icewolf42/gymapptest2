@@ -3,7 +3,7 @@
 // "Reload now" in Settings (the page sends 'skip-waiting').
 const VERSION = '3.1.0';
 // Hash of the cached files (tools/sw-hash.mjs), so every change re-caches.
-const BUILD = '38d47fbc3b03';
+const BUILD = '3fe466b631ba';
 const CACHE = 'tracker-' + VERSION + '-' + BUILD;
 
 const FILES = [
@@ -20,6 +20,7 @@ const FILES = [
   'js/native.js',
   'js/core/dates.js',
   'js/core/dom.js',
+  'js/core/platform.js',
   'js/core/router.js',
   'js/core/store.js',
   'js/core/text.js',
@@ -58,6 +59,7 @@ const FILES = [
   'icon-512.png',
   'icon-192-maskable.png',
   'icon-512-maskable.png',
+  'apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (event) => {
