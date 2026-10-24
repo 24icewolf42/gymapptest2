@@ -94,3 +94,16 @@ create policy "Users remove their own workout data" on public.workout_data
 -- Nobody signed out needs these tables; keep them out of reach of the anon key.
 revoke all on public.profiles, public.friend_requests, public.shared_workouts, public.leaderboard_stats,
   public.workout_plans, public.body_weight_logs, public.workout_data from anon;
+
+-- Signed-in users only need to read and write rows (row-level security decides
+-- which). TRUNCATE in particular ignores row-level security.
+revoke truncate, references, trigger on public.profiles, public.friend_requests, public.shared_workouts,
+  public.leaderboard_stats, public.workout_plans, public.body_weight_logs, public.workout_data from authenticated;
+do $$
+begin
+  if current_setting('server_version_num')::int >= 170000 then
+    execute 'revoke maintain on public.profiles, public.friend_requests, public.shared_workouts, public.leaderboard_stats,
+      public.workout_plans, public.body_weight_logs, public.workout_data from authenticated';
+  end if;
+end;
+$$;

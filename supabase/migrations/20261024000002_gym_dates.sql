@@ -42,10 +42,11 @@ alter table public.gym_dates enable row level security;
 alter table public.gym_date_invites enable row level security;
 alter table public.gym_date_rsvps enable row level security;
 -- Least privilege: nothing for anon; only the verbs and columns the app needs.
--- Hosts cancel dates rather than deleting them.
+-- Hosts cancel dates rather than deleting or editing them, so replies and
+-- check-ins always refer to the time, place and audience they were given for.
 revoke all on public.gym_dates, public.gym_date_invites, public.gym_date_rsvps from anon, authenticated;
 grant select, insert on public.gym_dates to authenticated;
-grant update (starts_at, duration_min, gym, workout, note, invite_only, cancelled_at) on public.gym_dates to authenticated;
+grant update (cancelled_at) on public.gym_dates to authenticated;
 grant select, insert, delete on public.gym_date_invites to authenticated;
 grant select, insert, delete on public.gym_date_rsvps to authenticated;
 -- date_id and user_id are listed only so upserts work; the trigger below
@@ -174,6 +175,8 @@ begin
   if tg_op = 'INSERT' then
     new.created_at := now();
     new.cancelled_at := null;
+  elsif old.cancelled_at is not null and new.cancelled_at is distinct from old.cancelled_at then
+    raise exception 'A cancelled gym date stays cancelled' using errcode = '22023';
   end if;
   new.activity_at := now();
   new.gym := btrim(new.gym);

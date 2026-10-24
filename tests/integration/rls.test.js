@@ -335,6 +335,25 @@ describe('hardening', () => {
     const del = await host.client.from('gym_dates').delete().eq('id', now.id).select('id');
     expect(del.error || del.data.length === 0).toBeTruthy();
   });
+
+  it('lets a host only cancel a date, once, so replies keep their meaning', async () => {
+    const host = await makeUser(uniqueName('hc'));
+    const d = (await host.client.from('gym_dates').insert({ host_id: host.id, starts_at: new Date().toISOString(), gym: 'G' }).select('id').single()).data;
+    for (const change of [{ starts_at: new Date(Date.now() + 5 * 86400000).toISOString() }, { gym: 'Other gym' }, { invite_only: true }]) {
+      expect((await host.client.from('gym_dates').update(change).eq('id', d.id)).error).not.toBeNull();
+    }
+    expect((await host.client.from('gym_dates').update({ cancelled_at: new Date().toISOString() }).eq('id', d.id)).error).toBeNull();
+    expect((await host.client.from('gym_dates').update({ cancelled_at: null }).eq('id', d.id)).error).not.toBeNull();
+  });
+
+  it('gives signed-in users no TRUNCATE or other table-level extras on the original tables', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const q = (sql) => execFileSync('docker', ['exec', '-i', 'supabase_db_gymapptest2', 'psql', '-U', 'postgres', '-d', 'postgres', '-At', '-c', sql], { encoding: 'utf8' }).trim();
+    const tables = ['profiles', 'friend_requests', 'shared_workouts', 'leaderboard_stats', 'workout_plans', 'body_weight_logs', 'workout_data'];
+    for (const t of tables) {
+      for (const p of ['TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']) expect(q(`select has_table_privilege('authenticated', 'public.${t}', '${p}')`), `${t} ${p}`).toBe('f');
+    }
+  });
 });
 
 describe('hardening, round 2', () => {
