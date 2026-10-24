@@ -426,7 +426,8 @@ async function act(key, run, success) {
   if (pending.has(key)) return false;
   pending.add(key);
   if (currentPage() === 'crew') renderCrew();
-  const r = await run();
+  // A step that throws (e.g. no connection) must not leave its buttons busy for good.
+  const r = await Promise.resolve().then(run).catch((e) => ({ error: (e && e.message) || 'Something went wrong. Try again.' }));
   pending.delete(key);
   // The answer comes later: it waits behind an Undo the user may have made meanwhile.
   if (r.error) toast(r.error, { tone: 'error', background: true });
@@ -505,7 +506,8 @@ export function initCrew() {
   });
   // A name sent while the last request is on its way goes next, not lost.
   let addQueue = Promise.resolve();
-  const sendRequest = async (name) => {
+  const sendRequest = async (name, uid) => {
+    if (account.user?.id !== uid) return; // signed out (or another account) since it was asked for
     const toast = toastLater();
     let message = '';
     const ok = await act('add', async () => { const r = await social.sendFriendRequest(name); message = r.data; return r; });
@@ -521,7 +523,8 @@ export function initCrew() {
     const name = input.value;
     if (!name.trim()) { input.focus(); return; }
     if (pending.has('add')) toast(`@${name.trim().replace(/^@/, '')} is sent next, after the request on its way.`);
-    addQueue = addQueue.then(() => sendRequest(name));
+    const uid = account.user?.id;
+    addQueue = addQueue.then(() => sendRequest(name, uid)).catch(() => {}); // one failure must not stop the next
   });
   on(page, 'click', '[data-accept]', async (e, b) => { if (await act(b.dataset.accept, () => social.acceptRequest(b.dataset.accept), 'You are now friends.')) refreshCrew(); });
   on(page, 'click', '[data-decline]', (e, b) => removeOrBlock(b.dataset.decline, b.dataset.user, b.dataset.name, 'request'));

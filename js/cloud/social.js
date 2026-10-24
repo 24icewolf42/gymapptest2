@@ -40,12 +40,16 @@ async function findProfile(name) {
 export async function sendFriendRequest(rawName) {
   const name = String(rawName || '').trim().toLowerCase().replace(/^@/, '');
   if (!/^[a-z0-9_]{3,20}$/.test(name)) return { error: 'Usernames have 3–20 letters, numbers or _.' };
+  // Sent by the account that asked, never by one that signed in meanwhile.
+  const me = account.user?.id;
+  if (!me) return { error: 'Sign in first.' };
   const found = await findProfile(name);
+  if (account.user?.id !== me) return { error: 'You signed out, so the friend request was not sent.' };
   if (found.error) return fail(found.error);
   const target = (found.data || [])[0];
   if (!target) return { error: `No one is called @${name}. Check the spelling.` };
-  if (target.id === account.user.id) return { error: 'That is you.' };
-  const r = await supabase.from('friend_requests').insert({ requester_id: account.user.id, target_id: target.id, status: 'pending' });
+  if (target.id === me) return { error: 'That is you.' };
+  const r = await supabase.from('friend_requests').insert({ requester_id: me, target_id: target.id, status: 'pending' });
   if (!r.error) return ok(`Request sent to @${name}.`);
   if (r.error.code === '23505') {
     // They already asked us (or we asked them): accept theirs if it is pending.
