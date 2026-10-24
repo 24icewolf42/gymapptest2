@@ -50,6 +50,20 @@ All findings are fixed in code. What remains for the app's owner is configuratio
 
 After the rework, three independent Opus reviews (security/privacy, data correctness, UX/accessibility/tests) rated the branch and listed findings. Every critical, major and minor finding and every nit was fixed and re-reviewed.
 
+### Round 7 (security 8/10, correctness 7/10, UX/tests 6.5/10)
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| R7-01 | Major | The markup cleaner looped forever on a null plan or history, tying up the database | Superseded: the cleaner is gone (see MA-1); a null plan is refused at once; test |
+| MA-1 | Major | Renaming markup characters in names duplicated routines and workouts in the original app, which identifies them by name | Own routine and workout names stay exactly as typed; only shared routines are refused when they carry markup, and the rest picture must be image data |
+| UX-M1 | Major | The other tab asked the account question again (it checked before the signing tab said it was asking) | The signing tab announces itself from the form submit until its session starts; others wait only while it does; test with a positive signal |
+| UX-M2 | Major | Tab left the dialog and reached the toast's Undo | The Undo is inert while any dialog is open; test |
+| UX-M3 | Major | Restoring one's own backup renamed "Arms <3" and duplicated routines | Backups only defuse tag-like markup and quotes; names like "Arms <3" stay; test |
+| R7-02 | Minor | "Gym date not posted." could be untrue | The message follows whether taking the date back worked, and a failed or timed-out post says to check Crew; test |
+| mi-1 | Minor | The gym-date list loaded at most 100 dates including cancelled ones | Open dates only (up to 200) plus all of the user's own |
+| UX-m1..m5 | Minor | Try again moved focus and failed silently, sign-out put focus on Delete, Calendar tab stop reset, update banner pushed the page, round-6 claims untested | Try again stays in place while busy and reports its result; the fallback never picks a destructive control; the chosen day keeps the tab stop; the banner floats and is announced once; tests for each claim |
+| n-1, n-2, UX nits | Nit | Waiting after a reload, corrections at the weigh-in cap, Escape in a workout, whole-body descriptions, stale comment | Wait only while another tab asks; corrections allowed; Escape dismisses the Undo first; dialogs described by their lead sentence; comment fixed |
+
 ### Round 6 (security 8.5/10, correctness 7/10, UX/tests 7/10)
 
 | ID | Severity | Finding | Fix |
