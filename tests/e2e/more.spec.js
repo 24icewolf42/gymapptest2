@@ -2274,7 +2274,19 @@ test('appearance: light or dark, a preset or own color, kept readable and rememb
   await expect(page.locator('[data-base="light"]')).toHaveAttribute('aria-checked', 'true');
   // Lime on white would be unreadable: it is shown darker, and the user is told.
   expect(await accent()).not.toBe('#c8f53d');
-  await expect(page.locator('[data-key="color-adjusted"]')).toBeVisible();
+  await expect(page.locator('[data-key="color-adjusted"]')).toContainText('darker');
+  // The light base itself, and the phone's status bar color.
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim())).toBe('#f5f6f8');
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#f5f6f8');
+  // The color dots show the colors as used in this theme.
+  const dot = await page.locator('[data-swatch="lime"]').evaluate(async (el) => {
+    const { themeColors } = await import('/js/domain/theme.js');
+    const want = themeColors({ preset: 'lime' }, 'light').accent;
+    const rgb = [1, 3, 5].map((i) => parseInt(want.slice(i, i + 2), 16)).join(', ');
+    return [getComputedStyle(el).backgroundColor, `rgb(${rgb})`];
+  });
+  expect(dot[0]).toBe(dot[1]);
+  expect(dot[0]).not.toBe('rgb(200, 245, 61)');
   // Arrow keys move through the colors (a radio group), and choosing one applies it.
   await page.locator('[data-preset="lime"]').focus();
   await page.keyboard.press('ArrowRight');
@@ -2288,16 +2300,18 @@ test('appearance: light or dark, a preset or own color, kept readable and rememb
   });
   expect(ratio).toBeGreaterThanOrEqual(4.5);
   // Own color.
-  await page.locator('[data-custom-color]').evaluate((el) => { el.value = '#ffaa00'; el.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.locator('[data-custom-color]').evaluate((el) => { el.value = '#ffe066'; el.dispatchEvent(new Event('change', { bubbles: true })); });
   await expect(page.locator('.color-pick')).toContainText('(chosen)');
+  // With an own color the presets stay reachable with Tab.
+  await expect(page.locator('[data-preset="lime"]')).toHaveAttribute('tabindex', '0');
   await page.locator('[data-base="dark"]').click();
   await expect(root).not.toHaveAttribute('data-theme', 'light');
-  expect(await accent()).toBe('#ffaa00');
+  expect(await accent()).toBe('#ffe066');
   await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#0d0e10');
   // Remembered after a reload.
   await page.reload();
   await expect(page.locator('#page-today h1')).toHaveText('Today');
-  expect(await accent()).toBe('#ffaa00');
+  expect(await accent()).toBe('#ffe066');
   // "Match phone" follows the phone.
   await page.emulateMedia({ colorScheme: 'light' });
   await page.locator('.page.active [data-open-settings]').click();
@@ -2400,11 +2414,27 @@ test('food: a removed entry stays removed, usual amounts are accepted, typos are
   await expect(session).toBeHidden();
   await page.locator('[data-start="Push"]').click();
   await expect(session.locator('[data-food-summary="pre"]')).toHaveText('Not logged');
-  // Something that is not a number is explained, not dropped.
+  // Something that is not a number, or too much, is explained, not dropped.
   await session.locator('[data-food="post"]').click();
   await sheet.locator('[name=water]').pressSequentially('5e');
   await sheetAction(page, 'Save');
   await expect(sheet.locator('.form-error')).toContainText('Water');
+  await sheet.locator('[name=water]').fill('6000');
+  await sheetAction(page, 'Save');
+  await expect(sheet.locator('.form-error')).toContainText('5000');
+  // "When" is optional: a second tap clears it.
+  await sheet.locator('[name=water]').fill('300');
+  await sheet.locator('[data-when="lt30"]').click();
+  await sheet.locator('[data-when="lt30"]').click();
+  await expect(sheet.locator('[data-when="lt30"]')).toHaveAttribute('aria-checked', 'false');
+  await expect(sheet.locator('[data-when="lt30"]')).toHaveAttribute('tabindex', '0');
+  await sheetAction(page, 'Save');
+  await expect(session.locator('[data-food-summary="post"]')).toHaveText('300 ml water');
+  await expect(session.locator('[data-food="post"]')).toHaveAttribute('aria-label', 'Food and drink after: 300 ml water. Edit');
+  // Kept with the draft: closing and reopening without saving keeps it.
+  await page.locator('#sessionBack').click();
+  await page.locator('[data-start="Push"]').click();
+  await expect(session.locator('[data-food-summary="post"]')).toHaveText('300 ml water');
 });
 
 test('theme: no dark flash for a light theme, and it follows the settings after sign-out removes them', async ({ page }) => {
@@ -2425,4 +2455,87 @@ test('theme: no dark flash for a light theme, and it follows the settings after 
     (await import('/js/core/store.js')).emit('gym:account');
   });
   await expect(page.locator('html')).not.toHaveAttribute('data-theme', 'light');
+});
+
+test('food after a workout can be added later from the calendar, straight to the saved workout', async ({ page }) => {
+  await offline(page);
+  await page.addInitScript(() => {
+    if (localStorage.getItem('gymLogs')) return;
+    const d = new Date(), today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    localStorage.setItem('gymLogs', JSON.stringify({ [today]: [{ id: 'c1', day: 'Push', time: new Date(Date.now() - 3600000).toISOString(), exercises: [{ name: 'Dips', target: '8', sets: [{ w: '0', r: '8', done: true }] }] }] }));
+  });
+  await open(page);
+  await tab(page, 'calendar');
+  const today = await page.evaluate(() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); });
+  await page.locator(`[data-day="${today}"]`).click();
+  const day = page.locator('.sheet-backdrop.open').first();
+  const add = day.locator('[data-food-log][data-side="post"]');
+  await expect(add).toHaveText('Add');
+  await add.click();
+  const food = page.locator('.sheet-backdrop.open .food-sheet');
+  await food.locator('[data-item="meal"]').click();
+  await sheetAction(page, 'Save');
+  await expect(day.locator('[data-food-text="post"]')).toHaveText('Meal');
+  await expect(add).toBeFocused();
+  await expect(add).toHaveText('Edit');
+  const saved = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('gymLogs'))).flat()[0]);
+  expect(saved.nutrition).toEqual({ post: { items: ['meal'], note: '', when: '' } });
+  expect(Date.now() - Date.parse(saved.time)).toBeLessThan(60000); // saved now, so this copy wins the sync
+});
+
+test('light theme: small status texts reach AA contrast (running bar, calendar tags, live and check-in pills)', async ({ page }) => {
+  await offline(page);
+  await page.addInitScript(() => {
+    if (localStorage.getItem('seeded')) return;
+    const d = new Date(), today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    localStorage.setItem('gymSettings', JSON.stringify({ weightStep: 0, theme: { base: 'light', preset: 'ocean' } }));
+    localStorage.setItem('gymLogs', JSON.stringify({ [today]: [{ id: 'k1', day: 'Push', time: d.toISOString(), duration: 2700, exercises: [{ name: 'Dips', target: '8', sets: [{ w: '0', r: '8', done: true }] }] }] }));
+    localStorage.setItem('seeded', '1');
+  });
+  await open(page);
+  await createWorkout(page, 'Legs', ['Plank']);
+  await scheduleToday(page, 'Legs');
+  await tab(page, 'today');
+  await page.locator('#startToday').click();
+  await page.locator('#session').getByRole('button', { name: 'Start workout' }).click();
+  await page.locator('#sessionBack').click();
+  // Live and check-in pills as Crew draws them.
+  await page.evaluate(() => {
+    const host = document.createElement('div');
+    host.className = 'date-card live card';
+    for (const [id, cls, text] of [['t-live', 'pill pill-live', 'Live now'], ['t-ok', 'pill pill-ok', 'You are at the gym']]) {
+      const span = document.createElement('span'); span.id = id; span.className = cls; span.textContent = text; host.append(span);
+    }
+    document.querySelector('.page.active').append(host);
+  });
+  const ratios = await page.evaluate(async () => {
+    const { contrast } = await import('/js/domain/theme.js');
+    const hex = (c) => '#' + c.match(/\d+/g).slice(0, 3).map((n) => (+n).toString(16).padStart(2, '0')).join('');
+    const bgOf = (el) => {
+      // The pill's own tint over its card's tint over the page (ignoring gradients' lighter ends).
+      for (let e = el; e; e = e.parentElement) {
+        const b = getComputedStyle(e).backgroundColor;
+        if (b && !/rgba\(0, 0, 0, 0\)|transparent/.test(b) && !/, 0\)$/.test(b)) {
+          const a = b.match(/[\d.]+/g); if (a.length < 4 || +a[3] === 1) return hex(b);
+          const under = bgOf(e.parentElement); const u = [1, 3, 5].map((i) => parseInt(under.slice(i, i + 2), 16));
+          return '#' + [0, 1, 2].map((i) => Math.round(+a[i] * +a[3] + u[i] * (1 - +a[3])).toString(16).padStart(2, '0')).join('');
+        }
+      }
+      return '#f5f6f8';
+    };
+    const of = (sel) => { const el = document.querySelector(sel); return el ? contrast(hex(getComputedStyle(el).color), bgOf(el)) : -1; };
+    return { bar: of('.active-btn small'), tag: of('.cal-cell.logged .cal-tag'), live: of('#t-live'), ok: of('#t-ok') };
+  });
+  await tab(page, 'calendar');
+  const tag = await page.evaluate(async () => {
+    const { contrast } = await import('/js/domain/theme.js');
+    const hex = (c) => '#' + c.match(/\d+/g).slice(0, 3).map((n) => (+n).toString(16).padStart(2, '0')).join('');
+    const el = document.querySelector('.cal-cell.logged .cal-tag');
+    return contrast(hex(getComputedStyle(el).color), hex(getComputedStyle(el.closest('.cal-cell')).backgroundColor)) * (getComputedStyle(el).opacity === '1' ? 1 : 0);
+  });
+  expect(ratios.bar).toBeGreaterThanOrEqual(4.5);
+  expect(ratios.live).toBeGreaterThanOrEqual(4.5);
+  expect(ratios.ok).toBeGreaterThanOrEqual(4.5);
+  expect(tag).toBeGreaterThanOrEqual(4.5);
+  expect(await page.evaluate(() => getComputedStyle(document.querySelector('.active-btn small')).opacity)).toBe('1');
 });
