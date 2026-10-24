@@ -166,9 +166,61 @@
       selectedWorkout = null; selectedDay = null; save(); render();
     };
 
-    // Drag and drop for the whole exercise card
+    // Drag and drop with continuous edge auto-scrolling
     var dragSource = null;
     var rowEls = root.querySelectorAll('.plan-edit-row');
+    var autoScrollRaf = null;
+    var scrollClientY = -1;
+    var activeUpdateFn = null;
+
+    function doAutoScroll() {
+      if (scrollClientY < 0) {
+        autoScrollRaf = null;
+        return;
+      }
+      var topZone = 110;
+      var bottomZone = window.innerHeight - 130; // accounts for bottom bar
+      var speed = 0;
+
+      if (scrollClientY < topZone) {
+        var ratio = Math.max(0, Math.min(1, (topZone - scrollClientY) / topZone));
+        speed = -Math.round(4 + ratio * 20);
+      } else if (scrollClientY > bottomZone) {
+        var ratio = Math.max(0, Math.min(1, (scrollClientY - bottomZone) / 110));
+        speed = Math.round(4 + ratio * 20);
+      }
+
+      if (speed !== 0) {
+        var prevScroll = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+        if (window.scrollBy) {
+          window.scrollBy(0, speed);
+        } else {
+          document.documentElement.scrollTop += speed;
+        }
+        var newScroll = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+        if (newScroll !== prevScroll && activeUpdateFn) {
+          activeUpdateFn();
+        }
+      }
+      autoScrollRaf = requestAnimationFrame(doAutoScroll);
+    }
+
+    function startAutoScroll(clientY, updateFn) {
+      scrollClientY = clientY;
+      activeUpdateFn = updateFn;
+      if (!autoScrollRaf) {
+        autoScrollRaf = requestAnimationFrame(doAutoScroll);
+      }
+    }
+
+    function stopAutoScroll() {
+      if (autoScrollRaf) {
+        cancelAnimationFrame(autoScrollRaf);
+        autoScrollRaf = null;
+      }
+      scrollClientY = -1;
+      activeUpdateFn = null;
+    }
 
     rowEls.forEach(function (row) {
       // Desktop HTML5 drag
@@ -188,12 +240,14 @@
         e.preventDefault();
         if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
         this.classList.add('plan-drag-over');
+        startAutoScroll(e.clientY, null);
       });
       row.addEventListener('dragleave', function () {
         this.classList.remove('plan-drag-over');
       });
       row.addEventListener('drop', function (e) {
         e.preventDefault();
+        stopAutoScroll();
         this.classList.remove('plan-drag-over');
         var toIndex = +this.dataset.index;
         if (dragSource !== null && dragSource !== toIndex) {
@@ -202,6 +256,7 @@
         dragSource = null;
       });
       row.addEventListener('dragend', function () {
+        stopAutoScroll();
         this.classList.remove('plan-dragging');
         rowEls.forEach(function (r) { r.classList.remove('plan-drag-over'); });
         dragSource = null;
@@ -210,60 +265,38 @@
       // Mobile touch drag (press and hold 160ms on any non-input part of the row)
       var touchTimer = null;
       var isDragging = false;
-      var startY = 0;
-      var startX = 0;
+      var startTouchY = 0;
+      var startTouchX = 0;
+      var startPageY = 0;
       var startIndex = -1;
       var targetIndex = -1;
       var rowHeight = 0;
       var rowsArray = [];
+      var rowTops = [];
 
       function cancelTouch() {
         if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; }
       }
 
-      row.addEventListener('touchstart', function (e) {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
-        if (e.touches.length !== 1) return;
-
-        var touch = e.touches[0];
-        startY = touch.clientY;
-        startX = touch.clientX;
-        startIndex = +row.dataset.index;
-        targetIndex = startIndex;
-
-        cancelTouch();
-        touchTimer = setTimeout(function () {
-          touchTimer = null;
-          isDragging = true;
-          rowsArray = Array.prototype.slice.call(root.querySelectorAll('.plan-edit-row'));
-          rowHeight = row.offsetHeight || 50;
-
-          row.classList.add('plan-dragging');
-          if (navigator.vibrate) {
-            try { navigator.vibrate(25); } catch (_) {}
-          }
-        }, 160);
-      }, { passive: true });
-
-      row.addEventListener('touchmove', function (e) {
-        var touch = e.touches[0];
-        if (!isDragging) {
-          if (touchTimer && (Math.abs(touch.clientY - startY) > 8 || Math.abs(touch.clientX - startX) > 8)) {
-            cancelTouch();
-          }
-          return;
-        }
-
-        if (e.cancelable) e.preventDefault();
-
-        var dy = touch.clientY - startY;
+      function updateTouchPositions() {
+        if (!isDragging) return;
+        var curScroll = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+        var curPageY = scrollClientY + curScroll;
+        var dy = curPageY - startPageY;
         row.style.transform = 'translateY(' + dy + 'px)';
 
-        var deltaIndex = Math.round(dy / rowHeight);
-        var newTarget = Math.max(0, Math.min(rowsArray.length - 1, startIndex + deltaIndex));
+        var target = startIndex;
+        for (var i = 0; i < rowTops.length; i++) {
+          if (i < startIndex && curPageY < rowTops[i]) {
+            target = Math.min(target, i);
+          }
+          if (i > startIndex && curPageY > rowTops[i]) {
+            target = Math.max(target, i);
+          }
+        }
 
-        if (newTarget !== targetIndex) {
-          targetIndex = newTarget;
+        if (target !== targetIndex) {
+          targetIndex = target;
           rowsArray.forEach(function (r, idx) {
             if (idx === startIndex) return;
             var shift = 0;
@@ -273,13 +306,58 @@
             r.style.transition = 'transform 0.15s ease';
           });
         }
+      }
 
-        if (touch.clientY < 90) window.scrollBy(0, -10);
-        else if (touch.clientY > window.innerHeight - 90) window.scrollBy(0, 10);
+      row.addEventListener('touchstart', function (e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+        if (e.touches.length !== 1) return;
+
+        var touch = e.touches[0];
+        startTouchY = touch.clientY;
+        startTouchX = touch.clientX;
+        startIndex = +row.dataset.index;
+        targetIndex = startIndex;
+
+        cancelTouch();
+        touchTimer = setTimeout(function () {
+          touchTimer = null;
+          isDragging = true;
+          rowsArray = Array.prototype.slice.call(root.querySelectorAll('.plan-edit-row'));
+          rowHeight = row.offsetHeight || 50;
+          var curScroll = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+          startPageY = startTouchY + curScroll;
+
+          rowTops = rowsArray.map(function (r) {
+            var rect = r.getBoundingClientRect();
+            return rect.top + curScroll + rect.height / 2;
+          });
+
+          row.classList.add('plan-dragging');
+          if (navigator.vibrate) {
+            try { navigator.vibrate(25); } catch (_) {}
+          }
+          startAutoScroll(startTouchY, updateTouchPositions);
+        }, 160);
+      }, { passive: true });
+
+      row.addEventListener('touchmove', function (e) {
+        var touch = e.touches[0];
+        if (!isDragging) {
+          if (touchTimer && (Math.abs(touch.clientY - startTouchY) > 8 || Math.abs(touch.clientX - startTouchX) > 8)) {
+            cancelTouch();
+          }
+          return;
+        }
+
+        if (e.cancelable) e.preventDefault();
+
+        scrollClientY = touch.clientY;
+        updateTouchPositions();
       }, { passive: false });
 
       function endTouch() {
         cancelTouch();
+        stopAutoScroll();
         if (!isDragging) return;
         isDragging = false;
 
