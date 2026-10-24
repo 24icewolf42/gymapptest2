@@ -46,4 +46,5 @@ if ! adb install -r -t build-apk/rat-tracker.apk; then
   adb install -t build-apk/rat-tracker.apk
 fi
 
-npx playwright test --project=android "$@"
+# Own results folder and port, so this can run next to the web tests.
+E2E_PORT="${E2E_PORT:-4177}" npx playwright test --project=android --output test-results-android "$@"

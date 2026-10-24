@@ -2,6 +2,7 @@ build-apk/
 node_modules/
 test-results/
 test-results-ios/
+test-results-android/
 playwright-report/
 .android-e2e/
 __pycache__/
