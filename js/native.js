@@ -1,6 +1,7 @@
 // Platform glue: Android back button, APK self-update, the web update check,
 // the "get the app" banner and the offline service worker.
-import { $, html, render, toast, scriptURL } from './core/dom.js';
+import { $, html, toast, scriptURL } from './core/dom.js';
+import { emit } from './core/store.js';
 import { openSheet } from './ui/sheet.js';
 import { handleNativeBack } from './core/router.js';
 import { APP_VERSION } from './version.js';
@@ -19,12 +20,16 @@ export function isNativeApp() {
   return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 }
 
-function showBanner(title, sub, onTap) {
-  const el = $('updateBanner');
-  render(el, html`<button type="button" class="update-btn"><b>${title}</b><small>${sub}</small></button>`);
-  if (el.hidden) toast(`${title}. ${sub}.`, { background: true }); // said once, without moving focus
-  el.hidden = false;
-  el.querySelector('button').onclick = onTap;
+// An available update is offered in Settings (nothing appears over or above
+// the page while the user is using it), and announced once, politely.
+let offer = null;
+/** The update on offer: { title, action, apply }, or null. */
+export const updateOffer = () => offer;
+function showBanner(title, action, onTap) {
+  const first = !offer;
+  offer = { title, action, apply: onTap };
+  if (first) toast(`${title}. Open Settings to ${action.toLowerCase()}.`, { background: true });
+  emit('gym:update-ready');
 }
 
 async function installedBuild() {
@@ -64,7 +69,7 @@ async function checkApk(manual) {
     const r = await fetch(`https://api.github.com/repos/${APK_REPO}/releases/tags/latest`, { cache: 'no-store', headers: { Accept: 'application/vnd.github+json' } });
     const rel = r.ok ? parseRelease((await r.json()).name) : null;
     if (rel && releaseIsNewer(rel, await installedBuild())) {
-      showBanner(`Update available${rel.version ? ': v' + rel.version : ''}`, 'Tap to download and install', installUpdate);
+      showBanner(`Update available${rel.version ? ': v' + rel.version : ''}`, 'Download and install', installUpdate);
     } else if (manual) toast('You have the latest version.');
   } catch { if (manual) toast('Could not check for updates. Are you online?'); }
 }
@@ -90,7 +95,7 @@ async function checkWeb(manual) {
     const data = r.ok ? await r.json() : null;
     // Only offer newer versions, so a stale cached file never prompts a downgrade.
     if (data && data.version && isNewer(data.version, APP_VERSION)) {
-      showBanner('New version available', 'Tap to reload with the latest changes', applyWebUpdate);
+      showBanner('New version available', 'Reload now', applyWebUpdate);
     } else if (manual) toast('You have the latest version.');
   } catch { if (manual) toast('Could not check for updates. Are you online?'); }
 }
@@ -119,12 +124,12 @@ export function initNative() {
     // asked for (applyWebUpdate) reloads the page.
     // A change without a version bump still installs a new worker (sw.js
     // carries a content hash); offer it instead of waiting for every window to close.
-    const offer = () => showBanner('Update ready', 'Tap to reload with the latest changes', applyWebUpdate);
+    const offerUpdate = () => showBanner('Update ready', 'Reload now', applyWebUpdate);
     navigator.serviceWorker.register(scriptURL('sw.js')).then((reg) => {
-      if (reg.waiting && navigator.serviceWorker.controller) offer();
+      if (reg.waiting && navigator.serviceWorker.controller) offerUpdate();
       reg.addEventListener('updatefound', () => {
         const sw = reg.installing;
-        sw?.addEventListener('statechange', () => { if (sw.state === 'installed' && navigator.serviceWorker.controller) offer(); });
+        sw?.addEventListener('statechange', () => { if (sw.state === 'installed' && navigator.serviceWorker.controller) offerUpdate(); });
       });
     }).catch(() => {});
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (updateRequested) location.reload(); });

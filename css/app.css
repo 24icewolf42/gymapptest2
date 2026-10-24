@@ -472,12 +472,8 @@ body[data-page="settings"] .bottom-nav { display: none; }
 body[data-page="settings"] .active-bar { bottom: calc(14px + var(--safe-b)); }
 
 .install-banner { margin: 0 0 12px; }
-/* Floats over the page instead of pushing it down while the user is tapping. */
-.update-banner { position: fixed; z-index: 85; top: calc(8px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); width: min(92vw, 480px); margin: 0; box-shadow: 0 10px 30px rgba(0, 0, 0, .5); border-radius: var(--r-lg); }
-.update-banner[hidden], .install-banner[hidden] { display: none; }
-.update-btn { width: 100%; padding: 12px 16px; border: 0; border-radius: var(--r-lg); background: var(--accent); color: var(--accent-ink); text-align: left; }
-.update-btn b { display: block; }
-.update-btn small { font-size: 12px; opacity: .75; }
+.install-banner[hidden] { display: none; }
+.update-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .install-banner { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: var(--r-lg); background: var(--surface-2); border: 1px solid var(--line-strong); }
 .install-banner > div { flex: 1; min-width: 0; }
 .install-banner b { display: block; font-size: 14px; }

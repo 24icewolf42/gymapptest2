@@ -41,9 +41,11 @@ function clampInt(value, min, max, fallback) {
 const LOOKALIKE = { '<': '‹', '>': '›', '"': '”', '`': '’' };
 export const plain = (s) => s.replace(/[<>"`]/g, (c) => LOOKALIKE[c]);
 
-// Only what could start markup: "<" before a letter or "/" (a tag), and
-// quotes. "Arms <3" stays as it is, so a user's own backup keeps its names.
-export const defang = (s) => s.replace(/<(?=[A-Za-z/!?])/g, '‹').replace(/["`]/g, (c) => LOOKALIKE[c]);
+// Only what could start markup in the original app: "<" before a letter, "/",
+// "!" or "?" (a tag; it puts names into element content, never into
+// attributes). "Arms <3" or Bench "heavy" stay as they are, so a user's own
+// backup keeps its names.
+export const defang = (s) => s.replace(/<(?=[A-Za-z/!?])/g, '‹');
 
 const deep = (fn) => function walk(value) {
   if (typeof value === 'string') return fn(value);

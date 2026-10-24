@@ -111,11 +111,13 @@ const markFormSignIn = () => {
   signedInHere = Date.now();
   writeText(KEYS.formSignIn, String(signedInHere));
   clearInterval(beat);
-  const pulse = () => { if (Date.now() - signedInHere > FORM_SIGN_IN_MS) stopBeat(); else writeText(KEYS.asking, String(Date.now())); };
+  // Beats until the session has started or the sign-in failed (however long the question stays open).
+  const pulse = () => writeText(KEYS.asking, String(Date.now()));
   pulse();
   beat = setInterval(pulse, ASK_BEAT_MS);
 };
 const stopBeat = () => { clearInterval(beat); beat = null; remove(KEYS.asking); };
+const signInFailed = () => { signedInHere = 0; remove(KEYS.formSignIn); stopBeat(); };
 
 async function startSession(user) {
   // Re-read: another tab may already have answered for this account.
@@ -488,7 +490,7 @@ export async function syncAll() {
 export async function signIn(email, password) {
   markFormSignIn();
   const r = await supabase.auth.signInWithPassword({ email, password });
-  if (r.error) stopBeat();
+  if (r.error) signInFailed();
   return r.error ? errorText(r.error) : '';
 }
 
@@ -497,6 +499,7 @@ export async function signUp(email, password, username) {
   const data = { username, age_confirmed: 'true' };
   markFormSignIn();
   const r = await supabase.auth.signUp({ email, password, options: { data, emailRedirectTo: SITE_URL } });
+  if (r.error || !r.data.session) signInFailed(); // not signed in (yet)
   if (r.error) return errorText(r.error);
   return r.data.session ? '' : 'confirm-email';
 }
@@ -510,6 +513,7 @@ export async function resetPassword(email) {
 export async function verifyRecoveryCode(email, token) {
   markFormSignIn();
   const r = await supabase.auth.verifyOtp({ email, token, type: 'recovery' });
+  if (r.error) signInFailed();
   // Success fires PASSWORD_RECOVERY through onAuthStateChange, which asks for the new password.
   return r.error ? errorText(r.error, 'That code did not work. Request a new email and try again.') : '';
 }

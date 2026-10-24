@@ -14,6 +14,7 @@ import { loadBlocks, unblock } from '../cloud/social.js';
 import { openSheet, confirmDialog, promptDialog } from './sheet.js';
 import { icons } from './icons.js';
 import { APP_VERSION } from '../version.js';
+import { updateOffer } from '../native.js';
 
 const MIN_AGE = 14;
 
@@ -176,6 +177,7 @@ export function renderSettings() {
     ${trainingCard()}
     ${backupCard()}
     ${dangerCard()}
+    ${updateOffer() ? html`<p class="notice update-notice" data-key="update"><b>${updateOffer().title}</b> <button type="button" class="btn btn-primary btn-sm" data-apply-update>${updateOffer().action}</button></p>` : ''}
     <p class="about muted small" data-key="about"><button type="button" class="link-btn inline" data-privacy>Privacy</button> · <button type="button" class="link-btn inline" data-check-update>Check for updates</button></p>`);
   // Signed in or out from within the account card: focus its new heading.
   const card = $('page-settings').querySelector('[data-key^="account-"]');
@@ -292,6 +294,10 @@ export function initSettings() {
     retryingBlocks = false;
     renderSettings();
     toast(blocks?.error || 'Loaded.', { tone: blocks?.error ? 'error' : 'default' });
+    if (!blocks?.error) {
+      const h = $('page-settings').querySelector('h3.sub');
+      if (h) { h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
+    }
   });
   on(page, 'submit', '#authForm', async (e) => {
     e.preventDefault();
@@ -434,6 +440,8 @@ export function initSettings() {
     deleting = false; renderSettings();
     toast(r || 'Your account was deleted.', { tone: r ? 'error' : 'default' });
   });
+  on(page, 'click', '[data-apply-update]', () => updateOffer()?.apply());
+  listen('gym:update-ready', () => { if (currentPage() === 'settings') renderSettings(); });
   on(page, 'click', '[data-check-update]', () => window.dispatchEvent(new CustomEvent('gym:check-update', { detail: { manual: true } })));
 
   listen('gym:account', () => {

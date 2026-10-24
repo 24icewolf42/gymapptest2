@@ -142,14 +142,16 @@ export async function confirmDialog(message, { title = 'Are you sure?', ok = 'OK
  */
 export function promptDialog({ title, label, value = '', placeholder = '', maxLength = 80, hint = '', ok = 'Save', type = 'text', validate, input = {} }) {
   const extra = Object.entries({ autocomplete: 'off', ...input }).map(([k, v]) => html` ${k}="${v}"`);
+  // The hint (why this is asked) and any error describe the field.
+  const hintId = 'prompt-hint-' + ++counter, errorId = 'prompt-error-' + counter;
   return openSheet({
     title,
     body: html`
       <label class="field"><span>${label}</span>
-        <input class="input" name="value" type="${type}" value="${value}" placeholder="${placeholder}" maxlength="${maxLength}"${extra} autofocus>
+        <input class="input" name="value" type="${type}" value="${value}" placeholder="${placeholder}" maxlength="${maxLength}"${extra} aria-describedby="${hint ? hintId + ' ' : ''}${errorId}" autofocus>
       </label>
-      ${hint ? html`<p class="hint">${hint}</p>` : ''}
-      <p class="form-error" aria-live="polite"></p>`,
+      ${hint ? html`<p class="hint" id="${hintId}">${hint}</p>` : ''}
+      <p class="form-error" id="${errorId}" aria-live="polite"></p>`,
     actions: [
       {
         label: ok, tone: 'primary', submit: true,

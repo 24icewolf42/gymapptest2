@@ -13,6 +13,8 @@ import { icons } from './icons.js';
 
 const MONTHS_AHEAD = 6;
 
+let chosenDay = null;
+
 function monthGrid(y, m, today, dates, chosen) {
   const days = new Date(y, m + 1, 0).getDate(), first = mondayIndex(new Date(y, m, 1).getDay());
   let count = 0, seconds = 0;
@@ -50,7 +52,7 @@ function short(name) {
 
 export function renderCalendar() {
   const now = new Date(), today = ymd(now), dates = gymDateDays();
-  const chosen = document.activeElement?.closest?.('#page-calendar [data-day]')?.dataset.day || null;
+  const chosen = chosenDay;
   const firstLog = Object.keys(state.logs).sort()[0];
   let y = firstLog ? +firstLog.slice(0, 4) : now.getFullYear();
   let m = firstLog ? +firstLog.slice(5, 7) - 1 : now.getMonth();
@@ -145,6 +147,9 @@ export async function openDay(ds) {
 export function initCalendar() {
   const page = $('page-calendar');
   on(page, 'click', '[data-day]', (e, b) => openDay(b.dataset.day));
+  // The last day the user was on keeps its month's tab stop, also while a
+  // sheet is open or focus is elsewhere when a refresh lands.
+  page.addEventListener('focusin', (e) => { const d = e.target.closest?.('[data-day]'); if (d) chosenDay = d.dataset.day; });
   on(page, 'click', '[data-jump-today]', () => {
     scrollToThisMonth(true);
     // Keyboard focus follows: to today's day, the month's tab stop.

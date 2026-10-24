@@ -253,7 +253,7 @@ function friendsPanel() {
     </form>
     ${f.incoming.length ? html`<h2 class="section-title" data-key="req-title">Requests</h2><div class="card list" data-key="req-list">${f.incoming.map((x) => html`
       <div class="row row-request" data-key="req-${x.id}">${avatar(x.username)}<div class="row-main"><b>@${x.username}</b><small>wants to be friends</small></div>
-        <button type="button" class="btn btn-primary btn-sm" data-accept="${x.id}"${busyAttr(pending.has(x.id))}>Accept</button>
+        <button type="button" class="btn btn-primary btn-sm" data-accept="${x.id}"${busyAttr(pending.has(x.id))} aria-label="Accept request from ${x.username}">Accept</button>
         <button type="button" class="btn btn-ghost btn-sm" data-decline="${x.id}" data-user="${x.userId}" data-name="${x.username}"${busyAttr(pending.has(x.id))} aria-label="Decline request from ${x.username}">Decline</button></div>`)}</div>` : ''}
     <h2 class="section-title" data-key="friends-title">Friends ${f.friends.length ? html`<span class="muted">${f.friends.length}</span>` : ''}</h2>
     ${f.friends.length ? html`<div class="card list" data-key="friends-list">${f.friends.map((x) => html`
@@ -464,8 +464,10 @@ export function initCrew() {
     await loadTabData();
     retrying = false;
     renderCrew();
-    const err = crew.error || crew.shared?.error || crew.leaderboard?.error;
+    // Only what this retry loaded counts (other tabs keep their own state).
+    const err = crew.error || (crew.tab === 'friends' && crew.shared?.error) || (crew.tab === 'ranking' && crew.leaderboard?.error);
     toast(err || 'Loaded.', { tone: err ? 'error' : 'default' });
+    if (!err) $('crew-tab-' + crew.tab)?.focus({ preventScroll: true }); // the notice is gone: back to the section
   });
   on(page, 'click', '[data-quick]', (e, b) => openDateSheet(b.dataset.quick === 'later' ? 'later' : +b.dataset.quick));
   on(page, 'click', '[data-reply]', async (e, b) => {

@@ -106,8 +106,13 @@ export function render(el, content) {
     if (!target) continue;
     if (/^H[1-6]$/.test(target.tagName)) { focusHeading(target.parentElement, `[data-key="${CSS.escape(k)}"]`); return; }
     const control = target.matches(focusable) || target.getAttribute('tabindex') === '-1' ? target : target.querySelector(focusable);
-    // Never hand focus to a destructive control the user did not choose.
-    if (control && !control.matches('.danger')) { control.focus({ preventScroll: true }); return; }
+    // Never hand focus to a destructive control the user did not choose, nor
+    // to the same action for another item (e.g. "Cancel request" of the next
+    // person): that would invite the wrong thing to be done.
+    if (control && !control.matches('.danger, .btn-danger') && !(active.nodeType === 1 && control.nodeType === 1 && actionOf(control) && actionOf(control) === actionOf(active))) {
+      control.focus({ preventScroll: true });
+      return;
+    }
   }
   // Then the heading of the closest section that is still there, then the page heading.
   const scope = ancestors.find((n) => n.isConnected && el.contains(n) && n.querySelector('h2, h3'));
