@@ -189,7 +189,7 @@ function enableDragReorder(page) {
     // Rows go by exercise name: a sync or another tab may change the list during the drag.
     const rows = [...listEl.children];
     const from = rows.indexOf(row), name = row.dataset.ex, startY = e.clientY, startScroll = window.scrollY;
-    let to = from, before = null, pointerY = e.clientY, raf = 0;
+    let to = from, before = null, pointerY = e.clientY, raf = 0, moved = false;
     row.classList.add('dragging');
     const update = () => {
       // The row follows the finger, also while the page scrolls under it.
@@ -205,7 +205,8 @@ function enableDragReorder(page) {
     const autoScroll = () => {
       if (!row.isConnected) { end({ type: 'pointercancel' }); return; } // the routine went away
       const top = 110, bottom = window.innerHeight - 130; // clear of the header and the bottom bar
-      const speed = pointerY < top ? -(4 + 20 * Math.min(1, (top - pointerY) / top))
+      // Only a drag scrolls: a press held still near the edge does nothing.
+      const speed = !moved ? 0 : pointerY < top ? -(4 + 20 * Math.min(1, (top - pointerY) / top))
         : pointerY > bottom ? 4 + 20 * Math.min(1, (pointerY - bottom) / 110) : 0;
       if (speed) {
         const before = window.scrollY;
@@ -214,7 +215,12 @@ function enableDragReorder(page) {
       }
       raf = requestAnimationFrame(autoScroll);
     };
-    const move = (ev) => { pointerY = ev.clientY; update(); };
+    const move = (ev) => {
+      pointerY = ev.clientY;
+      if (!moved && Math.abs(pointerY - startY) < 8) return;
+      moved = true;
+      update();
+    };
     // pointerup drops the row; pointercancel (the system took the gesture) puts it back.
     const end = (ev) => {
       cancelAnimationFrame(raf);

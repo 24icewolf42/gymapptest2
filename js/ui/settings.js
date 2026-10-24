@@ -1,5 +1,5 @@
 // Settings: account, privacy, training options, rest-day image, backup, about.
-import { $, html, render, on, toast, toastLater, busyAttr } from '../core/dom.js';
+import { $, html, raw, render, on, toast, toastLater, busyAttr } from '../core/dom.js';
 import { listen, readText, write, KEYS } from '../core/store.js';
 import { pushLayer, go, currentPage } from '../core/router.js';
 import { state, saveSettings, restImage, setRestImage, loadState, planTombstones, setPlanTombstones } from '../state.js';
@@ -179,9 +179,10 @@ export function renderSettings() {
     ${trainingCard()}
     ${backupCard()}
     ${dangerCard()}
-    ${updateOffer() ? html`<div class="notice update-notice" data-key="update"><b>${updateOffer().title}</b> <button type="button" class="btn btn-primary btn-sm" data-apply-update${busyAttr(applyingUpdate)}>${applyingUpdate ? 'Working…' : updateOffer().action}</button>
+    ${updateOffer() ? html`<div class="notice update-notice" data-key="update"><b${updateOffer().reinstall ? raw(' tabindex="-1"') : ''}>${updateOffer().title}</b>
       ${updateOffer().reinstall ? html`<p class="small">This update is signed with a different key than the app on this phone (for example a test build), so Android can't install it over it.</p>
-        <ol class="plain small"><li>Settings → Backup → Save file (or, if you are signed in, check that your account says “Synced”).</li><li>Uninstall Tracker.</li><li>Install the new version from the download page, then restore or sign in.</li></ol>` : ''}</div>` : ''}
+        <ol class="plain small"><li>Settings → Backup → Save file (or, if you are signed in, check that your account says “Synced”).</li><li>Uninstall Tracker.</li><li>Install the new version from the download page, then restore or sign in.</li></ol>` : ''}
+      <button type="button" class="btn btn-primary btn-sm" data-apply-update${busyAttr(applyingUpdate)}>${applyingUpdate ? 'Working…' : updateOffer().action}</button></div>` : ''}
     <p class="about muted small" data-key="about"><button type="button" class="link-btn inline" data-privacy>Privacy</button> · <button type="button" class="link-btn inline" data-check-update>Check for updates</button></p>`);
   // Signed in or out from within the account card: focus its new heading.
   const card = $('page-settings').querySelector('[data-key^="account-"]');
@@ -486,7 +487,14 @@ export function initSettings() {
     renderSettings();
     try { await updateOffer()?.apply(); } finally { applyingUpdate = false; renderSettings(); }
   });
-  listen('gym:update-ready', () => { if (currentPage() === 'settings') renderSettings(); });
+  listen('gym:update-ready', () => {
+    if (currentPage() !== 'settings') return;
+    renderSettings();
+    // The reinstall steps replaced the offer: read them before the button can be pressed again.
+    if (updateOffer()?.reinstall && document.activeElement?.matches?.('[data-apply-update]')) {
+      page.querySelector('.update-notice b')?.focus({ preventScroll: true });
+    }
+  });
   on(page, 'click', '[data-check-update]', () => window.dispatchEvent(new CustomEvent('gym:check-update', { detail: { manual: true } })));
 
   listen('gym:account', () => {
