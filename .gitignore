@@ -1,2 +1,4 @@
 build-apk/
 node_modules/
+__pycache__/
+*.pyc

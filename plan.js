@@ -33,7 +33,7 @@
   css.textContent = '.plan-day-list,.plan-editor,.plan-card{background:linear-gradient(145deg,#171717,#0d0d0d);border:1px solid var(--border-light);border-radius:20px;padding:16px;margin:0 0 14px}.plan-top{display:flex;justify-content:space-between;align-items:center;gap:12px}.plan-eyebrow{color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.12em}.plan-heading{font-size:22px;font-weight:800;margin:4px 0 12px}.plan-day-link{display:flex;align-items:center;gap:12px;width:100%;padding:14px 2px;border:0;border-top:1px solid var(--border);background:none;color:var(--text);text-align:left}.plan-day-name{width:88px;font-weight:700}.plan-day-workout{flex:1;color:var(--text-muted);font-size:13px}.plan-day-arrow{font-size:25px;color:var(--accent);line-height:1}.plan-field{width:100%;min-width:0;background:var(--bg-subtle);color:var(--text);border:1px solid var(--border-light);border-radius:10px;padding:11px;font:inherit}.plan-edit-row{display:grid;grid-template-columns:minmax(0,1fr) 56px 72px 48px;gap:6px;align-items:center;padding:11px 0;border-top:1px solid var(--border)}.plan-edit-row input{min-width:0;padding:9px 3px;text-align:center}.plan-search-results{max-height:250px;overflow:auto;border:1px solid var(--border);border-radius:12px;margin-top:6px}.plan-search-results:empty{display:none}.plan-search-results button{width:100%;background:transparent;color:var(--text);border:0;border-bottom:1px solid var(--border);text-align:left;padding:12px}.plan-search-results small{display:block;color:var(--text-muted);margin-top:3px}.plan-image-preview{display:block;width:100%;height:150px;object-fit:cover;border-radius:14px;margin:10px 0;border:1px solid var(--border)}.plan-actions{display:flex;gap:8px;margin-top:12px}.plan-actions>*{flex:1}.plan-empty{padding:14px 0;color:var(--text-muted);font-size:13px}.account-card{background:linear-gradient(145deg,#191919,#0e0e0e);border:1px solid var(--border-light);border-radius:18px;padding:17px;margin-bottom:14px}.account-card label{display:block;font-size:12px;color:var(--text-muted);margin-top:12px}.account-card .input-field{display:block;box-sizing:border-box;width:100%;min-height:46px;margin-top:5px}.account-card small,.account-copy{color:var(--text-muted);font-size:13px;line-height:1.5}.account-actions{display:flex;gap:8px;margin-top:14px}.account-actions button{flex:1;min-height:46px}.cloud-status{font-size:12px;color:var(--accent);padding:0 2px 8px}.social-section{background:linear-gradient(145deg,#171717,#0d0d0d);border:1px solid var(--border);border-radius:18px;padding:16px;margin-bottom:14px}.friend-list{margin-top:12px}.friend-row,.leader-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 0;border-top:1px solid var(--border);font-size:13px}.leader-rank{font-size:12px;color:var(--accent);font-weight:800;width:25px}.leader-name{flex:1}.leader-weight{text-align:right;font-weight:700}.leader-row small,.friend-row small{display:block;color:var(--text-muted);font-size:11px;margin-top:3px}@media(max-width:420px){.plan-edit-row{grid-template-columns:minmax(0,1fr) 46px 62px 34px;gap:4px}.plan-edit-row button{min-width:32px;padding:7px 2px}.account-actions{flex-direction:column}}';
   document.head.appendChild(css);
   var polish = document.createElement('style');
-  polish.textContent = ':root{--bg:#151513;--bg-subtle:#1c1b19;--surface:#22211f;--surface-2:#292825;--surface-3:#34322f;--border:#393733;--border-light:#494640;--text:#f0eee8;--text-muted:#aaa69c;--text-dim:#77736a}html{background:#151513}body{background-color:var(--bg);background-image:radial-gradient(ellipse 120% 55% at 50% -8%,rgba(255,255,255,.08),transparent 70%),linear-gradient(180deg,#242321 0%,#191918 55%,#151513 100%)}.plan-day-list,.plan-editor,.plan-card,.social-section,.account-card{background:linear-gradient(145deg,#252421,#1d1c1a);border-color:#403e39;box-shadow:0 10px 26px rgba(0,0,0,.12)}.plan-day-link{box-sizing:border-box;min-height:58px;width:100%;padding:12px 0 12px 2px;gap:8px}.plan-day-name{flex:0 0 82px;width:auto}.plan-day-workout{min-width:0;overflow-wrap:anywhere}.plan-day-arrow{flex:0 0 28px;text-align:center;margin:0;color:var(--text-muted)}.plan-picker{margin:8px 0 16px}.plan-picker-trigger{display:flex;align-items:center;gap:10px;width:100%;min-height:52px;padding:12px 14px;text-align:left;color:var(--text);background:#2b2a27;border:1px solid #504d46;border-radius:14px;font:inherit}.plan-picker-trigger:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.plan-picker-value{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.plan-picker-chevron{flex:0 0 24px;text-align:center;font-size:22px;line-height:1;color:var(--text-muted)}.plan-picker-list{display:none;max-height:245px;margin-top:8px;padding:5px;overflow-y:auto;overscroll-behavior:contain;background:#242320;border:1px solid #45423d;border-radius:14px}.plan-picker.is-open .plan-picker-list{display:block}.plan-picker-option{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:46px;padding:10px 12px;color:var(--text);text-align:left;background:transparent;border:0;border-radius:9px;font:inherit}.plan-picker-option+.plan-picker-option{border-top:1px solid rgba(255,255,255,.06)}.plan-picker-option.is-selected{background:#36342f;color:#fff}.plan-picker-option span:last-child{color:var(--text-muted)}.plan-exercise-search{scroll-margin-top:12px;text-align:left}.plan-exercise-list{max-height:34dvh;min-height:140px;margin-top:8px;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}.plan-exercise-option{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:52px;padding:9px 12px}.plan-exercise-option span:first-child{min-width:0}.plan-exercise-option b{display:block;font-size:13px}.plan-exercise-option small{font-size:11px}.plan-exercise-option .added-tag{flex:none;color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}.plan-exercise-option:disabled{opacity:.62;cursor:default}.plan-edit-row{grid-template-columns:minmax(0,1fr) 50px 66px 36px;gap:6px}.plan-edit-row b{overflow-wrap:anywhere}.account-card label{display:block!important;margin-top:13px}.account-card .input-field{display:block;box-sizing:border-box;width:100%;min-height:48px;margin:6px 0 0;text-align:left}.account-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}.account-actions button{width:100%;min-width:0}.friend-add-row{display:grid;grid-template-columns:minmax(0,1fr) 76px;align-items:stretch;gap:9px}.friend-add-row .input-field{width:100%;min-width:0;text-align:left}.friend-add-row .btn-primary{width:100%;padding:12px}.leader-row{display:grid;grid-template-columns:26px minmax(0,1fr) auto;align-items:center;gap:9px}.leader-name{min-width:0;overflow-wrap:anywhere}.leader-weight{white-space:nowrap}.settings-account-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px}.settings-account-actions button{min-width:0}.keyboard-open .plan-exercise-list{scroll-margin-bottom:12px}@media(max-width:440px){.plan-day-name{flex-basis:72px}.plan-edit-row{grid-template-columns:minmax(0,1fr) 44px 60px 34px;gap:4px}.plan-edit-row button{min-width:32px;padding:7px 2px}.plan-exercise-list{max-height:32dvh}.account-actions,.settings-account-actions{grid-template-columns:1fr}}';
+  polish.textContent = ':root{--bg:#151513;--bg-subtle:#1c1b19;--surface:#22211f;--surface-2:#292825;--surface-3:#34322f;--border:#393733;--border-light:#494640;--text:#f0eee8;--text-muted:#aaa69c;--text-dim:#77736a}html{background:#151513}body{background-color:var(--bg);background-image:radial-gradient(ellipse 120% 55% at 50% -8%,rgba(255,255,255,.08),transparent 70%),linear-gradient(180deg,#242321 0%,#191918 55%,#151513 100%)}.plan-day-list,.plan-editor,.plan-card,.social-section,.account-card{background:linear-gradient(145deg,#252421,#1d1c1a);border-color:#403e39;box-shadow:0 10px 26px rgba(0,0,0,.12)}.plan-day-link{box-sizing:border-box;min-height:58px;width:100%;padding:12px 0 12px 2px;gap:8px}.plan-day-name{flex:0 0 82px;width:auto}.plan-day-workout{min-width:0;overflow-wrap:anywhere}.plan-day-arrow{flex:0 0 28px;text-align:center;margin:0;color:var(--text-muted)}.plan-picker{margin:8px 0 16px}.plan-picker-trigger{display:flex;align-items:center;gap:10px;width:100%;min-height:52px;padding:12px 14px;text-align:left;color:var(--text);background:#2b2a27;border:1px solid #504d46;border-radius:14px;font:inherit}.plan-picker-trigger:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.plan-picker-value{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.plan-picker-chevron{flex:0 0 24px;text-align:center;font-size:22px;line-height:1;color:var(--text-muted)}.plan-picker-list{display:none;max-height:245px;margin-top:8px;padding:5px;overflow-y:auto;overscroll-behavior:contain;background:#242320;border:1px solid #45423d;border-radius:14px}.plan-picker.is-open .plan-picker-list{display:block}.plan-picker-option{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:46px;padding:10px 12px;color:var(--text);text-align:left;background:transparent;border:0;border-radius:9px;font:inherit}.plan-picker-option+.plan-picker-option{border-top:1px solid rgba(255,255,255,.06)}.plan-picker-option.is-selected{background:#36342f;color:#fff}.plan-picker-option span:last-child{color:var(--text-muted)}.plan-exercise-search{scroll-margin-top:12px;text-align:left}.plan-exercise-list{max-height:34dvh;min-height:140px;margin-top:8px;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}.plan-exercise-option{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:52px;padding:9px 12px}.plan-exercise-option span:first-child{min-width:0}.plan-exercise-option b{display:block;font-size:13px}.plan-exercise-option small{font-size:11px}.plan-exercise-option .added-tag{flex:none;color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}.plan-exercise-option:disabled{opacity:.62;cursor:default}.plan-edit-row{grid-template-columns:30px minmax(0,1fr) 46px 64px 34px;gap:6px;align-items:center;padding:10px 0;border-top:1px solid var(--border);position:relative;background:transparent;transition:transform .15s ease, background .15s ease}.plan-reorder-col{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;user-select:none;-webkit-user-select:none}.plan-move-btn{display:flex;align-items:center;justify-content:center;width:100%;height:15px;padding:0;background:#2b2a27;border:1px solid #4a4740;border-radius:4px;color:var(--text-muted);font-size:8px;line-height:1;cursor:pointer;touch-action:manipulation}.plan-move-btn:active:not(:disabled){background:var(--accent);color:#fff}.plan-move-btn:disabled{opacity:0.2;cursor:default}.plan-drag-handle{display:flex;align-items:center;justify-content:center;width:100%;font-size:11px;color:var(--text-dim);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;line-height:1;padding:1px 0}.plan-drag-handle:active{cursor:grabbing;color:var(--accent)}.plan-edit-row.plan-dragging{background:var(--surface-3);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.5);z-index:20;opacity:0.95}.plan-edit-row.plan-drag-over{border-top:2px solid var(--accent)}.plan-move-hint{margin:4px 0 10px;font-size:11px;color:var(--text-muted)}.plan-rename-button{min-height:42px;padding:0 12px;border:1px solid #504d46;border-radius:12px;background:#2b2a27;color:var(--text);font-size:12px;font-weight:700;cursor:pointer}.plan-rename-button:active{background:#3a3833}.plan-edit-row b{overflow-wrap:anywhere}.account-card label{display:block!important;margin-top:13px}.account-card .input-field{display:block;box-sizing:border-box;width:100%;min-height:48px;margin:6px 0 0;text-align:left}.account-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}.account-actions button{width:100%;min-width:0}.friend-add-row{display:grid;grid-template-columns:minmax(0,1fr) 76px;align-items:stretch;gap:9px}.friend-add-row .input-field{width:100%;min-width:0;text-align:left}.friend-add-row .btn-primary{width:100%;padding:12px}.leader-row{display:grid;grid-template-columns:26px minmax(0,1fr) auto;align-items:center;gap:9px}.leader-name{min-width:0;overflow-wrap:anywhere}.leader-weight{white-space:nowrap}.settings-account-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px}.settings-account-actions button{min-width:0}.keyboard-open .plan-exercise-list{scroll-margin-bottom:12px}@media(max-width:440px){.plan-day-name{flex-basis:72px}.plan-edit-row{grid-template-columns:26px minmax(0,1fr) 42px 58px 30px;gap:4px}.plan-edit-row button{min-width:32px;padding:7px 2px}.plan-exercise-list{max-height:32dvh}.account-actions,.settings-account-actions{grid-template-columns:1fr}}';
   document.head.appendChild(polish);
   var libraryStyle = document.createElement('style');
   libraryStyle.textContent = '.plan-library-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.plan-library-head .plan-heading{margin-bottom:0}.plan-library-list{display:grid;gap:9px;margin-top:14px}.plan-workout-card{display:flex;align-items:center;gap:12px;width:100%;min-height:70px;padding:12px 14px;border:1px solid #44413b;border-radius:15px;background:linear-gradient(145deg,#2a2925,#22211f);color:var(--text);text-align:left}.plan-workout-card:active{background:#34322e}.plan-workout-mark{display:grid;place-items:center;width:42px;height:42px;flex:none;border-radius:13px;background:#3a3832;color:var(--text);font-size:17px;font-weight:800}.plan-workout-copy{flex:1;min-width:0}.plan-workout-copy b{display:block;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.plan-workout-copy small{display:block;margin-top:3px;color:var(--text-muted);font-size:12px}.plan-workout-arrow{color:var(--text-dim);font-size:24px}.plan-create-button{width:100%;min-height:52px;margin-top:12px;border:1px solid #555149;border-radius:14px;background:#efede6;color:#171614;font-size:14px;font-weight:800}.plan-library-empty{padding:18px 4px;color:var(--text-muted);font-size:13px;line-height:1.5}.plan-library-empty b{display:block;margin-bottom:4px;color:var(--text);font-size:14px}.plan-routine-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:4px 0 14px}.plan-delete-button{min-height:42px;padding:0 12px;border:1px solid rgba(208,89,74,.36);border-radius:12px;background:rgba(208,89,74,.08);color:#e68b7e;font-size:12px;font-weight:700}.plan-routine-open{width:100%;margin-top:8px}.workout-create-overlay{position:fixed;inset:0;z-index:500;display:none;align-items:center;justify-content:center;padding:18px;background:rgba(10,10,9,.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}.workout-create-overlay.is-open{display:flex}.workout-create-sheet{width:min(100%,420px);padding:22px;border:1px solid #4c4942;border-radius:24px;background:linear-gradient(150deg,#2b2a27,#201f1d);box-shadow:0 25px 80px rgba(0,0,0,.5);animation:fadeIn .16s ease}.workout-create-sheet h2{margin:6px 0 6px;font-size:25px}.workout-create-sheet p{margin:0 0 18px;color:var(--text-muted);font-size:13px;line-height:1.5}.workout-create-sheet label{display:block;margin-bottom:7px;color:var(--text-muted);font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}.workout-create-sheet input{width:100%;min-height:52px;padding:0 14px;border:1px solid #555149;border-radius:14px;background:#191816;color:var(--text);font:inherit}.workout-create-sheet input:focus{outline:2px solid rgba(241,238,230,.45);outline-offset:2px}.workout-create-error{display:block;min-height:18px;margin-top:6px;color:#e68b7e;font-size:12px}.workout-create-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:18px}.workout-create-actions button{min-height:48px}.plan-day-current{padding:15px;border:1px solid var(--border);border-radius:14px;background:rgba(255,255,255,.025)}.plan-day-current b{display:block;font-size:16px}.plan-day-current small{color:var(--text-muted)}';
@@ -111,11 +111,53 @@
     var name = selectedWorkout;
     if (!name || !window.WORKOUTS[name]) { selectedWorkout = null; render(); return; }
     var list = window.WORKOUTS[name];
-    var exerciseRows = list.length ? list.map(function (e, i) { return '<div class="plan-edit-row"><b style="font-size:12px;line-height:1.25">' + esc(e.name) + (e.sides ? '<small style="display:block;color:var(--text-muted)">2 left + 2 right sets</small>' : '') + '</b><input class="plan-field" type="number" min="1" max="20" data-i="' + i + '" data-k="sets" value="' + (+e.sets || 2) + '" aria-label="Sets"><input class="plan-field" data-i="' + i + '" data-k="target" value="' + esc(e.target || '8–12') + '" aria-label="Rep target"><button class="btn-ghost danger" data-remove="' + i + '" aria-label="Remove ' + esc(e.name) + '">×</button></div>'; }).join('') : '<div class="plan-library-empty"><b>Start with one exercise.</b>Use the list below to build this workout.</div>';
+    var exerciseRows = list.length ? list.map(function (e, i) {
+      return '<div class="plan-edit-row" data-index="' + i + '" draggable="true">' +
+        '<div class="plan-reorder-col">' +
+          '<button type="button" class="plan-move-btn" data-move-dir="-1" data-i="' + i + '" ' + (i === 0 ? 'disabled' : '') + ' aria-label="Move up" title="Move up">▲</button>' +
+          '<div class="plan-drag-handle" data-drag-handle="' + i + '" title="Drag to reorder" aria-hidden="true">⋮⋮</div>' +
+          '<button type="button" class="plan-move-btn" data-move-dir="1" data-i="' + i + '" ' + (i === list.length - 1 ? 'disabled' : '') + ' aria-label="Move down" title="Move down">▼</button>' +
+        '</div>' +
+        '<div style="min-width:0"><b style="font-size:12px;line-height:1.25;display:block">' + esc(e.name) + '</b>' + (e.sides ? '<small style="display:block;color:var(--text-muted)">2 left + 2 right sets</small>' : '') + '</div>' +
+        '<input class="plan-field" type="number" min="1" max="20" data-i="' + i + '" data-k="sets" value="' + (+e.sets || 2) + '" aria-label="Sets">' +
+        '<input class="plan-field" data-i="' + i + '" data-k="target" value="' + esc(e.target || '8–12') + '" aria-label="Rep target">' +
+        '<button class="btn-ghost danger" data-remove="' + i + '" aria-label="Remove ' + esc(e.name) + '">×</button>' +
+      '</div>';
+    }).join('') : '<div class="plan-library-empty"><b>Start with one exercise.</b>Use the list below to build this workout.</div>';
+
+    var moveHint = list.length > 1 ? '<div class="plan-move-hint">Tap ▲ / ▼ or drag ⋮⋮ to move exercises.</div>' : '';
+
     root.innerHTML = '<section class="plan-editor"><div class="plan-top"><button type="button" class="btn-ghost" id="backWorkout">‹ ' + (selectedDay == null ? 'My workouts' : 'Day') + '</button><span class="plan-eyebrow">Workout builder</span></div>' +
-      '<div class="plan-routine-actions"><div><h2 class="plan-heading" style="margin-bottom:3px">' + esc(name) + '</h2><span class="plan-eyebrow">' + list.length + (list.length === 1 ? ' exercise' : ' exercises') + '</span></div><button class="plan-delete-button" id="deleteWorkout" type="button">Delete workout</button></div>' +
+      '<div class="plan-routine-actions"><div><h2 class="plan-heading" style="margin-bottom:3px">' + esc(name) + '</h2><span class="plan-eyebrow">' + list.length + (list.length === 1 ? ' exercise' : ' exercises') + '</span></div><div style="display:flex;gap:8px"><button class="plan-rename-button" id="renameWorkout" type="button">Rename</button><button class="plan-delete-button" id="deleteWorkout" type="button">Delete workout</button></div></div>' +
       '<label class="plan-eyebrow" for="exerciseSearch" style="display:block;margin-top:8px">Exercise library · ' + moves.length + ' exercises</label><div class="plan-muscle-filters" id="muscleFilters" aria-label="Filter by muscle group"></div><input id="exerciseSearch" class="plan-field plan-exercise-search" placeholder="Search exercises" autocomplete="off" enterkeyhint="search"><div class="plan-library-count" id="exerciseCount"></div><div class="plan-search-results plan-exercise-list" id="exerciseResults"></div>' +
-      '<div class="plan-top" style="margin-top:20px"><h2 class="plan-heading">In this workout</h2></div>' + exerciseRows + '</section>';
+      '<div class="plan-top" style="margin-top:20px"><h2 class="plan-heading">In this workout</h2></div>' + moveHint + exerciseRows + '</section>';
+
+    function moveExercise(from, to) {
+      if (from === to || to < 0 || to >= list.length) return;
+      var item = list.splice(from, 1)[0];
+      list.splice(to, 0, item);
+      save();
+      render();
+    }
+
+    document.getElementById('renameWorkout').onclick = function () {
+      var n2 = (window.prompt('Rename workout:', name) || '').trim().slice(0, 40);
+      if (!n2 || n2 === name) return;
+      if (window.WORKOUTS[n2]) { alert('You already have a workout with that name.'); return; }
+      var rebuilt = {};
+      Object.keys(window.WORKOUTS).forEach(function (k) { rebuilt[k === name ? n2 : k] = window.WORKOUTS[k]; });
+      Object.keys(window.WORKOUTS).forEach(function (k) { delete window.WORKOUTS[k]; });
+      Object.keys(rebuilt).forEach(function (k) { window.WORKOUTS[k] = rebuilt[k]; });
+      Object.keys(window.SCHEDULE).forEach(function (k) { if (window.SCHEDULE[k] === name) window.SCHEDULE[k] = n2; });
+      var del = deletedNames(), res = restoredNames().filter(function (x) { return x !== name; });
+      if (del.indexOf(name) < 0) del.push(name);
+      if (del.indexOf(n2) >= 0) { del = del.filter(function (x) { return x !== n2; }); if (res.indexOf(n2) < 0) res.push(n2); }
+      saveDeletedNames(del);
+      saveRestoredNames(res);
+      selectedWorkout = n2;
+      save();
+      render();
+    };
     document.getElementById('backWorkout').onclick = function () { selectedWorkout = null; render(); };
     document.getElementById('deleteWorkout').onclick = function () {
       if (!window.confirm('Delete "' + name + '" from your workout list? Your saved workout history will stay.')) return;
@@ -125,6 +167,105 @@
       Object.keys(window.SCHEDULE).forEach(function (k) { if (window.SCHEDULE[k] === name) window.SCHEDULE[k] = null; });
       selectedWorkout = null; selectedDay = null; save(); render();
     };
+    // Move buttons
+    root.querySelectorAll('[data-move-dir]').forEach(function (b) {
+      b.onclick = function (e) {
+        e.stopPropagation();
+        var from = +this.dataset.i;
+        var dir = +this.dataset.moveDir;
+        moveExercise(from, from + dir);
+      };
+    });
+
+    // Desktop HTML5 drag and drop
+    var dragSource = null;
+    var rowEls = root.querySelectorAll('.plan-edit-row');
+    rowEls.forEach(function (row) {
+      row.addEventListener('dragstart', function (e) {
+        dragSource = +this.dataset.index;
+        this.classList.add('plan-dragging');
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', String(dragSource));
+        }
+      });
+      row.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+        this.classList.add('plan-drag-over');
+      });
+      row.addEventListener('dragleave', function () {
+        this.classList.remove('plan-drag-over');
+      });
+      row.addEventListener('drop', function (e) {
+        e.preventDefault();
+        this.classList.remove('plan-drag-over');
+        var toIndex = +this.dataset.index;
+        if (dragSource !== null && dragSource !== toIndex) {
+          moveExercise(dragSource, toIndex);
+        }
+        dragSource = null;
+      });
+      row.addEventListener('dragend', function () {
+        this.classList.remove('plan-dragging');
+        rowEls.forEach(function (r) { r.classList.remove('plan-drag-over'); });
+        dragSource = null;
+      });
+    });
+
+    // Mobile Pointer drag on the grip handle
+    root.querySelectorAll('.plan-drag-handle').forEach(function (handle) {
+      handle.addEventListener('pointerdown', function (e) {
+        if (e.pointerType === 'mouse') return;
+        var row = handle.closest('.plan-edit-row');
+        if (!row) return;
+        var startIndex = +row.dataset.index;
+        var startY = e.clientY;
+        var rowsArray = Array.prototype.slice.call(rowEls);
+        var rowHeight = row.offsetHeight || 48;
+        var targetIndex = startIndex;
+
+        try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+        row.classList.add('plan-dragging');
+
+        function onPointerMove(ev) {
+          var dy = ev.clientY - startY;
+          row.style.transform = 'translateY(' + dy + 'px)';
+          var shiftCount = Math.round(dy / rowHeight);
+          var newTarget = Math.max(0, Math.min(rowsArray.length - 1, startIndex + shiftCount));
+          if (newTarget !== targetIndex) {
+            targetIndex = newTarget;
+            rowsArray.forEach(function (r, idx) {
+              if (idx === startIndex) return;
+              var shift = 0;
+              if (startIndex < targetIndex && idx > startIndex && idx <= targetIndex) shift = -rowHeight;
+              if (startIndex > targetIndex && idx >= targetIndex && idx < startIndex) shift = rowHeight;
+              r.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+              r.style.transition = 'transform 0.15s ease';
+            });
+          }
+        }
+
+        function onPointerUp(ev) {
+          handle.removeEventListener('pointermove', onPointerMove);
+          handle.removeEventListener('pointerup', onPointerUp);
+          handle.removeEventListener('pointercancel', onPointerUp);
+          try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
+
+          row.classList.remove('plan-dragging');
+          rowsArray.forEach(function (r) { r.style.transform = ''; r.style.transition = ''; });
+
+          if (targetIndex !== startIndex) {
+            moveExercise(startIndex, targetIndex);
+          }
+        }
+
+        handle.addEventListener('pointermove', onPointerMove);
+        handle.addEventListener('pointerup', onPointerUp);
+        handle.addEventListener('pointercancel', onPointerUp);
+      });
+    });
+
     root.querySelectorAll('[data-remove]').forEach(function (b) { b.onclick = function () { list.splice(+b.dataset.remove, 1); save(); render(); }; });
     root.querySelectorAll('[data-k]').forEach(function (input) { input.onchange = function () { var e = list[+this.dataset.i]; e[this.dataset.k] = this.dataset.k === 'sets' ? Math.max(1, Math.min(20, +this.value || 2)) : this.value; save(); }; });
     var search = document.getElementById('exerciseSearch'), results = document.getElementById('exerciseResults');
