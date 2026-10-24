@@ -50,6 +50,26 @@ All findings are fixed in code. What remains for the app's owner is configuratio
 
 After the rework, three independent Opus reviews (security/privacy, data correctness, UX/accessibility/tests) rated the branch and listed findings. Every critical, major and minor finding and every nit was fixed and re-reviewed.
 
+### Round 12 (security 7.5/10, correctness 8/10, UX/tests 7/10)
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| S12-01 | Major | Someone else's markup could seed the "already in the account" list and then pass defusing raw | Only the account's own workouts count as known text (never deletion records); what was on the phone when the session ended is fingerprinted and trusted; tests |
+| S12-02, mi-3, mi-4 | Minor | A running workout in a deleted routine, the user's own unsynced work after the session ended, and draft sets were renamed or kept raw | Drafts and the running workout are defused unless they match a kept routine; items matching the end-of-session fingerprints stay as they are; tests |
+| mi-1, mi-2 (correctness) | Minor | Defusing renamed the user's own history and brought back removed exercises under look-alikes | The history check knows the account's plan and the last cloud copy; deleted markup-named routines are dropped; tests |
+| S12-03, mi-5 | Minor | A failed "Sign out on all devices" said "Signed out." | It says the other devices could not be signed out; test |
+| mi-6, mi-7 (correctness) | Minor | The new password was trimmed and closed on a refusal; a throwing step left a prompt stuck | Kept as typed and saved inside the prompt; a throwing step shows its error; tests |
+| UX-M1 | Major | Late answers (friend request, "Sync now", sign-in, sign-out, Settings switches, update checks) replaced a newer Undo and moved focus | `toastLater()`: an answer waits behind any message shown after its request started; used by every handler that awaits the server; tests for Crew, an act() answer and "Sync now", each checked against its removal |
+| UX-M2 | Major | "Not synced yet" and "One-time reinstall needed" opened whenever the slow step ended | Sign-out runs inside its sheet ("Syncing…") and asks "Not synced yet" from there; the reinstall steps replace the offer in Settings with a background message; tests |
+| UX-M3 | Major | An Undo toast covered and swallowed taps on a dialog's main button, and one tap held it forever | The toast lets taps through while a dialog is open; only a mouse pointer holds it; test |
+| UX-M4 | Major | Recent fixes could be reverted with the suite green | Tests for Share inside its prompt, the reset email and code steps, the refused and untrimmed new password, Close marked unavailable, the username message and the failed global sign-out; each checked against its removal |
+| UX-m1 | Minor | "Choose a new password" closed on a stray tap, with no other way to set one | It is a required question with "Not now", which says where to change it later; "Change password" in the account card |
+| UX-m2 | Minor | Every saving prompt said "Saving…" in red | Prompts say what they do ("Sending…", "Checking…", "Sharing…", "Syncing…") in a neutral status line |
+| UX-m3 | Minor | A second friend request sent during the first was ignored | It is sent next and the user is told; test |
+| UX-n1 | Nit | A cancelled drag still moved the exercise | A cancelled drag puts the row back; test |
+
+Upstream v2.12.4 and v2.12.5 (version bumps) and the drag auto-scroll (`e622386`) were merged; the auto-scroll is ported to the grip drag.
+
 ### Round 11 (security 7.5/10, correctness 8.5/10, UX/tests 7/10)
 
 | ID | Severity | Finding | Fix |
