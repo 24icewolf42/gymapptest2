@@ -39,6 +39,7 @@ test('declines, cancels and unblocks', async ({ browser }) => {
   await open(pa); await signInAs(pa, a);
   await tab(pa, 'crew');
   await pa.locator('[data-crew-tab="friends"]').click();
+  await expect(pa.locator('[data-accept]')).toHaveAttribute('aria-label', `Accept request from ${b.username}`);
   // Decline B's request.
   await pa.locator('[data-decline]').click();
   await sheetAction(pa, 'Decline');
@@ -763,6 +764,21 @@ test('an available update is offered in Settings and announced, not laid over th
   await expect(page.locator('#toast')).toContainText('Open Settings');
   await page.locator('.page.active [data-open-settings]').click();
   await expect(page.locator('[data-apply-update]')).toBeVisible();
+  // "Reload now" applies it (without a service worker: a plain reload).
+  await Promise.all([page.waitForEvent('load'), page.locator('[data-apply-update]').click()]);
+});
+
+test('an update found while Settings is open appears there, and a second check says so', async ({ page }) => {
+  await offline(page);
+  await page.route('**/Version*', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ version: '9.9.9' }) }));
+  await open(page);
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('gym:check-update', { detail: { manual: false } })));
+  await expect(page.locator('[data-apply-update]')).toBeVisible();
+  await expect(page.locator('#toast')).toContainText('is below');
+  await expect(page.locator('#toast.show')).toHaveCount(0, { timeout: 10000 });
+  await page.locator('[data-check-update]').click();
+  await expect(page.locator('#toast.show')).toContainText('is below');
 });
 
 test('Crew "Try again" stays in place, then reports success', async ({ browser }) => {
@@ -812,9 +828,14 @@ test('more than a URL\'s worth of gym dates still load', async ({ browser }) => 
     expect((await host.client.from('gym_dates').insert(rows)).error).toBeNull();
   }
   const page = await (await newPhone(browser)).newPage();
+  // Every request that lists date ids stays short (no "URI too long" with hundreds of dates).
+  const sizes = [];
+  page.on('request', (r) => { const m = /date_id=in\.\(([^)]*)\)/.exec(decodeURIComponent(r.url())); if (m) sizes.push(m[1].split(',').length); });
   await open(page); await signInAs(page, viewer);
   await tab(page, 'crew');
   await expect(page.locator('.date-card')).toHaveCount(80, { timeout: 20000 });
+  expect(sizes.length).toBeGreaterThan(0);
+  expect(Math.max(...sizes)).toBeLessThanOrEqual(60);
 });
 
 test('data left on a shared phone neither carries markup into a known routine nor deletes the account\'s routines', async ({ page }) => {
@@ -879,4 +900,101 @@ test('restoring your own backup keeps names the account has and defuses only wha
   await expect(page.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 15000 });
   const plan = (await u.client.from('workout_plans').select('plan').eq('user_id', u.id).single()).data.plan;
   expect(Object.keys(plan.workouts).sort()).toEqual(['Push <A>', '‹i>New‹/i>']);
+});
+
+test('a wrong password in one window does not make it ask when another window signs in', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const x = await makeUser(uniqueName('wpx'));
+  const y = await makeUser(uniqueName('wpy'));
+  const ctx = await newPhone(browser);
+  const one = await ctx.newPage();
+  await open(one); await signInAs(one, x);
+  await createWorkout(one, 'Push', ['Dips']);
+  await one.locator('.page.active [data-open-settings]').click();
+  await one.locator('[data-signout]').click();
+  await sheetAction(one, 'Sign out, keep data here');
+  await expect(one.locator('#authForm')).toBeVisible({ timeout: 15000 });
+  // A mistyped password here...
+  await one.locator('#authForm [name=email]').fill(y.email);
+  await one.locator('#authForm [name=password]').fill('wrong-password-1');
+  await one.locator('#authForm [type=submit]').click();
+  await expect(one.locator('#authForm .form-error')).not.toBeEmpty();
+  // ...then the sign-in happens in another window, which asks.
+  const two = await ctx.newPage();
+  await open(two);
+  await two.locator('.page.active [data-open-settings]').click();
+  await two.locator('#authForm [name=email]').fill(y.email);
+  await two.locator('#authForm [name=password]').fill(y.password);
+  await two.locator('#authForm [type=submit]').click();
+  await expect(two.getByText('Someone else used this phone')).toBeVisible({ timeout: 15000 });
+  await expect.poll(() => one.evaluate(async () => (await import('/js/cloud/sync.js')).account.status)).toBe('Finish signing in in the other window.');
+  await expect(one.locator('.sheet-backdrop.open')).toHaveCount(0);
+});
+
+test('the signing window keeps saying it is asking for as long as its question is open', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const x = await makeUser(uniqueName('hbx'));
+  const y = await makeUser(uniqueName('hby'));
+  const page = await (await newPhone(browser)).newPage();
+  await page.clock.install();
+  await open(page); await signInAs(page, x);
+  await createWorkout(page, 'Push', ['Dips']);
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.locator('[data-signout]').click();
+  await sheetAction(page, 'Sign out, keep data here');
+  await expect(page.locator('#authForm')).toBeVisible({ timeout: 15000 });
+  await page.locator('#authForm [name=email]').fill(y.email);
+  await page.locator('#authForm [name=password]').fill(y.password);
+  await page.locator('#authForm [type=submit]').click();
+  await expect(page.getByText('Someone else used this phone')).toBeVisible({ timeout: 15000 });
+  await page.clock.runFor(180000); // three minutes with the question open
+  const age = await page.evaluate(() => Date.now() - Number(localStorage.getItem('trackerAccountQuestionAt')));
+  expect(age).toBeLessThan(4000);
+});
+
+test('the calendar keeps the visited day as tab stop when a refresh lands while focus is elsewhere', async ({ browser }) => {
+  const ctx = await newPhone(browser);
+  await ctx.route('**/cloud-config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: 'window.GYM_CLOUD_CONFIG = {};' }));
+  const page = await ctx.newPage();
+  await open(page);
+  await tab(page, 'calendar');
+  await page.locator('[data-jump-today]').click();
+  await page.keyboard.press('ArrowLeft');
+  const chosen = await page.evaluate(() => document.activeElement.dataset.day);
+  // Focus moves elsewhere (here: the Today button), then a refresh lands.
+  await page.locator('[data-jump-today]').focus();
+  const other = await ctx.newPage();
+  await open(other);
+  await other.evaluate(() => localStorage.setItem('gymSettings', JSON.stringify({ weightStep: 1 })));
+  await page.waitForTimeout(300);
+  expect(await page.evaluate((d) => document.querySelector(`[data-day="${d}"]`).getAttribute('tabindex'), chosen)).toBe('0');
+});
+
+test('a taken username keeps its prompt open with the reason', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const a = await makeUser(uniqueName('tk_a'));
+  const b = await makeUser(uniqueName('tk_b'));
+  await open(page); await signInAs(page, a);
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.locator('[data-change-username]').click();
+  await page.locator('.sheet-backdrop.open input[name=value]').fill(b.username);
+  await sheetAction(page, 'Save');
+  await expect(page.locator('.sheet-backdrop.open .form-error')).toHaveText('That username is taken.');
+  await expect(page.locator('.sheet-backdrop.open input[name=value]')).toHaveValue(b.username);
+});
+
+test('a Crew retry reports only what it loaded, not another tab\'s old error', async ({ browser }) => {
+  const { pa, errors } = await friendsPair(browser, 'cse');
+  let failShared = true, failDates = true;
+  await pa.route('**/rest/v1/shared_workouts*', (r) => (failShared ? r.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"down"}' }) : r.continue()));
+  await pa.route('**/rest/v1/gym_dates*', (r) => (failDates && r.request().method() === 'GET' ? r.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"down"}' }) : r.continue()));
+  await tab(pa, 'crew');
+  await pa.locator('[data-crew-tab="friends"]').click();
+  await expect(pa.locator('[data-retry]').first()).toBeVisible();
+  await pa.locator('[data-crew-tab="dates"]').click();
+  failDates = false;
+  await pa.locator('[data-retry]').first().click();
+  await expect(pa.locator('#toast')).toContainText('Loaded');
+  errors[0].length = 0;
+  expect(errors.flat()).toEqual([]);
 });

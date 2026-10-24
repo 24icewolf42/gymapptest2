@@ -127,7 +127,7 @@ test('unblocking and the weight-sharing switch keep focus', async ({ browser }) 
   await pa.locator(`[data-unblock="${b.id}"]`).focus();
   await pa.keyboard.press('Enter');
   await expect(pa.locator(`[data-unblock="${b.id}"]`)).toHaveCount(0);
-  await expect(pa.locator('#page-settings h2', { hasText: 'Privacy' })).toBeFocused();
+  await expect(pa.locator('#page-settings h3', { hasText: 'Blocked people' })).toBeFocused();
   expect(c.id).toBeTruthy();
   expect(errors).toEqual([]);
 });

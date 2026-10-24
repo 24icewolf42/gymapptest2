@@ -45,3 +45,9 @@ test('a keyed card that moves up keeps focus inside it without a blur', async ({
   expect(await rerender(page, '<div data-key="a">A</div><div data-key="b"><button>Going</button></div>', 'button', '<div data-key="b"><button>Going</button></div><div data-key="a">A</div>'))
     .toMatchObject({ same: true, blurs: 0 });
 });
+
+test('focus never falls back to a destructive control or the same action for another item', async ({ page }) => {
+  const r = await rerender(page, '<div data-key="a"><button data-cancel-request="1">Cancel A</button></div><div data-key="b"><button data-cancel-request="2">Cancel B</button></div><div data-key="c"><button class="btn btn-danger">Delete</button></div><h2>List</h2>',
+    '[data-cancel-request="1"]', '<div data-key="b"><button data-cancel-request="2">Cancel B</button></div><div data-key="c"><button class="btn btn-danger">Delete</button></div><h2>List</h2>');
+  expect(['Cancel B', 'Delete']).not.toContain(r.focused);
+});
