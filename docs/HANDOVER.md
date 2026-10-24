@@ -33,7 +33,8 @@ Steps 1 and 2 come **before** the merge, the rest right after it.
 In your repo: **Settings → Environments → New environment** → name it
 `production`.
 
-- Tick **Required reviewers** and add yourself.
+- Tick **Required reviewers** and add yourself. Without it, the database
+  deploy and the APK signing run without asking you.
 - Under **Deployment branches**, allow only `main`.
 - Add these to the environment (not to the repository):
 
@@ -71,10 +72,26 @@ would only fail. Nothing is published.
 ### 4. Approve the database update
 
 **Actions → Deploy database and email templates** waits for your approval.
-Approve it. It applies the database changes in order and sets the
+Approve it. It applies the database changes in order, then sets the
 password-reset email. If it stops with a list of extra rules or functions it
 did not expect (for example ones added in the dashboard), drop them, then run
 it again.
+
+**If only "Update the password reset email" fails (HTTP 400),** the database
+part is done. Supabase's built-in email service sends only a few emails an
+hour, only to members of your Supabase team, and does not allow changing the
+templates. To send reset emails to everyone (and to include the code the
+Android app asks for), connect your own email provider:
+
+1. Make a free account with an email provider that offers SMTP (for example
+   Resend or Brevo) and follow its steps to verify a sender address.
+2. Supabase → **Authentication → Emails → SMTP Settings** → enable custom
+   SMTP and enter the host, port, user, password and sender from the provider.
+3. **Actions → Deploy database and email templates → Run workflow**, untick
+   *dry run*. The database part is skipped (already applied) and the email is set.
+
+Until then, password reset works only through the link in Supabase's default
+email, and only for team members.
 
 Then run this in the Supabase SQL Editor and look for accepted friendships
 nobody remembers accepting (made through the old hole):
