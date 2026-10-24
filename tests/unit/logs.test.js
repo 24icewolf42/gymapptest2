@@ -124,3 +124,19 @@ describe('last-used values', () => {
     expect(merged).toEqual({ A: { sets: [{ w: '1', r: '1' }], updatedAt: 10 }, B: { sets: [{ w: '3', r: '3' }], updatedAt: 2 } });
   });
 });
+
+describe('sessions the original app keys by their JSON', () => {
+  it('get a short id without quotes that still matches the original app\'s tombstone', () => {
+    const raw = { day: 'Push', exercises: [{ name: 'Dips', target: '8', sets: [] }] };
+    const logs = sanitizeLogs({ '2026-01-05': [raw] });
+    const id = logs['2026-01-05'][0].id;
+    expect(id).toMatch(/^l[0-9a-z]+$/);
+    const upstreamKey = '2026-01-05|Push|' + JSON.stringify(raw);
+    expect(mergeLogs({}, { '2026-01-05': [raw] }, { deleted: [upstreamKey] })).toEqual({});
+  });
+
+  it('drops a time that is not a timestamp', () => {
+    const logs = sanitizeLogs({ '2026-01-05': [{ id: 'a', day: 'Push', time: '2026-01-05T10:00:00Z"', exercises: [] }] });
+    expect(logs['2026-01-05'][0].time).toBe('');
+  });
+});

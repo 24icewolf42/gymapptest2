@@ -5,6 +5,19 @@ import { mondayIndex, addDays, ymd } from '../core/dates.js';
 // Markup characters are removed from names and values: the original app puts
 // them into the page unescaped.
 const plain = (s) => s.replace(/[<>"`]/g, '');
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/;
+
+/**
+ * Id for a session the original app keys by its full JSON (no id, no time).
+ * A short hash of that key: the key itself contains quotes, which the
+ * database refuses in workout history. The original app's tombstone for the
+ * session hashes to the same id (see mergeLogs).
+ */
+function legacyId(key) {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return 'l' + (h >>> 0).toString(36) + key.length.toString(36);
+}
 
 /**
  * Identity of a logged session, shared with the original app so deletions
@@ -64,9 +77,9 @@ function cleanSession(s) {
   const exercises = (Array.isArray(s.exercises) ? s.exercises : [])
     .filter((e) => e && typeof e.name === 'string')
     .map((e) => ({ name: plain(e.name).slice(0, 80), target: plain(String(e.target ?? '')).slice(0, 20), sets: (Array.isArray(e.sets) ? e.sets : []).map(cleanSet).filter(Boolean) }));
-  const out = { day: plain(s.day).slice(0, 40), exercises, time: typeof s.time === 'string' ? s.time : '' };
-  // Ids are short, except the original app's key for a session without id and time (date|day|JSON).
-  if (typeof s.id === 'string' && s.id) out.id = s.id.slice(0, s.id.includes('|') ? 20000 : 64);
+  const out = { day: plain(s.day).slice(0, 40), exercises, time: typeof s.time === 'string' && ISO_TIME.test(s.time) ? s.time : '' };
+  // An id that is an original-app key (date|day|JSON, stored by an earlier version) becomes its hash.
+  if (typeof s.id === 'string' && s.id) out.id = s.id.includes('|') ? legacyId(s.id) : s.id.slice(0, 64);
   if (Number.isFinite(+s.duration) && +s.duration >= 0) out.duration = Math.round(+s.duration);
   return out;
 }
@@ -88,9 +101,9 @@ export function sanitizeLogs(source) {
     const clean = cleanSession(s);
     const date = clean && canonicalLogDate(raw, s);
     if (!date) return;
-    // Without id or time the original app keys a session by its full JSON; keep
-    // that key as the id so deletions match between both versions.
-    if (!clean.id && !clean.time) clean.id = date + '|' + clean.day + '|' + JSON.stringify(s);
+    // Without id or time the original app keys a session by its full JSON; the
+    // id is derived from that key, so deletions match between both versions.
+    if (!clean.id && !clean.time) clean.id = legacyId(date + '|' + s.day + '|' + JSON.stringify(s));
     (out[date] || (out[date] = [])).push(clean);
   }));
   Object.values(out).forEach((list) => list.sort(byTime));
@@ -104,7 +117,8 @@ export function sanitizeLogs(source) {
  * both this phone and the cloud, so a deletion on any device sticks.
  */
 export function mergeLogs(remote, local, { deleted = [], deletedDates = {} } = {}) {
-  const gone = new Set(deleted);
+  // The original app's tombstones for JSON-keyed sessions match by their hash.
+  const gone = new Set(deleted.flatMap((k) => (typeof k === 'string' && k.includes('|{') ? [k, legacyId(k)] : [k])));
   const merged = {};
   [sanitizeLogs(remote), sanitizeLogs(local)].forEach((logs) => Object.keys(logs).forEach((date) => logs[date].forEach((s) => {
     const key = sessionKey(date, s);
