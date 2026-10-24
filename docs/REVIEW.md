@@ -50,6 +50,20 @@ All findings are fixed in code. What remains for the app's owner is configuratio
 
 After the rework, three independent Opus reviews (security/privacy, data correctness, UX/accessibility/tests) rated the branch and listed findings. Every critical, major and minor finding and every nit was fixed and re-reviewed.
 
+### Round 11 (security 7.5/10, correctness 8.5/10, UX/tests 7/10)
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| S11-01 | Major | A new routine kept its raw markup name when the defused name was taken | A taken defused name gets a number; the raw name is never kept; test |
+| UX-M1, m4 | Major/Minor | A slow Share replaced a newer Undo; Share could be repeated | Share runs inside its prompt ("Saving…", once); late server answers (act results) are background messages that wait behind an Undo |
+| UX-M2 | Major | "Forgot password?" opened its code sheet whenever the server answered | Each step waits inside its own prompt, so nothing opens later while the user is elsewhere |
+| UX-M3 | Major | The prompt lock was tested on one of five close paths | The test tries Escape, Cancel, Close, the backdrop and Back while saving, and checks the unlock after a refusal; each part checked against its removal |
+| mi-1 (correctness) | Minor | Defusing after a sign-out changed the user's own text the account knew | Only text the account does not have anywhere is defused; workouts the account deleted are left alone |
+| mi-2 (correctness) | Minor | Cutting names could split an emoji, making the database refuse every plan sync | All cuts go through cut() (whole characters); test |
+| S11-02..S11-06 | Minor | Ended session while the app was closed, running workout escaping defusing, deletions on an empty phone, future workout times, no way to end other sessions | Such sessions mark the phone untrusted at the next start; drafts and the running workout follow renames; deletions count as data on the phone; future times count as oldest; "Sign out on all devices"; tests |
+| UX-m1..m3 | Minor | Background messages dropped behind an error or each other, a silent saving prompt, a sent request clearing the next name | Background messages queue behind an Undo or error; a saving prompt says "Saving…" in its status line, makes the field read-only and marks Cancel and Close unavailable; the field is cleared only if unchanged; tests |
+| S11-N1, n-1 | Nit | Documentation, replied dates above 200 | README and this table describe exactly what happens; replied dates above 200 remain out of practical reach |
+
 ### Round 10 (security 7/10, correctness 8/10, UX/tests 7/10)
 
 | ID | Severity | Finding | Fix |
