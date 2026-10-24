@@ -259,12 +259,20 @@ export function hasLocalData() {
  * (a name the account already has is the user's own and stays, so nothing is
  * duplicated in the original app). Returns true if anything changed.
  */
-export function defangNewRoutines(remoteNames) {
-  const known = new Set(remoteNames);
+export function defangNewRoutines(remoteWorkouts) {
+  const remote = remoteWorkouts && typeof remoteWorkouts === 'object' ? remoteWorkouts : {};
+  const known = new Set(Object.keys(remote));
   let changed = false;
   const next = {};
   Object.entries(state.workouts).forEach(([name, list]) => {
-    if (known.has(name)) { next[name] = list; return; }
+    if (known.has(name)) {
+      // A routine the account has: exercises it does not have there are new, and defused.
+      const had = new Set((Array.isArray(remote[name]) ? remote[name] : []).map((e) => e && e.name));
+      const cleanList = list.map((e) => (had.has(e.name) ? e : deepDefang(e)));
+      if (JSON.stringify(cleanList) !== JSON.stringify(list)) changed = true;
+      next[name] = cleanList;
+      return;
+    }
     const clean = defang(name), cleanList = deepDefang(list);
     if (clean !== name || JSON.stringify(cleanList) !== JSON.stringify(list)) changed = true;
     next[Object.hasOwn(next, clean) ? name : clean] = cleanList;

@@ -137,6 +137,9 @@ async function startSession(user) {
   }
   if (!owner && hasLocalData()) {
     state.sync.untrusted = { plan: true, data: true }; // data no account owned joins this one
+    // Deletions and edit times made before (maybe by someone else) must not act on the account's plan.
+    setPlanTombstones([], []);
+    write(KEYS.planTimes, {});
   } else if (owner && owner !== user.id && hasLocalData()) {
     // Another tab of the app is signing in through its form: that tab asks;
     // this one waits for its answer instead of opening the question too.
@@ -280,7 +283,7 @@ function defangNewSessions(remote) {
   Object.keys(state.logs).forEach((d) => {
     state.logs[d] = state.logs[d].map((x) => {
       if (known.has(sessionKey(d, x))) return x;
-      const clean = { ...x, day: defang(x.day), exercises: x.exercises.map((e) => ({ ...e, name: defang(e.name) })) };
+      const clean = { ...x, day: defang(x.day), exercises: x.exercises.map((e) => ({ ...e, name: defang(e.name), target: defang(e.target || ''), sets: e.sets.map((s) => ({ ...s, w: defang(s.w), r: defang(s.r) })) })) };
       if (JSON.stringify(clean) !== JSON.stringify(x)) changed = true;
       return clean;
     });
@@ -343,7 +346,7 @@ const SYNC = {
       if (stale()) return false;
       if (r.error) throw r.error;
       // Routines from another person's use of this phone, new to this account: defuse markup.
-      if (state.sync.untrusted?.plan && defangNewRoutines(Object.keys(r.data?.plan?.workouts || {}))) emit('gym:plan-updated');
+      if (state.sync.untrusted?.plan && defangNewRoutines(r.data?.plan?.workouts)) emit('gym:plan-updated');
       // No cloud plan (first sync, or the row was removed): there is no common base.
       const merged = mergePlans(r.data?.plan, localPlan(), r.data ? planBase() : null);
       const local = localPlan();
@@ -575,6 +578,12 @@ export async function signOut({ removeLocalData = false, force = false } = {}) {
   retire(); // a sync still in flight must not write the account's data back
   await endSession();
   if (removeLocalData) clearLocalData();
+  else {
+    // Whatever is added to this phone from now on may be someone else's:
+    // at the next sign-in, what is new to the account gets defused.
+    state.sync.untrusted = { plan: true, data: true };
+    saveSync();
+  }
   return '';
 }
 

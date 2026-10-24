@@ -816,3 +816,43 @@ test('more than a URL\'s worth of gym dates still load', async ({ browser }) => 
   await tab(page, 'crew');
   await expect(page.locator('.date-card')).toHaveCount(80, { timeout: 20000 });
 });
+
+test('data left on a shared phone neither carries markup into a known routine nor deletes the account\'s routines', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('s9'));
+  const ex = (name) => ({ name, cat: 'chest', sets: 2, target: '8', rest: 60, note: '' });
+  await u.client.from('workout_plans').insert({ user_id: u.id, plan: { workouts: { Push: [ex('Bench')], Legs: [ex('Squat')] }, schedule: {} } });
+  await page.addInitScript((routine) => {
+    if (localStorage.getItem('seeded')) return;
+    localStorage.setItem('seeded', '1');
+    // Someone else used the phone without an account: edited Push and deleted Legs.
+    localStorage.setItem('gymCustomWorkouts', JSON.stringify({ Push: [routine[0], { ...routine[0], name: '<b>x</b>' }] }));
+    localStorage.setItem('gymDeletedWorkouts', JSON.stringify(['Legs']));
+  }, [ex('Bench')]);
+  await open(page);
+  await signInAs(page, u);
+  const plan = (await u.client.from('workout_plans').select('plan').eq('user_id', u.id).single()).data.plan;
+  expect(Object.keys(plan.workouts).sort()).toEqual(['Legs', 'Push']);
+  expect(plan.workouts.Push.map((e) => e.name)).toEqual(['Bench', '‹b>x‹/b>']);
+});
+
+test('what is added after a sign-out that kept the data is defused at the next sign-in', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('s92'));
+  await open(page);
+  await signInAs(page, u);
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.locator('[data-signout]').click();
+  await sheetAction(page, 'Sign out, keep data here');
+  await expect(page.locator('#authForm')).toBeVisible({ timeout: 15000 });
+  await page.evaluate(() => {
+    const w = JSON.parse(localStorage.getItem('gymCustomWorkouts') || '{}');
+    w['<i>Evil</i>'] = [{ name: 'Dips', cat: 'chest', sets: 2, target: '8', rest: 60, note: '' }];
+    localStorage.setItem('gymCustomWorkouts', JSON.stringify(w));
+  });
+  await page.reload();
+  await expect(page.locator('#page-today h1')).toHaveText('Today');
+  await signInAs(page, u);
+  const plan = (await u.client.from('workout_plans').select('plan').eq('user_id', u.id).single()).data.plan;
+  expect(Object.keys(plan.workouts)).toEqual(['‹i>Evil‹/i>']);
+});
