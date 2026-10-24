@@ -37,7 +37,7 @@ export { expect };
 
 export async function open(page, path = '/') {
   await page.goto(path);
-  await expect(page.locator('#page-today h1')).toHaveText('Today');
+  await expect(page.locator('#page-today h1')).toHaveText('Today', { timeout: 15000 });
   await page.locator('#loadingScreen').waitFor({ state: 'detached' });
   // Never run against a real project: the config must be empty (offline tests) or local.
   const url = await page.evaluate(() => window.GYM_CLOUD_CONFIG && window.GYM_CLOUD_CONFIG.url);

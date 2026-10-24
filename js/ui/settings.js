@@ -33,12 +33,19 @@ export function openSettings() {
   if (currentPage() === 'settings') return;
   previousPage = currentPage();
   go('settings');
-  closeLayer = pushLayer(() => { closeLayer = null; go(previousPage); });
+  closeLayer = pushLayer(() => { closeLayer = null; leaveSettings(); });
 }
 
 function closeSettings() {
   if (closeLayer) { const c = closeLayer; closeLayer = null; c(); }
+  leaveSettings();
+}
+
+// Back where the user came from, on the settings button they used.
+function leaveSettings() {
+  const wasHere = $('page-settings').contains(document.activeElement);
   go(previousPage);
+  if (wasHere) document.querySelector('.page.active [data-open-settings]')?.focus({ preventScroll: true });
 }
 
 const PRIVACY = html`
@@ -52,7 +59,8 @@ const PRIVACY = html`
   <ul class="plain">
     <li>Only people whose friend request you accepted. Nobody can browse the list of users.</li>
     <li>Your username.</li>
-    <li>Gym dates you post for them, your replies to their gym dates, and when you check in at the gym.</li>
+    <li>Gym dates you post for them.</li>
+    <li>When you reply to a gym date or check in there: the host and every friend of yours who can see that date see your answer and check-in by name. People who are not your friends only see a count.</li>
     <li>Stats, only if you share them: number of workouts, total kg × reps, training time, current and best streak, and how many routines and exercises your plan has.</li>
     <li>Routines you choose to share (they can copy them).</li>
     <li>Your latest weight, only if you turn that on. Never your weight history.</li>
@@ -104,7 +112,7 @@ function accountCard() {
     <h2>Privacy</h2>
     <label class="toggle row-toggle"><input type="checkbox" data-share-weight${p?.share_weight ? ' checked' : ''}${busyAttr(savingWeight || !(p && 'share_weight' in p))}>
       <span><b>Show my weight to friends</b><small>Friends see only your latest weigh-in, never the full history.</small></span></label>
-    <p class="muted small">Friends see your username, gym dates you share with them, and stats or routines you choose to share. Your workout history syncs only to your own account. <button type="button" class="link-btn inline" data-privacy>Read the privacy notice</button></p>
+    <p class="muted small">Friends see your username, gym dates you share with them, your replies and check-ins at gym dates they can see, and stats or routines you choose to share. Your workout history syncs only to your own account. <button type="button" class="link-btn inline" data-privacy>Read the privacy notice</button></p>
     <h3 class="sub">Blocked people</h3>
     ${blocks == null ? html`<p class="muted small">Loading…</p>` : blocks.error ? html`<p class="notice error">${blocks.error} <button type="button" class="link-btn inline" data-retry-blocks>Try again</button></p>` : blocks.length ? html`<div class="list">${blocks.map((b) => html`
       <div class="row" data-key="block-${b.blocked_id}"><div class="row-main"><b>@${b.username}</b></div>
@@ -115,7 +123,7 @@ function accountCard() {
 
 function trainingCard() {
   const steps = [[0, 'Exact'], [0.5, '0.5 kg'], [1, '1 kg'], [2.5, '2.5 kg'], [5, '5 kg']];
-  return html`<section class="card">
+  return html`<section class="card" data-key="training">
     <h2>Training</h2>
     <div class="field"><span id="stepLabel">Round weights to</span>
       <div class="chips wrap" role="radiogroup" aria-labelledby="stepLabel">${steps.map(([v, l]) => html`<button type="button" class="chip${state.settings.weightStep === v ? ' on' : ''}" role="radio" aria-checked="${state.settings.weightStep === v ? 'true' : 'false'}" tabindex="${state.settings.weightStep === v ? '0' : '-1'}" data-step="${v}">${l}</button>`)}</div>
@@ -130,7 +138,7 @@ function trainingCard() {
 
 function backupCard() {
   const switched = !!readText(KEYS.switchBackup);
-  return html`<section class="card">
+  return html`<section class="card" data-key="backup">
     <h2>Backup</h2>
     <p class="muted small">Everything on this phone: workouts, plan, weigh-ins and settings.</p>
     <div class="btn-row">
@@ -145,7 +153,7 @@ function backupCard() {
 
 function dangerCard() {
   if (!account.user) return '';
-  return html`<section class="card danger-zone">
+  return html`<section class="card danger-zone" data-key="danger">
     <h2>Delete account</h2>
     <p class="muted small">Deletes your account, friends, gym dates, everything synced to the cloud and the sign-in records with your email address.</p>
     <button type="button" class="btn btn-danger" data-delete-account${busyAttr(deleting)}>${deleting ? 'Deleting…' : 'Delete my account'}</button>
@@ -158,15 +166,22 @@ function setAuthError(message) {
 }
 
 export function renderSettings() {
+  const accountKey = document.activeElement?.closest?.('#page-settings [data-key^="account-"]')?.dataset.key;
   render($('page-settings'), html`
-    <header class="top editor-top" data-view="settings-${account.user ? 'in' : 'out'}">
+    <header class="top editor-top" data-view="settings">
       <button type="button" class="icon-btn" data-close-settings aria-label="Back">${icons.back}</button>
       <div class="grow"><p class="eyebrow">Tracker v${APP_VERSION}</p><h1 class="h1-sm">Settings</h1></div></header>
-    ${accountCard()}
+    <div data-key="account-${account.user ? 'in' : 'out'}">${accountCard()}</div>
     ${trainingCard()}
     ${backupCard()}
     ${dangerCard()}
     <p class="about muted small"><button type="button" class="link-btn inline" data-privacy>Privacy</button> · <button type="button" class="link-btn inline" data-check-update>Check for updates</button></p>`);
+  // Signed in or out from within the account card: focus its new heading.
+  const card = $('page-settings').querySelector('[data-key^="account-"]');
+  if (accountKey && card && card.dataset.key !== accountKey) {
+    const h = card.querySelector('h2') || card.querySelector('[role=tab][tabindex="0"]');
+    if (h) { if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
+  }
 }
 
 async function refreshBlocks() {
@@ -301,9 +316,19 @@ export function initSettings() {
     const r = await signOut({ removeLocalData: choice === 'remove' });
     signingOut = false; renderSettings();
     if (r === 'not-synced') {
-      const force = await confirmDialog('Some workouts on this phone have not reached your account yet (no connection?). If you remove the data now, they are lost.', { title: 'Not synced yet', ok: 'Remove anyway', cancel: 'Keep my data', danger: true });
-      if (!force) return;
-      await signOut({ removeLocalData: true, force: true });
+      const next = await openSheet({
+        title: 'Not synced yet',
+        body: html`<p class="sheet-text">Some workouts on this phone have not reached your account yet (no connection?). If you remove the data now, they are lost.</p>`,
+        actions: [
+          { label: 'Sign out, keep data here', value: 'keep', tone: 'primary' },
+          { label: 'Remove anyway', value: 'remove', tone: 'danger' },
+          { label: 'Stay signed in', value: null, tone: 'ghost' },
+        ],
+      });
+      if (!next) { toast('You are still signed in. Nothing was removed.'); return; }
+      await signOut({ removeLocalData: next === 'remove', force: true });
+      toast(next === 'remove' ? 'Signed out and removed from this phone.' : 'Signed out. Your data stays on this phone.');
+      return;
     }
     toast('Signed out.');
   });

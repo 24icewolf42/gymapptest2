@@ -29,9 +29,9 @@ function monthGrid(y, m, today, dates) {
     const label = fmtLong(ds) + ': ' + (logged ? 'trained ' + logs.map((s) => s.day).join(', ') : bypass ? 'bypass day' : planned || 'rest day') + (dates.has(ds) ? ', gym date' : '');
     // One tab stop per month (today, else the 1st); arrow keys move between days.
     const stop = ds === today || (d === 1 && !(today.startsWith(ds.slice(0, 7))));
-    cells.push(html`<button type="button" class="${cls}" data-day="${ds}" tabindex="${stop ? '0' : '-1'}"><span class="sr-only">${label}</span><span class="cal-num" aria-hidden="true">${d}</span><span class="cal-tag" aria-hidden="true">${tag}</span></button>`);
+    cells.push(html`<button type="button" class="${cls}" data-day="${ds}" data-key="day-${ds}" tabindex="${stop ? '0' : '-1'}"><span class="sr-only">${label}</span><span class="cal-num" aria-hidden="true">${d}</span><span class="cal-tag" aria-hidden="true">${tag}</span></button>`);
   }
-  return html`<section class="cal-month" data-month="${y}-${m}">
+  return html`<section class="cal-month" data-month="${y}-${m}" data-key="month-${y}-${m}">
     <header class="cal-month-head"><h2>${MONTHS[m]} ${y}</h2><small>${count ? count + (count === 1 ? ' workout · ' : ' workouts · ') + fmtDuration(seconds) : ''}</small></header>
     <div class="cal-dow" aria-hidden="true">${DOW_LETTER.map((l) => html`<span>${l}</span>`)}</div>
     <div class="cal-grid" data-grid role="group" aria-label="${MONTHS[m]} ${y}, use the arrow keys to move between days">${cells}</div></section>`;

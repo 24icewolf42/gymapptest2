@@ -8,8 +8,9 @@ import {
 import { mergePlans, planHashes, stableStringify, hashOf } from '../domain/plan.js';
 import { mergeLogs, mergeProgress, mergeBypass, dailySummaries, sessionKey } from '../domain/logs.js';
 import { mergeWeights } from '../domain/weights.js';
-import { emit, listen, writeText, read, write, remove, KEYS } from '../core/store.js';
+import { emit, listen, writeText, readText, read, write, remove, KEYS } from '../core/store.js';
 import { makeBackup } from '../domain/backup.js';
+import { ymd, addDays } from '../core/dates.js';
 
 export const account = {
   user: null,
@@ -98,13 +99,16 @@ function resetAccountBookkeeping() {
 }
 
 // Set when the user signs in through the app's own form, which is their own
-// decision to back up this phone's data in that account.
-let formSignInAt = 0;
+// decision to back up this phone's data in that account. Stored, so the app's
+// other open tabs (which hear about the sign-in too) don't ask again.
 const FORM_SIGN_IN_MS = 2 * 60 * 1000;
+const markFormSignIn = () => writeText(KEYS.formSignIn, String(Date.now()));
 
 async function startSession(user) {
-  const owner = state.sync.accountId;
-  if (!owner && hasLocalData() && Date.now() - formSignInAt > FORM_SIGN_IN_MS) {
+  // Re-read: another tab may already have answered for this account.
+  const owner = (read(KEYS.sync, {}) || {}).accountId ?? state.sync.accountId;
+  const formAt = Number(readText(KEYS.formSignIn)) || 0;
+  if (!owner && hasLocalData() && Date.now() - formAt > FORM_SIGN_IN_MS) {
     // Signed in some other way (e.g. a link): ask before the data goes to that account.
     const choice = await accountSwitchHandler({ email: user.email || '', first: true });
     if (account.user?.id !== user.id) return;
@@ -351,7 +355,9 @@ const SYNC = {
     const merged = mergeWeights(r.data, state.weights, state.sync.syncedWeightDates, [...dirty]);
     if (!same(merged, state.weights)) { state.weights = merged; saveWeights({ silent: true }); }
     const remote = new Map((r.data || []).map((x) => [x.log_date, Number(x.weight_kg)]));
-    const changed = merged.filter((x) => dirty.has(x.date) || remote.get(x.date) !== x.weight);
+    // Dates the server refuses (a phone clock far off) stay on the phone only.
+    const latest = ymd(addDays(new Date(), 2));
+    const changed = merged.filter((x) => x.date >= '1900-01-01' && x.date <= latest && (dirty.has(x.date) || remote.get(x.date) !== x.weight));
     const mergedIn = new Set(state.sync.mergedWeightDates || []);
     const fresh = (x) => dirty.has(x.date) || (mergedIn.has(x.date) && !remote.has(x.date));
     // Server stamps of what was written; an entry missing here was refused (deleted elsewhere).
@@ -411,7 +417,7 @@ export async function syncAll() {
 
 // ---------- account actions (return an error message, or '' on success) ----------
 export async function signIn(email, password) {
-  formSignInAt = Date.now();
+  markFormSignIn();
   const r = await supabase.auth.signInWithPassword({ email, password });
   return r.error ? errorText(r.error) : '';
 }
@@ -419,7 +425,7 @@ export async function signIn(email, password) {
 export async function signUp(email, password, username) {
   // The age/permission confirmation is recorded with the account.
   const data = { username, age_confirmed: 'true' };
-  formSignInAt = Date.now();
+  markFormSignIn();
   const r = await supabase.auth.signUp({ email, password, options: { data, emailRedirectTo: SITE_URL } });
   if (r.error) return errorText(r.error);
   return r.data.session ? '' : 'confirm-email';
@@ -432,7 +438,7 @@ export async function resetPassword(email) {
 
 /** Signs in with the code from a password-reset email; PASSWORD_RECOVERY then asks for a new password. */
 export async function verifyRecoveryCode(email, token) {
-  formSignInAt = Date.now();
+  markFormSignIn();
   const r = await supabase.auth.verifyOtp({ email, token, type: 'recovery' });
   // Success fires PASSWORD_RECOVERY through onAuthStateChange, which asks for the new password.
   return r.error ? errorText(r.error, 'That code did not work. Request a new email and try again.') : '';

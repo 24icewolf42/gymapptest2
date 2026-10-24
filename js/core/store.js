@@ -21,6 +21,7 @@ export const KEYS = Object.freeze({
   drafts: 'gymDrafts',
   switchBackup: 'gymBackupBeforeSwitch',
   sync: 'gymSyncState',
+  formSignIn: 'gymFormSignInAt',
   gyms: 'gymFavoriteGyms',
   // Shared with the original app's sync format:
   deletedSessions: 'gymDeletedSessions',

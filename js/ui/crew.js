@@ -114,14 +114,14 @@ export function todayTeaser() {
   if (!next && !open.length) return '';
   if (next) {
     const live = phase(next) === 'live';
-    return html`<button type="button" class="teaser" data-go-crew>
+    return html`<button type="button" class="teaser" data-go-crew data-key="teaser">
       <span class="teaser-icon">${icons.users}</span>
       <span class="teaser-copy"><small>${live ? 'Gym date · live now' : 'Next gym date'}</small>
         <b>${relativeDay(startOf(next))} ${fmtTime(startOf(next))} · ${next.gym}</b>
         <small>${hostLabel(next)}${countText(next) ? ' · ' + countText(next) : ''}</small></span>
       <span class="chev">${icons.chevron}</span></button>`;
   }
-  return html`<button type="button" class="teaser" data-go-crew>
+  return html`<button type="button" class="teaser" data-go-crew data-key="teaser">
     <span class="teaser-icon">${icons.users}</span>
     <span class="teaser-copy"><small>Gym dates</small><b>${open.length} gym date${open.length === 1 ? '' : 's'} from friends</b><small>Tap to join or reply</small></span>
     <span class="chev">${icons.chevron}</span></button>`;

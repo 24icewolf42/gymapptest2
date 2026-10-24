@@ -18,7 +18,7 @@ function loggedOn(date, day) {
 
 function weekStrip() {
   const start = startOfWeek(), today = ymd(), dates = gymDateDays();
-  return html`<ol class="week" aria-label="This week">${DOW_LETTER.map((letter, i) => {
+  return html`<ol class="week" aria-label="This week" data-key="week">${DOW_LETTER.map((letter, i) => {
     const d = addDays(start, i), ds = ymd(d), planned = state.schedule[i];
     const cls = ['week-day', planned ? 'planned' : 'rest', loggedOn(ds) ? 'done' : '', state.bypass[ds] ? 'bypass' : '', ds === today ? 'today' : '', dates.has(ds) ? 'has-date' : ''].filter(Boolean).join(' ');
     const label = DOW[i] + ': ' + (loggedOn(ds) ? 'trained' : planned ? planned : 'rest day') + (dates.has(ds) ? ', gym date' : '');
@@ -29,7 +29,7 @@ function weekStrip() {
 function hero() {
   const today = ymd(), name = state.schedule[mondayIndex(new Date().getDay())];
   if (!Object.keys(state.workouts).length) {
-    return html`<section class="card hero-card onboarding">
+    return html`<section class="card hero-card onboarding" data-key="hero">
       <span class="big-icon">${icons.dumbbell}</span>
       <h2>Build your first workout</h2>
       <p>Create routines like Push, Pull or Legs and put them on your week. Your log, stats and streak start from there.</p>
@@ -38,7 +38,7 @@ function hero() {
   if (!name) {
     let next = null;
     for (let k = 1; k <= 7; k++) { const j = (mondayIndex(new Date().getDay()) + k) % 7; if (state.schedule[j]) { next = { name: state.schedule[j], day: DOW[j] }; break; } }
-    return html`<section class="card hero-card rest">
+    return html`<section class="card hero-card rest" data-key="hero">
       <img class="rest-img" src="${restImage()}" alt="">
       <div class="rest-copy"><p class="eyebrow">Rest day</p><h2>Recover and recharge</h2>
       <p class="muted">${next ? html`Next up: <b>${next.name}</b> on ${next.day}` : 'No workouts planned this week.'}</p></div>
@@ -51,13 +51,13 @@ function hero() {
   const running = active && active.day === name && active.date === today;
   if (session) {
     const sets = session.exercises.reduce((n, e) => n + e.sets.length, 0);
-    return html`<section class="card hero-card done">
+    return html`<section class="card hero-card done" data-key="hero">
       <p class="eyebrow">${icons.check} Done today</p>
       <h2 class="hero-title">${name}</h2>
       <p class="hero-meta">${[session.duration ? fmtClock(session.duration) : '', session.exercises.length + ' exercises', sets + ' sets'].filter(Boolean).join(' · ')}</p>
       <button type="button" class="btn btn-soft" data-start="${name}" data-key="hero-action">View or edit</button></section>`;
   }
-  return html`<section class="card hero-card">
+  return html`<section class="card hero-card" data-key="hero">
     <p class="eyebrow">Today’s workout</p>
     <h2 class="hero-title">${name}</h2>
     <p class="hero-meta">${workoutSummary(list)} · ~${estimateMinutes(list)} min</p>
@@ -70,28 +70,30 @@ function upcoming() {
   let month = now.getMonth();
   for (let i = 1; i <= upcomingDays; i++) {
     const d = addDays(now, i), ds = ymd(d), idx = mondayIndex(d.getDay()), w = state.schedule[idx];
-    if (d.getMonth() !== month) { month = d.getMonth(); rows.push(html`<li class="up-month">${MONTHS[month]}</li>`); }
+    if (d.getMonth() !== month) { month = d.getMonth(); rows.push(html`<li class="up-month" data-key="m-${ds.slice(0, 7)}">${MONTHS[month]}</li>`); }
     const done = w && loggedOn(ds, w);
-    rows.push(html`<li><button type="button" class="up-row${w ? '' : ' rest'}${done ? ' done' : ''}"${w ? html` data-preview="${ds}"` : busyAttr(true)}>
-      <span class="up-day"><b>${DOW[idx].slice(0, 3)}</b><small>${fmtShort(ds)}</small></span>
-      <span class="up-name">${w || 'Rest'}<small>${w ? (done ? 'Logged' : state.bypass[ds] ? 'Bypass day' : workoutSummary(state.workouts[w])) : ''}${dates.has(ds) ? ' · gym date' : ''}</small></span>
-      ${w ? html`<span class="chev">${icons.chevron}</span>` : ''}</button></li>`);
+    const inner = html`<span class="up-day"><b>${DOW[idx].slice(0, 3)}</b><small>${fmtShort(ds)}</small></span>
+      <span class="up-name">${w || 'Rest'}<small>${w ? (done ? 'Logged' : state.bypass[ds] ? 'Bypass day' : workoutSummary(state.workouts[w])) : ''}${dates.has(ds) ? ' · gym date' : ''}</small></span>`;
+    // Rows are keyed by date; a rest day has nothing to open, so it is not a button.
+    rows.push(w
+      ? html`<li data-key="up-${ds}"><button type="button" class="up-row${done ? ' done' : ''}" data-preview="${ds}">${inner}<span class="chev">${icons.chevron}</span></button></li>`
+      : html`<li data-key="up-${ds}"><div class="up-row rest">${inner}</div></li>`);
   }
-  return html`<ol class="up-list">${rows}</ol>
-    ${upcomingDays < 56 ? html`<button type="button" class="btn btn-ghost btn-block" data-more>Show more days</button>` : ''}`;
+  return html`<ol class="up-list" data-key="up-list">${rows}</ol>
+    ${upcomingDays < 56 ? html`<button type="button" class="btn btn-ghost btn-block" data-more data-key="more">Show more days</button>` : ''}`;
 }
 
 export function renderToday() {
   const today = ymd();
   const st = streak(state.logs, state.bypass, state.schedule);
   render($('page-today'), html`
-    <header class="top"><div><p class="eyebrow">${fmtLong(today)}</p><h1>Today</h1></div>
+    <header class="top" data-key="top"><div><p class="eyebrow">${fmtLong(today)}</p><h1>Today</h1></div>
       <div class="top-actions">${st ? html`<span class="streak" role="img" aria-label="Training streak: ${st} ${st === 1 ? 'day' : 'days'}">${icons.flame} ${st}</span>` : ''}
       <button type="button" class="icon-btn" data-open-settings aria-label="Settings">${icons.settings}</button></div></header>
     ${weekStrip()}
     ${hero()}
     ${todayTeaser()}
-    ${Object.keys(state.workouts).length ? html`<h2 class="section-title">Coming up</h2>${upcoming()}` : ''}`);
+    ${Object.keys(state.workouts).length ? html`<h2 class="section-title" data-key="up-title">Coming up</h2>${upcoming()}` : ''}`);
 }
 
 export function initToday() {

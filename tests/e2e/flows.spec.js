@@ -116,7 +116,8 @@ test('sign-out keeps unsynced data unless the user accepts losing it', async ({ 
   await page.locator('[data-signout]').click();
   await sheetAction(page, 'Sign out and remove my data');
   await expect(page.locator('.sheet-backdrop.open .sheet')).toContainText('Not synced yet');
-  await sheetAction(page, 'Keep my data');
+  await sheetAction(page, 'Stay signed in');
+  await expect(page.locator('#toast')).toContainText('still signed in');
   expect(Object.keys(await page.evaluate(() => JSON.parse(localStorage.getItem('gymCustomWorkouts'))))).toEqual(['Offline']);
   await ctx.setOffline(false);
   await page.locator('[data-signout]').click();

@@ -22,22 +22,22 @@ function weekView() {
   return html`
     <header class="top" data-view="week"><div><p class="eyebrow">Your training, your way</p><h1>Plan</h1></div>
       <button type="button" class="icon-btn" data-open-settings aria-label="Settings">${icons.settings}</button></header>
-    <section class="card list">
+    <section class="card list" data-key="week">
       <h2 class="card-title">Your week</h2>
-      ${DOW.map((day, i) => html`<button type="button" class="row row-btn" data-day="${i}">
+      ${DOW.map((day, i) => html`<button type="button" class="row row-btn" data-day="${i}" data-key="wd-${i}">
         <span class="row-day">${day.slice(0, 3)}</span>
         <div class="row-main"><b class="${state.schedule[i] ? '' : 'muted'}">${state.schedule[i] || 'Rest'}</b>${state.schedule[i] ? html`<small>${workoutSummary(state.workouts[state.schedule[i]])}</small>` : ''}</div>
         <span class="chev">${icons.chevron}</span></button>`)}
     </section>
-    <h2 class="section-title">My workouts</h2>
-    ${names.length ? html`<div class="routine-list">${names.map((n) => {
+    <h2 class="section-title" data-key="mine">My workouts</h2>
+    ${names.length ? html`<div class="routine-list" data-key="routines">${names.map((n) => {
       const days = scheduledDays(state.schedule, n);
-      return html`<button type="button" class="routine" data-edit="${n}">
+      return html`<button type="button" class="routine" data-edit="${n}" data-key="routine-${n}">
         <span class="routine-mark" aria-hidden="true">${n.slice(0, 1).toUpperCase()}</span>
         <span class="row-main"><b>${n}</b><small>${workoutSummary(state.workouts[n])} · ${days ? days + (days === 1 ? ' day a week' : ' days a week') : 'not scheduled'}</small></span>
         <span class="chev">${icons.chevron}</span></button>`;
-    })}</div>` : html`<div class="empty-inline"><p>No workouts yet.</p><p class="muted">Create one like Push, Pull, Legs, Upper or Lower.</p></div>`}
-    <button type="button" class="btn btn-primary btn-block" data-new>${icons.plus} New workout</button>`;
+    })}</div>` : html`<div class="empty-inline" data-key="no-routines"><p>No workouts yet.</p><p class="muted">Create one like Push, Pull, Legs, Upper or Lower.</p></div>`}
+    <button type="button" class="btn btn-primary btn-block" data-new data-key="new">${icons.plus} New workout</button>`;
 }
 
 function exerciseRow(e, i, count) {

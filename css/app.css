@@ -250,8 +250,7 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .up-list { list-style: none; padding: 0; margin: 0; }
 .up-month { padding: 18px 2px 6px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
 .up-row { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 60px; padding: 10px 4px; background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left; color: var(--text); }
-.up-row:active:not([aria-disabled="true"]) { background: var(--surface); }
-.up-row[aria-disabled="true"] { opacity: 1; }
+button.up-row:active { background: var(--surface); }
 .up-day { width: 52px; flex: none; }
 .up-day b { display: block; font-size: 15px; }
 .up-day small { color: var(--dim); font-size: 12px; }
@@ -504,7 +503,7 @@ body.session-open .toast { bottom: calc(96px + var(--safe-b)); }
 .sheet-head h2 { font-size: 20px; font-weight: 800; }
 .sheet-sub { color: var(--muted); font-size: 14px; margin-top: 2px; }
 .sheet-body { overflow-y: auto; overscroll-behavior: contain; flex: 1; margin: 0 -18px; padding: 0 18px; }
-.sheet-text { color: var(--muted); font-size: 15px; }
+.sheet-text { color: var(--muted); font-size: 15px; overflow-wrap: anywhere; }
 .sheet-actions { display: flex; flex-direction: column; gap: 8px; padding-top: 14px; flex: none; }
 .sheet-actions .btn { width: 100%; }
 @media (min-width: 600px) {
@@ -520,3 +519,5 @@ body.session-open .toast { bottom: calc(96px + var(--safe-b)); }
 #loadingScreen img { width: 140px; height: 140px; }
 .loading-label { margin-top: 20px; font: 800 14px var(--display); letter-spacing: .3em; padding-left: .3em; text-transform: uppercase; color: var(--accent); }
 .noscript { padding: 40px; text-align: center; }
+.card-head > div { min-width: 0; }
+.card-head small { overflow-wrap: anywhere; }

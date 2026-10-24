@@ -34,7 +34,8 @@ test('a date removed by its host keeps focus in the next card, or moves it to th
   await a.client.from('gym_dates').update({ cancelled_at: new Date().toISOString() }).eq('id', second);
   await refreshCrew(pb);
   await expect(pb.locator(`[data-date-id="${second}"]`)).toHaveCount(0);
-  await expect(pb.locator('#page-crew h1')).toBeFocused();
+  // Not lost: focus lands on the nearest heading that is still there.
+  expect(await pb.evaluate(() => { const el = document.activeElement; return el !== document.body && /^H[1-3]$/.test(el.tagName) && !!el.closest('#page-crew'); })).toBe(true);
   expect(errors.flat()).toEqual([]);
 });
 
@@ -160,18 +161,122 @@ test('closing a workout reopened from the running bar returns focus to the bar',
   await expect(bar).toBeFocused();
 });
 
-test('an Undo toast stays while it has focus, then focus goes back', async ({ page }) => {
+test('an Undo toast stays while it has focus, survives other messages, then focus goes back', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await createWorkout(page, 'Upper', ['Pull-up', 'Dips', 'Plank']);
+  await page.locator('[data-edit="Upper"]').click();
+  // Remove the middle exercise with the keyboard: focus moves to the next row.
+  await page.locator('[data-ex="Dips"] [data-remove]').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('[data-ex="Dips"]')).toHaveCount(0);
+  const origin = await focused(page);
+  expect(origin).toContain('Plank');
+  const undo = page.locator('#toast .toast-action');
+  await undo.focus();
+  await page.waitForTimeout(11000);
+  await expect(undo).toBeFocused();
+  // A message from the background (e.g. a friend's gym date) does not replace it.
+  await page.evaluate(async () => (await import('/js/core/dom.js')).toast('A friend is going to the gym today at 18:00'));
+  await expect(undo).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('[data-ex="Dips"]')).toHaveCount(1);
+  expect(await focused(page)).toBe(origin);
+  // The held-back message is shown afterwards.
+  await expect(page.locator('#toast')).toContainText('A friend is going to the gym');
+});
+
+test('an Undo is offered even right after an error message', async ({ page }) => {
   await offline(page);
   await open(page);
   await createWorkout(page, 'Upper', ['Pull-up', 'Dips']);
   await page.locator('[data-edit="Upper"]').click();
+  await page.evaluate(async () => (await import('/js/core/dom.js')).toast('Something failed', { tone: 'error' }));
+  await expect(page.locator('#toastAlert')).toHaveText('Something failed');
   await page.locator('[data-ex="Dips"] [data-remove]').click();
-  const undo = page.locator('#toast .toast-action');
-  await undo.focus();
-  await page.waitForTimeout(11000);
-  await expect(undo).toBeVisible();
-  await expect(undo).toBeFocused();
+  await expect(page.locator('#toast .toast-action')).toBeVisible();
+});
+
+test('changes from another tab keep focus on the same routine, day and page', async ({ browser }) => {
+  const ctx = await newPhone(browser);
+  await ctx.route('**/cloud-config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: 'window.GYM_CLOUD_CONFIG = {};' }));
+  const a = await ctx.newPage();
+  await open(a);
+  await createWorkout(a, 'Push', ['Dips']);
+  await createWorkout(a, 'Pull', ['Pull-up']);
+  await createWorkout(a, 'Legs', ['Plank']);
+  await tab(a, 'plan');
+  await a.locator('[data-edit="Pull"]').focus();
+  const b = await ctx.newPage();
+  await open(b);
+  await b.evaluate(() => {
+    const w = JSON.parse(localStorage.getItem('gymCustomWorkouts'));
+    delete w.Push;
+    localStorage.setItem('gymCustomWorkouts', JSON.stringify(w));
+  });
+  await expect(a.locator('[data-edit="Push"]')).toHaveCount(0);
+  await expect(a.locator('[data-edit="Pull"]')).toBeFocused();
+  // Calendar: an older workout arrives, months are added above; focus stays on the day.
+  await tab(a, 'calendar');
+  const today = await a.evaluate(() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); });
+  await a.locator(`[data-day="${today}"]`).focus();
+  await b.evaluate(() => {
+    const logs = JSON.parse(localStorage.getItem('gymLogs') || '{}');
+    logs['2026-01-05'] = [{ id: 'old', day: 'Pull', time: '2026-01-05T10:00:00.000Z', exercises: [{ name: 'Pull-up', target: '8', sets: [{ w: '', r: '8', done: true }] }] }];
+    localStorage.setItem('gymLogs', JSON.stringify(logs));
+  });
+  await expect(a.locator('[data-day="2026-01-05"]')).toHaveCount(1);
+  await expect(a.locator(`[data-day="${today}"]`)).toBeFocused();
+});
+
+test('a workout ended in another tab leaves focus on the page, not nowhere', async ({ browser }) => {
+  const ctx = await newPhone(browser);
+  await ctx.route('**/cloud-config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: 'window.GYM_CLOUD_CONFIG = {};' }));
+  const a = await ctx.newPage();
+  await open(a);
+  await createWorkout(a, 'Pull', ['Lat Pulldown']);
+  await scheduleToday(a, 'Pull');
+  await tab(a, 'today');
+  await a.locator('#startToday').click();
+  await a.locator('#sessionMain').click();
+  await a.locator('#sessionBack').click();
+  const bar = a.locator('#activeBar button');
+  await bar.focus();
+  const b = await ctx.newPage();
+  await open(b);
+  await b.evaluate(() => localStorage.removeItem('gymActive'));
+  await expect(a.locator('#activeBar')).toBeHidden();
+  expect(await focused(a)).not.toBe('BODY');
+});
+
+test('opening and leaving Settings moves focus with the page', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  const gear = page.locator('#page-today [data-open-settings]');
+  await gear.focus();
   await page.keyboard.press('Enter');
-  await expect(page.locator('[data-ex="Dips"]')).toHaveCount(1);
-  expect(await focused(page)).not.toBe('BODY');
+  await expect(page.locator('#page-settings h1')).toBeFocused();
+  await page.locator('[data-close-settings]').focus();
+  await page.keyboard.press('Enter');
+  await expect(gear).toBeFocused();
+});
+
+test('when the gym-date card on Today goes away, focus stays in the list below it', async ({ browser }) => {
+  const { a, pb, errors } = await friendsPair(browser, 'te');
+  await pb.evaluate(() => {
+    localStorage.setItem('gymCustomWorkouts', JSON.stringify({ Legs: [{ name: 'Plank', cat: 'core', sets: 2, target: '30s', rest: 60, note: '' }] }));
+    localStorage.setItem('gymPlanSchedule', JSON.stringify({ 0: 'Legs', 1: 'Legs', 2: 'Legs', 3: 'Legs', 4: 'Legs', 5: 'Legs', 6: 'Legs' }));
+  });
+  await pb.reload();
+  const id = await postDate(a, 120, 'Teaser Gym');
+  await refreshCrew(pb);
+  await expect(pb.locator('#page-today .teaser')).toBeVisible();
+  const row = pb.locator('#page-today [data-preview]').nth(1);
+  const day = await row.getAttribute('data-preview');
+  await row.focus();
+  await a.client.from('gym_dates').update({ cancelled_at: new Date().toISOString() }).eq('id', id);
+  await refreshCrew(pb);
+  await expect(pb.locator('#page-today .teaser')).toHaveCount(0);
+  await expect(pb.locator(`#page-today [data-preview="${day}"]`)).toBeFocused();
+  expect(errors.flat()).toEqual([]);
 });

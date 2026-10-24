@@ -54,6 +54,12 @@ let activeTimer = null;
 function paintActive() {
   const a = getActive();
   const show = !!a && !isOpen();
+  if (!show && !activeBar.hidden && activeBar.contains(document.activeElement)) {
+    // The workout ended elsewhere (another tab): keep focus on the page.
+    const to = document.querySelector('.page.active [data-start], .page.active h1');
+    if (to?.matches('h1') && !to.hasAttribute('tabindex')) to.setAttribute('tabindex', '-1');
+    to?.focus({ preventScroll: true });
+  }
   activeBar.hidden = !show;
   document.body.classList.toggle('has-active', show);
   clearInterval(activeTimer);
@@ -84,6 +90,7 @@ window.addEventListener('storage', (e) => {
 // An account this phone's data did not come from signed in: nothing joins it
 // without asking, and the question names the account.
 onAccountSwitch(({ email, first }) => openSheet(first ? {
+  dismissible: false,
   title: 'Add this phone’s workouts to this account?',
   body: html`<p class="sheet-text">You are signed in as <b>${email}</b>. The workouts, plan and weigh-ins on this phone will be saved in that account. If you did not sign in yourself, sign out.</p>`,
   actions: [
@@ -91,6 +98,7 @@ onAccountSwitch(({ email, first }) => openSheet(first ? {
     { label: 'Sign out', value: 'cancel', tone: 'ghost' },
   ],
 } : {
+  dismissible: false,
   title: 'Someone else used this phone',
   body: html`<p class="sheet-text">You are signed in as <b>${email}</b>, but this phone has workouts from another account. What should happen to them?</p>`,
   actions: [
@@ -98,7 +106,10 @@ onAccountSwitch(({ email, first }) => openSheet(first ? {
     { label: 'Add them to my account', value: 'merge', tone: 'secondary' },
     { label: 'Cancel and sign out', value: 'cancel', tone: 'ghost' },
   ],
-}).then((v) => v || 'cancel'));
+}).then((v) => {
+  if (!v || v === 'cancel') toast('Signed out. Nothing from this phone was added to that account.');
+  return v || 'cancel';
+}));
 
 go('today');
 initAccount();

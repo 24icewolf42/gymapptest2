@@ -53,11 +53,12 @@ export function fragment(content) {
 
 const focusable = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-function focusHeading(el) {
-  const h = el.querySelector('h1, h2');
-  if (!h) return;
+function focusHeading(el, selector = 'h1, h2') {
+  const h = el.querySelector(selector);
+  if (!h) return false;
   if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex', '-1');
   h.focus({ preventScroll: true });
+  return true;
 }
 
 /**
@@ -83,7 +84,11 @@ export function render(el, content) {
   }
   const row = hadFocus ? active.closest('[data-key]') : null;
   const siblings = row && row.parentElement ? [...row.parentElement.children] : [];
-  const keys = row ? [row, ...siblings.slice(siblings.indexOf(row) + 1)].map((n) => n.getAttribute('data-key')).filter(Boolean) : [];
+  const at = siblings.indexOf(row);
+  // Where focus goes if the row disappears: the same row, the next, the previous ones.
+  const keys = row ? [row, ...siblings.slice(at + 1), ...siblings.slice(0, at).reverse()].map((n) => n.getAttribute('data-key')).filter(Boolean) : [];
+  const ancestors = [];
+  for (let n = active?.parentElement; hadFocus && n && n !== el; n = n.parentElement) ancestors.push(n);
   const selection = hadFocus && typeof active.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd] : null;
   morphChildren(el, next);
   if (!hadFocus) return;
@@ -98,8 +103,10 @@ export function render(el, content) {
   }
   const target = keys.map((k) => el.querySelector(`[data-key="${CSS.escape(k)}"]`)).find(Boolean);
   const control = target && (target.matches(focusable) || target.getAttribute('tabindex') === '-1' ? target : target.querySelector(focusable));
-  if (control) control.focus({ preventScroll: true });
-  else focusHeading(el);
+  if (control) { control.focus({ preventScroll: true }); return; }
+  // Then the heading of the closest section that is still there, then the page heading.
+  const scope = ancestors.find((n) => n.isConnected && el.contains(n) && n.querySelector('h2, h3'));
+  if (!scope || !focusHeading(scope, 'h2, h3')) focusHeading(el);
 }
 
 /** Replaces the content outright (a new screen, not an update of the current one). */
@@ -209,18 +216,28 @@ export function busyAttr(isBusy) {
 let toastTimer = null;
 let toastOrigin = null;
 let errorUntil = 0;
+let waiting = null; // a message held back while an Undo is on screen
 const TOAST_RESUME_MS = 3000;
 /**
  * Short message. `action: { label, onClick }` adds a button (e.g. Undo).
- * Errors stay longer, are announced assertively (through a separate alert
- * region), and a routine message that arrives right after one does not
- * replace it. The toast stays while it has focus or the pointer.
+ * Errors stay longer and are announced assertively (through a separate alert
+ * region). A message never replaces an Undo on screen (it waits until the
+ * Undo is gone), and a routine message right after an error does not replace
+ * it. The toast stays while it has focus or the pointer.
  */
-export function toast(message, { tone = 'default', ms = 2600, action = null } = {}) {
+export function toast(message, options = {}) {
+  const { tone = 'default', ms = 2600, action = null } = options;
   const el = $('toast');
   if (!el) return;
-  if (tone !== 'error' && Date.now() < errorUntil) return;
   wireToast(el);
+  const alert = $('toastAlert');
+  if (!action && el.classList.contains('show') && el.classList.contains('has-action')) {
+    if (tone === 'error' && alert) alert.textContent = message;
+    waiting = { message, options };
+    return;
+  }
+  if (!action && tone !== 'error' && Date.now() < errorUntil) return;
+  if (el.contains(document.activeElement)) returnFocus(el); // replacing a toast the user is on
   const active = document.activeElement;
   if (active && active !== document.body && !el.contains(active)) toastOrigin = active;
   el.replaceChildren(document.createTextNode(message));
@@ -232,7 +249,6 @@ export function toast(message, { tone = 'default', ms = 2600, action = null } = 
     b.onclick = () => { hideToast(el); action.onClick(); };
     el.append(' ', b);
   }
-  const alert = $('toastAlert');
   const assertive = tone === 'error' && !action && alert;
   if (alert) alert.textContent = assertive ? message : '';
   // The visible toast is a polite status; an error is read from the alert region instead.
@@ -262,18 +278,28 @@ function wireToast(el) {
   el.addEventListener('mouseleave', () => { if (!el.contains(document.activeElement)) resume(); });
 }
 
+// Focus on the toast goes back to where the user was, not to the page top.
+function returnFocus(el) {
+  if (!el.contains(document.activeElement)) return;
+  const origin = toastOrigin;
+  if (origin && origin.isConnected && !origin.closest('[inert]') && !origin.matches(':disabled')) origin.focus({ preventScroll: true });
+  else focusHeading(document.querySelector('#session:not([hidden])') || document.querySelector('.page.active') || document.body);
+}
+
 function hideToast(el) {
   clearTimeout(toastTimer);
-  // Focus on the toast goes back to where the user was, not to the page top.
-  if (el.contains(document.activeElement)) {
-    const origin = toastOrigin;
-    if (origin && origin.isConnected && !origin.closest('[inert]') && !origin.matches(':disabled')) origin.focus({ preventScroll: true });
-    else focusHeading(document.querySelector('#session:not([hidden])') || document.querySelector('.page.active') || document.body);
-  }
+  returnFocus(el);
   toastOrigin = null;
   el.classList.remove('show', 'has-action');
-  // An invisible Undo button must not stay reachable by keyboard.
-  setTimeout(() => { if (!el.classList.contains('show')) el.replaceChildren(); }, 250);
+  // An invisible Undo button must not stay reachable by keyboard, and an old
+  // error must not linger in the alert region.
+  setTimeout(() => {
+    if (el.classList.contains('show')) return;
+    el.replaceChildren();
+    const alert = $('toastAlert');
+    if (alert) alert.textContent = '';
+    if (waiting) { const w = waiting; waiting = null; toast(w.message, w.options); }
+  }, 250);
 }
 
 /** Arrow keys move between tabs, radio chips, list options and calendar days (ARIA keyboard models). */

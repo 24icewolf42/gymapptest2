@@ -1,8 +1,8 @@
 // Bottom sheets and dialogs, replacing window.prompt/confirm.
 import { html, replaceContent } from '../core/dom.js';
 import { pushLayer } from '../core/router.js';
+import { icons } from './icons.js';
 
-const closeIcon = html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>`;
 const open = []; // stack of open sheets; only the top one reacts to Escape
 let counter = 0;
 
@@ -13,22 +13,24 @@ let counter = 0;
  * - actions: [{ label, value, tone: 'primary'|'secondary'|'danger'|'ghost', submit, onClick(finish, sheet) }]
  *   listed in the order they are shown and read (main action first)
  * - onMount(sheet, close): wire up custom controls
+ * - dismissible: false for a question that must be answered (no close button;
+ *   Escape, the backdrop, dragging and Back do not close it)
  */
-export function openSheet({ title, subtitle = '', body = '', actions = [], onMount, className = '' }) {
+export function openSheet({ title, subtitle = '', body = '', actions = [], onMount, className = '', dismissible = true }) {
   return new Promise((resolve) => {
     const id = 'sheet-title-' + ++counter;
     const root = document.getElementById('sheetRoot');
     const backdrop = document.createElement('div');
     backdrop.className = 'sheet-backdrop';
     replaceContent(backdrop, html`
-      <form class="sheet ${className}" role="dialog" aria-modal="true" aria-labelledby="${id}" tabindex="-1" novalidate>
+      <form class="sheet ${className}" role="${dismissible ? 'dialog' : 'alertdialog'}" aria-modal="true" aria-labelledby="${id}" tabindex="-1" novalidate>
         <div class="sheet-handle" aria-hidden="true"></div>
         <header class="sheet-head">
           <div>
             <h2 id="${id}">${title}</h2>
             ${subtitle ? html`<p class="sheet-sub">${subtitle}</p>` : ''}
           </div>
-          <button type="button" class="icon-btn" data-sheet-close aria-label="Close">${closeIcon}</button>
+          ${dismissible ? html`<button type="button" class="icon-btn" data-sheet-close aria-label="Close">${icons.x}</button>` : ''}
         </header>
         <div class="sheet-body">${body}</div>
         ${actions.length ? html`<div class="sheet-actions">${actions.map((a, i) => html`<button type="${a.submit ? 'submit' : 'button'}" class="btn btn-${a.tone || 'secondary'}" data-sheet-action="${i}">${a.label}</button>`)}</div>` : ''}
@@ -40,7 +42,7 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
     behind.forEach((el) => { el.inert = true; });
     let done = false;
     const previousFocus = document.activeElement;
-    const entry = { close: () => finish(null) };
+    const entry = { close: () => { if (dismissible) finish(null); } };
     open.push(entry);
 
     const finish = (value, fromBack) => {
@@ -60,10 +62,12 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
       }
       resolve(value === undefined ? null : value);
     };
-    const closeLayer = pushLayer(() => finish(null, true));
+    // Back closes the sheet, unless it must be answered: then it stays.
+    const onBack = () => { if (dismissible) finish(null, true); else closeLayer = pushLayer(onBack); };
+    let closeLayer = pushLayer(onBack);
 
-    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) finish(null); });
-    sheet.querySelector('[data-sheet-close]').onclick = () => finish(null);
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop && dismissible) finish(null); });
+    if (dismissible) sheet.querySelector('[data-sheet-close]').onclick = () => finish(null);
     sheet.querySelectorAll('[data-sheet-action]').forEach((b) => {
       const a = actions[+b.dataset.sheetAction];
       if (!a.submit) b.onclick = () => (a.onClick ? a.onClick(finish, sheet) : finish(a.value));
@@ -73,7 +77,7 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
       const a = actions.find((x) => x.submit);
       if (a) a.onClick ? a.onClick(finish, sheet) : finish(a.value);
     });
-    enableDragToClose(sheet, () => finish(null));
+    if (dismissible) enableDragToClose(sheet, () => finish(null));
     onMount?.(sheet, finish);
     requestAnimationFrame(() => {
       backdrop.classList.add('open');

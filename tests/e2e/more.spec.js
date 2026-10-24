@@ -55,11 +55,13 @@ test('declines, cancels and unblocks', async ({ browser }) => {
   await pa.locator('[data-crew-tab="friends"]').click();
   await pa.locator('[data-decline]').click();
   await sheetAction(pa, 'Decline and block');
-  expect((await b.client.from('friend_requests').insert({ requester_id: b.id, target_id: a.id, status: 'pending' })).error).not.toBeNull();
+  await b.client.from('friend_requests').insert({ requester_id: b.id, target_id: a.id, status: 'pending' });
+  expect((await b.client.from('friend_requests').select('id').eq('target_id', a.id)).data).toEqual([]);
   await pa.locator('.page.active [data-open-settings]').click();
   await pa.locator('[data-unblock]').click();
   await expect(pa.locator('[data-unblock]')).toHaveCount(0);
-  expect((await b.client.from('friend_requests').insert({ requester_id: b.id, target_id: a.id, status: 'pending' })).error).toBeNull();
+  await b.client.from('friend_requests').insert({ requester_id: b.id, target_id: a.id, status: 'pending' });
+  expect((await b.client.from('friend_requests').select('id').eq('target_id', a.id)).data).toHaveLength(1);
   expect(errors).toEqual([]);
 });
 
@@ -224,23 +226,22 @@ test('a taken username at sign-up asks for another one', async ({ page }) => {
 test('a long weigh-in history syncs in batches and pages, and a weigh-in deleted elsewhere stays deleted', async ({ page }) => {
   const { makeUser, uniqueName } = await import('../integration/helpers.js');
   const u = await makeUser(uniqueName('w450'));
+  const day = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const now = new Date();
+  const dates = Array.from({ length: 1100 }, (_, i) => day(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1099 + i)));
+  const first = dates[0];
   // Deleted on another phone: this phone still has an old copy of it.
-  await u.client.rpc('save_my_weights', { entries: [{ log_date: '2024-01-01', weight_kg: 180, fresh: true }] });
-  await u.client.from('body_weight_logs').delete().eq('user_id', u.id).eq('log_date', '2024-01-01');
-  await page.addInitScript(() => {
+  await u.client.rpc('save_my_weights', { entries: [{ log_date: first, weight_kg: 180, fresh: true }] });
+  await u.client.from('body_weight_logs').delete().eq('user_id', u.id).eq('log_date', first);
+  await page.addInitScript((list) => {
     if (localStorage.getItem('seeded')) return;
     localStorage.setItem('seeded', '1');
-    const list = [];
-    for (let i = 0; i < 1100; i++) {
-      const d = new Date(2024, 0, 1 + i);
-      list.push({ date: d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'), weight: i === 0 ? 180 : 70 + (i % 10) / 10 });
-    }
-    localStorage.setItem('bodyWeightLogs', JSON.stringify(list));
-  });
+    localStorage.setItem('bodyWeightLogs', JSON.stringify(list.map((date, i) => ({ date, weight: i === 0 ? 180 : 70 + (i % 10) / 10 }))));
+  }, dates);
   await open(page);
   await signInAs(page, u);
   expect((await u.client.from('body_weight_logs').select('log_date', { count: 'exact', head: true }).eq('user_id', u.id)).count).toBe(1099);
-  expect((await u.client.from('body_weight_logs').select('log_date').eq('user_id', u.id).eq('log_date', '2024-01-01')).data).toEqual([]);
+  expect((await u.client.from('body_weight_logs').select('log_date').eq('user_id', u.id).eq('log_date', first)).data).toEqual([]);
   // A second sync reads more rows than one server page: nothing may look deleted.
   await page.locator('.page.active [data-open-settings]').click();
   await page.locator('[data-sync]').click();
@@ -391,4 +392,42 @@ test('restoring a backup brings back deleted workouts once, also after a day was
   expect(cloud.logs['2026-10-01']).toHaveLength(1);
   expect(cloud.logs['2026-10-01'][0].exercises[0].name).toBe('Dips');
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('gymLogs'))['2026-10-01'])).toHaveLength(1);
+});
+
+test('an account the phone\'s data did not come from must be confirmed, by name, before anything uploads', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('ask'));
+  const { session } = (await u.client.auth.getSession()).data;
+  await page.addInitScript(() => {
+    if (localStorage.getItem('seeded')) return;
+    localStorage.setItem('seeded', '1');
+    localStorage.setItem('bodyWeightLogs', JSON.stringify([{ date: '2026-10-20', weight: 48.3 }]));
+  });
+  await open(page);
+  // Signed in without the app's form (here: a session set directly).
+  await page.evaluate(async (s) => (await import('/js/cloud/client.js')).supabase.auth.setSession(s), { access_token: session.access_token, refresh_token: session.refresh_token });
+  const sheet = page.locator('.sheet-backdrop.open [role=alertdialog]');
+  await expect(sheet).toContainText(u.email);
+  // It can't be dismissed by accident.
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeVisible();
+  expect((await u.client.from('body_weight_logs').select('log_date').eq('user_id', u.id)).data).toEqual([]);
+  await sheetAction(page, 'Sign out');
+  await expect(page.locator('#toast')).toContainText('Nothing from this phone was added');
+  expect((await u.client.from('body_weight_logs').select('log_date').eq('user_id', u.id)).data).toEqual([]);
+});
+
+test('signing in on one tab does not ask the question in the others', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('tabs'));
+  const ctx = await newPhone(browser);
+  const one = await ctx.newPage();
+  await open(one);
+  await createWorkout(one, 'Push', ['Dips']);
+  const two = await ctx.newPage();
+  await open(two);
+  await signInAs(two, u);
+  await one.waitForTimeout(2000);
+  await expect(one.locator('.sheet-backdrop.open')).toHaveCount(0);
+  await expect(two.locator('.sheet-backdrop.open')).toHaveCount(0);
 });

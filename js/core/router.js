@@ -66,6 +66,9 @@ export function go(name, { fromBack = false } = {}) {
   const changed = name !== current;
   // Let the page we leave close its own history layers (e.g. the plan editor).
   if (changed) pages[current]?.leave?.();
+  // Focus inside the page being hidden would be lost: it moves to the new page's heading.
+  const leaving = document.getElementById('page-' + current);
+  const focusWasInPage = changed && !!leaving && leaving.contains(document.activeElement);
   current = name;
   document.querySelectorAll('.page').forEach((p) => p.classList.toggle('active', p.id === 'page-' + name));
   document.querySelectorAll('.nav-btn').forEach((b) => {
@@ -77,6 +80,10 @@ export function go(name, { fromBack = false } = {}) {
   pages[name].render?.();
   if (changed) pages[name].shown?.();
   if (changed) window.scrollTo(0, 0);
+  if (focusWasInPage) {
+    const h = document.querySelector(`#page-${name} h1`);
+    if (h) { if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
+  }
   // Any tab other than Today sits on one history layer, so "back" returns home.
   if (name === 'today') {
     if (tabLayerClose && !fromBack) tabLayerClose();
