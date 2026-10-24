@@ -33,8 +33,11 @@ Steps 1 and 2 come **before** the merge, the rest right after it.
 In your repo: **Settings → Environments → New environment** → name it
 `production`.
 
-- Tick **Required reviewers** and add yourself. Without it, the database
-  deploy and the APK signing run without asking you.
+- Tick **Required reviewers** and add yourself, then **Save protection
+  rules**. Without it, the database deploy and the APK signing run without
+  asking you. Check: the environment page then lists "Required reviewers"
+  under protection rules, and the next deploy shows "Waiting" with a
+  **Review deployments** button.
 - Under **Deployment branches**, allow only `main`.
 - Add these to the environment (not to the repository):
 
@@ -55,6 +58,9 @@ In your repo: **Settings → Environments → New environment** → name it
    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -keyout backup-key.pem -out backup-cert.pem -days 3650 -subj /CN=Tracker-backup
    ```
 
+   On Windows in Git Bash, put `MSYS_NO_PATHCONV=1 ` in front of the
+   command, otherwise Git Bash turns `/CN=…` into a file path.
+
 2. In the `production` environment add:
    - Variable `KEYSTORE_BACKUP_CERT`: the whole text of `backup-cert.pem`.
    - Secret `ADMIN_GH_TOKEN`: GitHub → Settings → Developer settings →
@@ -74,8 +80,11 @@ would only fail. Nothing is published.
 **Actions → Deploy database and email templates** waits for your approval.
 Approve it. It applies the database changes in order, then sets the
 password-reset email. If it stops with a list of extra rules or functions it
-did not expect (for example ones added in the dashboard), drop them, then run
-it again.
+did not expect (for example ones added in the dashboard), drop them in the
+Supabase **SQL Editor**, then run it again. For example, for a policy called
+"Anyone can read" on `profiles`: `drop policy "Anyone can read" on public.profiles;`
+and for a function `my_fn(text)`: `drop function public.my_fn(text);`. If you
+want to keep one, ask before dropping it.
 
 **If only "Update the password reset email" fails (HTTP 400),** the database
 part is done. Supabase's built-in email service sends only a few emails an

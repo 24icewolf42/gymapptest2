@@ -168,6 +168,7 @@ One-time setup by the repository owner:
    for a pass phrase that protects the private key: choose a strong one and keep
    it apart from the key, which stays offline. RSA certificates are refused.
    `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -keyout backup-key.pem -out backup-cert.pem -days 3650 -subj /CN=Tracker-backup`
+   (in Git Bash on Windows, prefix it with `MSYS_NO_PATHCONV=1`)
 2. In the `production` environment (see Database setup) add:
    - secret `ADMIN_GH_TOKEN`: a fine-grained token for this repository with
      *Environments*, *Secrets* and *Variables* read/write, used once to store the key;
