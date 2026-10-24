@@ -50,6 +50,23 @@ All findings are fixed in code. What remains for the app's owner is configuratio
 
 After the rework, three independent Opus reviews (security/privacy, data correctness, UX/accessibility/tests) rated the branch and listed findings. Every critical, major and minor finding and every nit was fixed and re-reviewed.
 
+### Round 4 (security 8/10, correctness 7.5/10, UX/tests 7/10)
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| MA-1 | Major | More than 1000 weigh-ins: rows past the server's page looked deleted | Read page by page until an empty page; dates the server refuses stay local; e2e test with 1,100 entries and two syncs |
+| MA-2 | Major | Sign-out offline with an expired token kept the stored session | When supabase-js fails to sign out, the session is removed locally; e2e test |
+| UX-M1 | Major | A background toast replaced a focused Undo | Messages wait while an Undo is shown; replacing a focused toast returns focus first; e2e test |
+| UX-M2, UX-M4 | Major | Disappearing teaser, other tabs and devices re-targeted focus (Today, routines, calendar, running bar) | Keyed rows and sections on Today, Plan and Calendar; the bar hands focus to the page before hiding; e2e tests |
+| UX-M3 | Major | Signing in on one tab asked the question in the others, and dismissing it signed out everywhere | The in-app sign-in marker is shared by tabs and the owner is re-read before asking; the question must be answered and says what happened; e2e tests |
+| mi-1, mi-2 | Minor | Restores lost days cleared by the original app, and repeated restores duplicated sessions | Cleared days no longer hide restored sessions; re-keyed ids follow from the old key; e2e test |
+| mi-3 | Minor | Any old deletion dropped non-fresh weigh-ins | Only copies older than the deletion are skipped; merged-in weigh-ins count as new where the account has none; test |
+| R4-01 | Minor | Privacy notice understated who sees replies and check-ins | Notice, card text and README say the host and your friends who see the date see them by name |
+| R4-02 | Minor | No storage limits | Size limits on plans (1 MB) and workout data (8 MB), weigh-in dates 1900 to today, 20,000 weigh-ins per account; test |
+| UX-m1..m8 | Minor | Undo suppressed after errors, heading fallback, settings view swap, navigation focus, invisible close icon, clipped email, "Keep my data" left signed in, test gaps | Undo never suppressed; fallback to previous rows and the section heading; stable settings view with a keyed account card; focus moves with page changes and back to the settings button; close icon drawn; long emails wrap; "Not synced yet" offers keep / remove / stay with a message; tests added and checked against the old code |
+| R4-N1..N5 | Nit | Rate-limit rows after deletion, block detectable, admin token job-wide, setup check failed open, CSP allowed GitHub on the web | Rows deleted with the account; requests to a blocker are dropped silently; token step-scoped; check fails closed; GitHub only in the Android build's CSP |
+| UX nits | Nit | Stale alert region, dead rest-day buttons, dead code, untested update check | Alert cleared with the toast; rest days are plain rows; allKeys removed; update comparison moved to js/domain/release.js with unit tests |
+
 ### Round 3 (security 6.5/10, correctness 7/10, UX/tests 6.5/10)
 
 | ID | Severity | Finding | Fix |
