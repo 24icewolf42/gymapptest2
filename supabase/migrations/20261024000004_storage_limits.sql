@@ -27,7 +27,9 @@ begin
   if new.log_date < date '1900-01-01' or new.log_date > current_date + 2 then
     raise exception 'A weigh-in needs a date between 1900 and today' using errcode = '22023';
   end if;
-  if tg_op = 'INSERT' and (select count(*) from public.body_weight_logs b where b.user_id = new.user_id) >= 20000 then
+  if tg_op = 'INSERT'
+     and not exists (select 1 from public.body_weight_logs b where b.user_id = new.user_id and b.log_date = new.log_date) -- a correction, not a new day
+     and (select count(*) from public.body_weight_logs b where b.user_id = new.user_id) >= 20000 then
     raise exception 'Too many weigh-ins on this account' using errcode = '54000';
   end if;
   return new;
