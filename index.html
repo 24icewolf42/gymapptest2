@@ -576,7 +576,7 @@
     
     <script>
     // ---------- APP VERSION / AUTO UPDATE ----------
-    const APP_VERSION = "2.12.1";
+    const APP_VERSION = "2.12.2";
     document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
     
     function checkForUpdate() {
@@ -2261,10 +2261,62 @@
     window.renderPlan();
   }
 
+<style>
+  .plan-muscle-filters { touch-action: pan-x pan-y; }
+  .plan-rename-link { display: block; margin-top: 8px; padding: 6px 0; background: none; border: 0; color: var(--text-muted); font-size: 12px; font-weight: 700; }
+  .plan-ex-name { min-width: 0; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  .plan-move-hint { margin: 6px 0 2px; font-size: 11px; color: var(--text-muted); }
+  .plan-dragging { position: relative; z-index: 5; background: var(--surface-3); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.45); }
+</style>
+<script>
+// Plan tools: rename a workout, and press-and-hold an exercise to drag it into a new order.
+// Works on top of plan.js (no edits to it).
+(function () {
+  var root = document.getElementById('planRoot');
+  if (!root) return;
+  function jget(k, f) { try { return JSON.parse(localStorage.getItem(k) || JSON.stringify(f)); } catch (e) { return f; } }
+  function persist() {
+    localStorage.setItem('gymCustomWorkouts', JSON.stringify(window.WORKOUTS || {}));
+    localStorage.setItem('gymPlanSchedule', JSON.stringify(window.SCHEDULE || {}));
+    window.dispatchEvent(new Event('gym:plan-changed'));
+    if (window.renderToday) window.renderToday();
+  }
+  function curName() {
+    var h = root.querySelector('.plan-routine-actions .plan-heading');
+    return h ? h.textContent : null;
+  }
+  function reorder(name, from, to) {
+    var list = window.WORKOUTS[name];
+    if (!list || from === to || to < 0 || to >= list.length) return;
+    list.splice(to, 0, list.splice(from, 1)[0]);
+    persist();
+    window.renderPlan();
+  }
+  function rename(name) {
+    var n2 = (window.prompt('Rename workout:', name) || '').trim().slice(0, 40);
+    if (!n2 || n2 === name) return;
+    if (window.WORKOUTS[n2]) { alert('You already have a workout with that name.'); return; }
+    var rebuilt = {};
+    Object.keys(window.WORKOUTS).forEach(function (k) { rebuilt[k === name ? n2 : k] = window.WORKOUTS[k]; });
+    Object.keys(window.WORKOUTS).forEach(function (k) { delete window.WORKOUTS[k]; });
+    Object.keys(rebuilt).forEach(function (k) { window.WORKOUTS[k] = rebuilt[k]; });
+    Object.keys(window.SCHEDULE).forEach(function (k) { if (window.SCHEDULE[k] === name) window.SCHEDULE[k] = n2; });
+    // mark the old name as removed so a cloud sync cannot bring it back
+    var del = jget('gymDeletedWorkouts', []), res = jget('gymRestoredWorkouts', []).filter(function (x) { return x !== name; });
+    if (del.indexOf(name) < 0) del.push(name);
+    if (del.indexOf(n2) >= 0) { del = del.filter(function (x) { return x !== n2; }); if (res.indexOf(n2) < 0) res.push(n2); }
+    localStorage.setItem('gymDeletedWorkouts', JSON.stringify(del));
+    localStorage.setItem('gymRestoredWorkouts', JSON.stringify(res));
+    persist();
+    window.renderPlan();
+  }
+
   // press and hold the name of an exercise, then drag it up or down
   function attachDrag(handle, row, name) {
     var timer = null, dragging = false, startY = 0, startX = 0, rows = [], tops = [], h = 0, from = -1, to = -1;
+    handle.style.userSelect = 'none'; handle.style.webkitUserSelect = 'none'; handle.style.webkitTouchCallout = 'none';
     handle.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    handle.addEventListener('selectstart', function (e) { e.preventDefault(); });
     handle.addEventListener('touchstart', function (e) {
       e.stopPropagation();                       // never starts the page swipe
       if (e.touches.length !== 1) return;
@@ -2280,6 +2332,7 @@
       tops = rows.map(function (r) { var b = r.getBoundingClientRect(); return b.top + window.pageYOffset + b.height / 2; });
       h = row.getBoundingClientRect().height;
       to = from; dragging = true;
+      try { var sel = window.getSelection && window.getSelection(); if (sel && sel.removeAllRanges) sel.removeAllRanges(); } catch (x) {}
       row.classList.add('plan-dragging');
       if (navigator.vibrate) { try { navigator.vibrate(25); } catch (e) {} }
     }
@@ -2321,25 +2374,33 @@
 
   function enhance() {
     var name = curName();
-    if (!name || !window.WORKOUTS[name] || root.querySelector('.plan-rename-link')) return;
-    var rb = document.createElement('button');
-    rb.type = 'button'; rb.className = 'plan-rename-link'; rb.textContent = '✎ Rename workout';
-    rb.onclick = function () { rename(name); };
-    root.querySelector('.plan-routine-actions > div').appendChild(rb);
+    if (!name || !window.WORKOUTS[name]) return;
+    if (!root.querySelector('.plan-rename-link')) {
+      var rb = document.createElement('button');
+      rb.type = 'button'; rb.className = 'plan-rename-link'; rb.textContent = '✎ Rename workout';
+      rb.onclick = function () { rename(name); };
+      root.querySelector('.plan-routine-actions > div').appendChild(rb);
+    }
     var rows = root.querySelectorAll('.plan-edit-row');
-    if (rows.length > 1) {
+    if (rows.length > 1 && !root.querySelector('.plan-move-hint')) {
       var hint = document.createElement('div');
       hint.className = 'plan-move-hint';
       hint.textContent = 'Press and hold an exercise name, then drag to reorder.';
       rows[0].parentNode.insertBefore(hint, rows[0]);
     }
     rows.forEach(function (row) {
-      var first = row.firstElementChild;
-      if (!first || first.classList.contains('plan-ex-name')) return;
-      var wrap = document.createElement('div');
-      wrap.className = 'plan-ex-name';
-      row.insertBefore(wrap, first);
-      wrap.appendChild(first);
+      if (row.dataset.dragReady) return;
+      row.dataset.dragReady = '1';
+      var first = row.firstElementChild, wrap;
+      if (first && first.classList.contains('plan-ex-name')) wrap = first;
+      else {
+        wrap = document.createElement('div');
+        wrap.className = 'plan-ex-name';
+        row.insertBefore(wrap, first);
+        wrap.appendChild(first);
+      }
+      var arrows = wrap.querySelector('.plan-move');
+      if (arrows) arrows.remove();
       attachDrag(wrap, row, name);
     });
   }
