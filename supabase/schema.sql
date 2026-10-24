@@ -397,7 +397,8 @@ create index if not exists friend_request_log_idx on private.friend_request_log 
 
 -- New requests: server time, at most 20 a day, never to or from someone blocked.
 -- A request to someone who blocked the sender is dropped without an error
--- (and still counts), so the sender can't tell that they were blocked.
+-- (and still counts), so the block isn't announced; the sender can still
+-- notice that the request never appears.
 create or replace function private.friend_requests_guard()
 returns trigger
 language plpgsql
@@ -648,10 +649,11 @@ create trigger body_weight_before_write before insert or update on public.body_w
 -- holds: a deletion recorded here wins unless the copy is newer than it
 -- (updated_at, the time the entry was last changed), so stale copies stay
 -- deleted and entries made after the deletion survive.
--- Returns the rows written, with their server time.
+-- Returns one row per entry: outcome 'saved' (with the server time), 'deleted'
+-- (a deletion recorded here wins) or 'date' (implausible date, not stored).
 drop function if exists public.save_my_weights(jsonb);
 create function public.save_my_weights(entries jsonb)
-returns table (log_date date, updated_at timestamptz)
+returns table (log_date date, updated_at timestamptz, outcome text)
 language plpgsql
 security definer
 set search_path = ''
@@ -671,6 +673,8 @@ begin
     d := (e ->> 'log_date')::date;
     -- Implausible dates (a phone with a wrong clock) are skipped, not fatal.
     if d < date '1900-01-01' or d > current_date + 2 then
+      log_date := d; updated_at := null; outcome := 'date';
+      return next;
       continue;
     end if;
     if coalesce((e ->> 'fresh')::boolean, false) then
@@ -680,6 +684,8 @@ begin
       where t.user_id = auth.uid() and t.log_date = d
         and (e ->> 'updated_at' is null or t.deleted_at >= (e ->> 'updated_at')::timestamptz)
     ) then
+      log_date := d; updated_at := null; outcome := 'deleted';
+      return next;
       continue;
     end if;
     insert into public.body_weight_logs as b (user_id, log_date, weight_kg, updated_at)
@@ -687,6 +693,7 @@ begin
     on conflict (user_id, log_date) do update set weight_kg = excluded.weight_kg, updated_at = now();
     log_date := d;
     updated_at := now();
+    outcome := 'saved';
     return next;
   end loop;
 end;
@@ -804,6 +811,7 @@ begin
   -- Rate-limit records are keyed by the user id; they go too.
   delete from private.friend_request_log where requester_id = auth.uid();
   delete from private.profile_lookups where user_id = auth.uid();
+  delete from auth.flow_state where user_id = auth.uid();
   delete from auth.users where id = auth.uid();
 end;
 $$;
@@ -1328,3 +1336,131 @@ revoke all on function private.body_weight_limits() from public, anon, authentic
 drop trigger if exists body_weight_limits on public.body_weight_logs;
 create trigger body_weight_limits before insert or update on public.body_weight_logs
   for each row execute function private.body_weight_limits();
+
+-- Shared routines and gym dates: a bounded number per account, so nobody can
+-- fill the database or flood their friends' lists.
+create or replace function private.count_limits()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if tg_table_name = 'shared_workouts' then
+    if (select count(*) from public.shared_workouts s where s.owner_id = new.owner_id) >= 50 then
+      raise exception 'You can share up to 50 routines' using errcode = '54000';
+    end if;
+  elsif tg_table_name = 'gym_dates' then
+    if (select count(*) from public.gym_dates g where g.host_id = new.host_id and g.created_at > now() - interval '1 day') >= 20 then
+      raise exception 'You can post up to 20 gym dates a day' using errcode = '54000';
+    end if;
+    if (select count(*) from public.gym_dates g where g.host_id = new.host_id and g.cancelled_at is null and g.starts_at > now()) >= 30 then
+      raise exception 'You can have up to 30 upcoming gym dates' using errcode = '54000';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+revoke all on function private.count_limits() from public, anon, authenticated;
+drop trigger if exists shared_workouts_count_limit on public.shared_workouts;
+create trigger shared_workouts_count_limit before insert on public.shared_workouts
+  for each row execute function private.count_limits();
+drop trigger if exists gym_dates_count_limit on public.gym_dates;
+create trigger gym_dates_count_limit before insert on public.gym_dates
+  for each row execute function private.count_limits();
+
+-- ===== 20261024000005_plain_text.sql =====
+-- No markup in names, notes and pictures, enforced by the database for every
+-- app version: the original app (still on some phones) puts routine and
+-- exercise names and the rest-day picture into the page unescaped, so a
+-- friend's shared routine could otherwise run code there. This app removes
+-- these characters before saving. NOT VALID: only new writes are checked.
+
+alter table public.shared_workouts drop constraint if exists shared_workouts_plain_text;
+alter table public.shared_workouts add constraint shared_workouts_plain_text
+  check (title !~ '[<>"`]' and workout::text !~ '[<>`]|\\"') not valid;
+
+alter table public.workout_plans drop constraint if exists workout_plans_plain_text;
+alter table public.workout_plans add constraint workout_plans_plain_text check (
+  (plan - 'restImage')::text !~ '[<>`]|\\"'
+  and (plan ->> 'restImage' is null or plan ->> 'restImage' ~ '^data:image/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/]+=*$')
+) not valid;
+
+alter table public.workout_data drop constraint if exists workout_data_plain_text;
+alter table public.workout_data add constraint workout_data_plain_text
+  check (logs::text !~ '[<>`]|\\"') not valid;
+
+-- ===== 20261024000006_verify_access.sql =====
+-- Stops the deploy if the live database has row-level security policies or
+-- callable functions that these migrations don't define. Policies combine
+-- with OR, so one extra permissive policy made in the dashboard (e.g. "Enable
+-- read access for all users") would quietly undo the privacy rules. If this
+-- fails, look at the names it lists and drop them, or add them here on purpose.
+do $$
+declare
+  extra text;
+begin
+  select string_agg(p.tablename || ': ' || p.policyname, '; ') into extra
+  from pg_policies p
+  where p.schemaname = 'public'
+    and (p.tablename, p.policyname) not in (values
+    ('body_weight_logs', 'Users delete their own body weight'),
+    ('body_weight_logs', 'Users read their own body weight'),
+    ('body_weight_logs', 'Users record their own body weight'),
+    ('body_weight_logs', 'Users update their own body weight'),
+    ('friend_blocks', 'Users block others'),
+    ('friend_blocks', 'Users see their blocks'),
+    ('friend_blocks', 'Users unblock others'),
+    ('friend_requests', 'Participants read friend requests'),
+    ('friend_requests', 'Participants remove friend requests'),
+    ('friend_requests', 'Recipient accepts request'),
+    ('friend_requests', 'Users send friend requests'),
+    ('gym_date_invites', 'Host and invitee read invites'),
+    ('gym_date_invites', 'Host or invitee remove invites'),
+    ('gym_date_invites', 'Hosts invite their friends'),
+    ('gym_date_rsvps', 'Friends read replies'),
+    ('gym_date_rsvps', 'Users change their reply while open'),
+    ('gym_date_rsvps', 'Users remove their reply'),
+    ('gym_date_rsvps', 'Users reply to open dates they can see'),
+    ('gym_dates', 'Host and invited friends read gym dates'),
+    ('gym_dates', 'Hosts edit their gym dates'),
+    ('gym_dates', 'Users host their own gym dates'),
+    ('leaderboard_stats', 'Owner or friends read published stats'),
+    ('leaderboard_stats', 'Users publish their own aggregate stats'),
+    ('leaderboard_stats', 'Users remove their published stats'),
+    ('leaderboard_stats', 'Users update their own aggregate stats'),
+    ('profiles', 'Users create their profile'),
+    ('profiles', 'Users read related profiles'),
+    ('profiles', 'Users update their profile'),
+    ('shared_workouts', 'Owner or accepted friends read shared workouts'),
+    ('shared_workouts', 'Owners remove their shared workouts'),
+    ('shared_workouts', 'Users share their selected workouts'),
+    ('workout_data', 'Users create their own workout data'),
+    ('workout_data', 'Users read their own workout data'),
+    ('workout_data', 'Users remove their own workout data'),
+    ('workout_data', 'Users update their own workout data'),
+    ('workout_plans', 'Users create their own workout plan'),
+    ('workout_plans', 'Users read their own workout plan'),
+    ('workout_plans', 'Users remove their own workout plan'),
+    ('workout_plans', 'Users update their own workout plan'));
+  if extra is not null then
+    raise exception 'Unexpected row-level security policies: %', extra;
+  end if;
+
+  select string_agg(p.oid::regprocedure::text, '; ') into extra
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute'))
+    and p.proname not in ('delete_my_account', 'find_profile', 'friend_summaries', 'gym_date_counts', 'my_blocks', 'save_my_weights');
+  if extra is not null then
+    raise exception 'Unexpected functions callable through the API: %', extra;
+  end if;
+
+  select string_agg(c.relname, '; ') into extra
+  from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity;
+  if extra is not null then
+    raise exception 'Tables without row-level security: %', extra;
+  end if;
+end;
+$$;

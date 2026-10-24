@@ -184,10 +184,11 @@ create trigger body_weight_before_write before insert or update on public.body_w
 -- holds: a deletion recorded here wins unless the copy is newer than it
 -- (updated_at, the time the entry was last changed), so stale copies stay
 -- deleted and entries made after the deletion survive.
--- Returns the rows written, with their server time.
+-- Returns one row per entry: outcome 'saved' (with the server time), 'deleted'
+-- (a deletion recorded here wins) or 'date' (implausible date, not stored).
 drop function if exists public.save_my_weights(jsonb);
 create function public.save_my_weights(entries jsonb)
-returns table (log_date date, updated_at timestamptz)
+returns table (log_date date, updated_at timestamptz, outcome text)
 language plpgsql
 security definer
 set search_path = ''
@@ -207,6 +208,8 @@ begin
     d := (e ->> 'log_date')::date;
     -- Implausible dates (a phone with a wrong clock) are skipped, not fatal.
     if d < date '1900-01-01' or d > current_date + 2 then
+      log_date := d; updated_at := null; outcome := 'date';
+      return next;
       continue;
     end if;
     if coalesce((e ->> 'fresh')::boolean, false) then
@@ -216,6 +219,8 @@ begin
       where t.user_id = auth.uid() and t.log_date = d
         and (e ->> 'updated_at' is null or t.deleted_at >= (e ->> 'updated_at')::timestamptz)
     ) then
+      log_date := d; updated_at := null; outcome := 'deleted';
+      return next;
       continue;
     end if;
     insert into public.body_weight_logs as b (user_id, log_date, weight_kg, updated_at)
@@ -223,6 +228,7 @@ begin
     on conflict (user_id, log_date) do update set weight_kg = excluded.weight_kg, updated_at = now();
     log_date := d;
     updated_at := now();
+    outcome := 'saved';
     return next;
   end loop;
 end;
@@ -340,6 +346,7 @@ begin
   -- Rate-limit records are keyed by the user id; they go too.
   delete from private.friend_request_log where requester_id = auth.uid();
   delete from private.profile_lookups where user_id = auth.uid();
+  delete from auth.flow_state where user_id = auth.uid();
   delete from auth.users where id = auth.uid();
 end;
 $$;

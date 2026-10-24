@@ -310,21 +310,21 @@ describe('hardening', () => {
     const r1 = await u.client.rpc('save_my_weights', { entries: [{ log_date: '2026-03-01', weight_kg: 70, fresh: true }] });
     expect(r1.error).toBeNull();
     expect(r1.data).toHaveLength(1);
-    expect(r1.data[0].log_date).toBe('2026-03-01');
+    expect(r1.data[0]).toMatchObject({ log_date: '2026-03-01', outcome: 'saved' });
     expect(Math.abs(Date.parse(r1.data[0].updated_at) - Date.now())).toBeLessThan(60000);
     await u.client.from('body_weight_logs').delete().eq('user_id', u.id).eq('log_date', '2026-03-01');
     // A copy another phone still holds does not bring it back...
     const r2 = await u.client.rpc('save_my_weights', { entries: [{ log_date: '2026-03-01', weight_kg: 70, fresh: false }, { log_date: '2026-03-02', weight_kg: 71 }] });
-    expect(r2.data.map((x) => x.log_date)).toEqual(['2026-03-02']);
+    expect(r2.data.map((x) => [x.log_date, x.outcome])).toEqual([['2026-03-01', 'deleted'], ['2026-03-02', 'saved']]);
     expect((await u.client.from('body_weight_logs').select('weight_kg').eq('log_date', '2026-03-01')).data).toEqual([]);
     // A copy changed after the deletion (an offline phone of the original app) survives.
     const later = new Date(Date.now() + 60000).toISOString();
     const r4 = await u.client.rpc('save_my_weights', { entries: [{ log_date: '2026-03-01', weight_kg: 69, updated_at: later }] });
-    expect(r4.data).toHaveLength(1);
+    expect(r4.data.map((x) => x.outcome)).toEqual(['saved']);
     await u.client.from('body_weight_logs').delete().eq('user_id', u.id).eq('log_date', '2026-03-01');
     // ...but an entry made again on a phone does.
     const r3 = await u.client.rpc('save_my_weights', { entries: [{ log_date: '2026-03-01', weight_kg: 72, fresh: true }] });
-    expect(r3.data).toHaveLength(1);
+    expect(r3.data.map((x) => x.outcome)).toEqual(['saved']);
     expect((await u.client.from('body_weight_logs').select('weight_kg').eq('log_date', '2026-03-01')).data).toEqual([{ weight_kg: 72 }]);
     const many = Array.from({ length: 401 }, (_, i) => ({ log_date: `2025-01-01`, weight_kg: 70 + (i % 10) }));
     expect((await u.client.rpc('save_my_weights', { entries: many })).error).not.toBeNull();
@@ -358,8 +358,30 @@ describe('hardening', () => {
     const huge = { workouts: { Big: [{ name: 'x'.repeat(1100000) }] } };
     expect((await u.client.from('workout_plans').insert({ user_id: u.id, plan: huge })).error).not.toBeNull();
     expect((await u.client.from('workout_plans').insert({ user_id: u.id, plan: { workouts: {} } })).error).toBeNull();
-    expect((await u.client.rpc('save_my_weights', { entries: [{ log_date: '1000-01-01', weight_kg: 70, fresh: true }, { log_date: '8980-01-01', weight_kg: 70, fresh: true }] })).data).toEqual([]);
+    expect((await u.client.rpc('save_my_weights', { entries: [{ log_date: '1000-01-01', weight_kg: 70, fresh: true }, { log_date: '8980-01-01', weight_kg: 70, fresh: true }] })).data.map((x) => x.outcome)).toEqual(['date', 'date']);
+    expect((await u.client.from('body_weight_logs').select('log_date').eq('user_id', u.id)).data).toEqual([]);
     expect((await u.client.from('body_weight_logs').insert({ user_id: u.id, log_date: '8980-01-01', weight_kg: 70 })).error).not.toBeNull();
+  });
+
+  it('refuses markup in shared routines, plans and logs, which the original app would run', async () => {
+    const a = await makeUser(uniqueName('mk'));
+    const bad = [{ name: '<img src=x onerror=alert(1)>', sets: 3 }];
+    expect((await a.client.from('shared_workouts').insert({ owner_id: a.id, title: 'Push', workout: bad })).error).not.toBeNull();
+    expect((await a.client.from('shared_workouts').insert({ owner_id: a.id, title: 'Push', workout: [{ name: "Farmer's walk" }] })).error).toBeNull();
+    expect((await a.client.from('workout_plans').insert({ user_id: a.id, plan: { workouts: { P: bad } } })).error).not.toBeNull();
+    expect((await a.client.from('workout_plans').insert({ user_id: a.id, plan: { workouts: {}, restImage: 'rest.png" onerror="x' } })).error).not.toBeNull();
+    expect((await a.client.from('workout_plans').insert({ user_id: a.id, plan: { workouts: {}, restImage: 'data:image/jpeg;base64,AAAA' } })).error).toBeNull();
+    expect((await a.client.from('workout_data').insert({ user_id: a.id, logs: { '2026-01-01': [{ day: 'P', exercises: [{ name: '<b>x</b>', sets: [] }] }] }, progress: {} })).error).not.toBeNull();
+  });
+
+  it('limits shared routines and gym dates per account', async () => {
+    const a = await makeUser(uniqueName('cnt'));
+    const rows = Array.from({ length: 50 }, (_, i) => ({ owner_id: a.id, title: 'R' + i, workout: [] }));
+    expect((await a.client.from('shared_workouts').insert(rows)).error).toBeNull();
+    expect((await a.client.from('shared_workouts').insert({ owner_id: a.id, title: 'One more', workout: [] })).error).not.toBeNull();
+    const dates = Array.from({ length: 20 }, (_, i) => ({ host_id: a.id, starts_at: new Date(Date.now() + (i + 1) * 3600000).toISOString(), gym: 'G' }));
+    expect((await a.client.from('gym_dates').insert(dates)).error).toBeNull();
+    expect((await a.client.from('gym_dates').insert({ host_id: a.id, starts_at: new Date(Date.now() + 30 * 3600000).toISOString(), gym: 'G' })).error).not.toBeNull();
   });
 
   it('removes the rate-limit records with the account', async () => {
@@ -369,8 +391,9 @@ describe('hardening', () => {
     const t = await makeUser(uniqueName('tgt'));
     await u.client.rpc('find_profile', { name: t.username });
     await u.client.from('friend_requests').insert({ requester_id: u.id, target_id: t.id, status: 'pending' });
+    q(`insert into auth.flow_state (id, user_id, auth_code, code_challenge_method, code_challenge, provider_type, authentication_method, created_at) values (gen_random_uuid(), '${u.id}', 'c', 's256', 'x', 'email', 'recovery', now())`);
     expect((await u.client.rpc('delete_my_account')).error).toBeNull();
-    expect(q(`select (select count(*) from private.friend_request_log where requester_id = '${u.id}') + (select count(*) from private.profile_lookups where user_id = '${u.id}')`)).toBe('0');
+    expect(q(`select (select count(*) from private.friend_request_log where requester_id = '${u.id}') + (select count(*) from private.profile_lookups where user_id = '${u.id}') + (select count(*) from auth.flow_state where user_id = '${u.id}')`)).toBe('0');
   });
 
   it('gives signed-in users no TRUNCATE or other table-level extras on the original tables', async () => {

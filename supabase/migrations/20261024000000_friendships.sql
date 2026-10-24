@@ -95,7 +95,8 @@ create index if not exists friend_request_log_idx on private.friend_request_log 
 
 -- New requests: server time, at most 20 a day, never to or from someone blocked.
 -- A request to someone who blocked the sender is dropped without an error
--- (and still counts), so the sender can't tell that they were blocked.
+-- (and still counts), so the block isn't announced; the sender can still
+-- notice that the request never appears.
 create or replace function private.friend_requests_guard()
 returns trigger
 language plpgsql
