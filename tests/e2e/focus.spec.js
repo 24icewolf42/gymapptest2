@@ -98,9 +98,11 @@ test('a failed post keeps focus on the post button inside the sheet', async ({ b
   await post.focus();
   await pa.keyboard.press('Enter');
   await expect(post).toHaveAttribute('aria-busy', 'true');
+  await expect(post).toHaveText('Posting…');
   await expect(post).toBeFocused();
   await expect(pa.locator('.sheet-backdrop.open .form-error')).not.toBeEmpty();
   await expect(post).not.toHaveAttribute('aria-busy');
+  await expect(post).toHaveText('Post gym date'); // its label is back for the next try
   await expect(post).toBeFocused();
   errors[0].length = 0; // the refused request is the point of this test
   expect(errors.flat()).toEqual([]);

@@ -39,7 +39,13 @@ export async function makeUser(username, extra = {}) {
   const client = anonClient();
   const signIn = await client.auth.signInWithPassword({ email, password });
   if (signIn.error) throw signIn.error;
-  const profile = await admin.from('profiles').select('username').eq('id', data.user.id).single();
+  // Right after a database reset the API may still be reloading its schema: retry briefly.
+  let profile;
+  for (let i = 0; i < 10; i++) {
+    profile = await admin.from('profiles').select('username').eq('id', data.user.id).single();
+    if (!profile.error) break;
+    await new Promise((r) => setTimeout(r, 300));
+  }
   return { id: data.user.id, email, password, username: profile.data && profile.data.username, client };
 }
 

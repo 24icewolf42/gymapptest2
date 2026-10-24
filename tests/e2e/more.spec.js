@@ -1593,7 +1593,9 @@ test('an Undo toast is hidden under a dialog and comes back after it, and a tap 
   await page.locator('[data-delete]').click();
   await sheetAction(page, 'Cancel');
   await expect(page.locator('#toast .toast-action')).toBeVisible();
-  await expect(page.locator('#toast.show')).toHaveCount(0, { timeout: 9000 });
+  await page.waitForTimeout(4500);
+  await expect(page.locator('#toast .toast-action')).toBeVisible(); // 6 s after the dialog
+  await expect(page.locator('#toast.show')).toHaveCount(0, { timeout: 4000 });
   // A plain message from before the dialog does not come back after it.
   await page.evaluate(async () => (await import('/js/core/dom.js')).toast('Dips added.'));
   await expect(page.locator('#toast.show')).toContainText('Dips added.');
@@ -1961,7 +1963,7 @@ test('dragging near the edge scrolls the page; holding a grip still does not', a
   const before = await order();
   await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
   await page.mouse.down();
-
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2 + 3); // a shaky hand is not a drag
   await page.waitForTimeout(800);
   await page.mouse.up();
   expect(await page.evaluate(() => window.scrollY)).toBe(at);
@@ -2010,6 +2012,8 @@ test('signing out on a hanging connection does not hold the user for long', asyn
   await expect(page.locator('#authForm')).toBeVisible({ timeout: 15000 });
   expect(Date.now() - t0).toBeLessThan(12000);
   await expect(page.locator('#toast')).toContainText('had not reached your account');
+  await page.waitForTimeout(5000);
+  await expect(page.locator('#toast')).toContainText('had not reached your account'); // long enough to read
 });
 
 // ---- round 14 ----
@@ -2033,6 +2037,7 @@ test('a sign-out still finishing never ends the next session, and the next accou
   await form.locator('[name=email]').fill(b.email);
   await form.locator('[name=password]').fill(b.password);
   await form.locator('[type=submit]').click();
+  await expect(form.locator('[type=submit]')).toHaveText('Finishing the last sign-out…');
   // A's workouts are on the phone, so B is asked first.
   await sheetAction(page, 'Replace with my account’s data').catch(async () => {
     await page.locator('.sheet-backdrop.open').getByRole('button', { name: 'Replace with my account’s data' }).click({ timeout: 15000 });
@@ -2050,8 +2055,7 @@ test('a slow but successful "Sign out on all devices" is reported as done', asyn
   await page.locator('.page.active [data-open-settings]').click();
   await page.locator('[data-signout]').click();
   await sheetAction(page, 'Sign out on all devices');
-  await expect(page.locator('#toast')).toContainText('Signed out.', { timeout: 20000 });
-  await expect(page.locator('#toast')).not.toContainText('could not');
+  await expect(page.locator('#toast')).toContainText('on all your other devices', { timeout: 20000 });
 });
 
 test('an open workout follows a sync that defuses its exercise names', async ({ page }) => {
@@ -2179,4 +2183,58 @@ test('another tab stops syncing when this one signs out and removes the data', a
   await one.evaluate(async () => (await import('/js/cloud/sync.js')).signOut({ removeLocalData: true }));
   await two.waitForTimeout(8000); // tab 2's read has come back
   expect(await one.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('gymLogs') || '{}')))).toEqual([]);
+});
+
+test('a message that waited behind a dialog is not lost when the dialog shows its own result', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await createWorkout(page, 'Upper', ['Pull-up', 'Dips']);
+  await page.locator('[data-edit="Upper"]').click();
+  const seen = [];
+  await page.exposeFunction('seenToast', (t) => seen.push(t));
+  await page.evaluate(() => { const t = document.getElementById('toast'); new MutationObserver(() => window.seenToast(t.textContent)).observe(t, { childList: true, subtree: true }); });
+  await page.locator('[data-rename]').click();
+  await page.evaluate(async () => { const { toast } = await import('/js/core/dom.js'); toast('No one is called @zed.', { tone: 'error' }); toast('Request sent to @b.'); });
+  const mark = seen.length;
+  await fillPrompt(page, 'Upper body');
+  await expect(page.locator('#toast')).toContainText('Renamed', { timeout: 3000 });
+  // The dialog's own result comes first.
+  expect(seen.slice(mark).findIndex((t) => t.startsWith('Renamed'))).toBeLessThan(Math.max(0, seen.slice(mark).findIndex((t) => t.startsWith('No one'))) || 1e9);
+  // Both waited messages are shown afterwards, each for long enough to read.
+  await expect(page.locator('#toast')).toContainText('No one is called @zed.', { timeout: 8000 });
+  await expect(page.locator('#toastAlert')).toHaveText('No one is called @zed.');
+  await page.waitForTimeout(1500);
+  await expect(page.locator('#toast')).toContainText('No one is called @zed.');
+  await expect(page.locator('#toast')).toContainText('Request sent to @b.', { timeout: 12000 });
+  // A result that comes a little later does not hide a message that just got its turn.
+  await page.evaluate(async () => {
+    const { toast } = await import('/js/core/dom.js');
+    const { confirmDialog } = await import('/js/ui/sheet.js');
+    const closed = confirmDialog('Sure?');
+    await new Promise((res) => { setTimeout(res, 100); });
+    toast('Friend request accepted.');
+    document.querySelector('.sheet-backdrop.open [data-sheet-action="0"]').click();
+    await closed;
+    await new Promise((res) => { setTimeout(res, 600); });
+    toast('Done later.');
+  });
+  await expect(page.locator('#toast')).toContainText('Friend request accepted.', { timeout: 8000 });
+});
+
+test('waiting messages keep their order when a dialog opens over an error', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await createWorkout(page, 'Upper', ['Pull-up']);
+  await page.locator('[data-edit="Upper"]').click();
+  const seen = [];
+  let last = '';
+  await page.exposeFunction('seenToast2', (t) => { if (t && t !== last) seen.push(t); last = t; });
+  await page.evaluate(() => { const t = document.getElementById('toast'); new MutationObserver(() => window.seenToast2(t.textContent)).observe(t, { childList: true, subtree: true }); });
+  await page.evaluate(async () => { const { toast } = await import('/js/core/dom.js'); toast('Sync failed.', { tone: 'error' }); toast('First.', { background: true }); toast('Second.', { background: true }); });
+  await page.locator('[data-delete]').click();
+  const mark = seen.length;
+  await sheetAction(page, 'Cancel');
+  await expect.poll(() => seen.slice(mark).includes('Second.'), { timeout: 25000 }).toBe(true);
+  // After the dialog: the error again (still to be read), then the others in order.
+  expect(seen.slice(mark).filter((t) => ['Sync failed.', 'First.', 'Second.'].includes(t))).toEqual(['Sync failed.', 'First.', 'Second.']);
 });
