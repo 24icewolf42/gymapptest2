@@ -384,6 +384,30 @@ describe('hardening', () => {
     expect((await a.client.from('gym_dates').insert({ host_id: a.id, starts_at: new Date(Date.now() + 30 * 3600000).toISOString(), gym: 'G' })).error).not.toBeNull();
   });
 
+  it('keeps the count limits under parallel requests', async () => {
+    const a = await makeUser(uniqueName('par'));
+    const post = (i) => a.client.from('gym_dates').insert({ host_id: a.id, starts_at: new Date(Date.now() + (i + 1) * 3600000).toISOString(), gym: 'G' });
+    await Promise.all(Array.from({ length: 40 }, (_, i) => post(i)));
+    const { count } = await a.client.from('gym_dates').select('id', { count: 'exact', head: true }).eq('host_id', a.id);
+    expect(count).toBe(20);
+  });
+
+  it('stops a deploy on API-readable views, function overloads and extra live-update tables', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const { readFileSync } = await import('node:fs');
+    const check = readFileSync('supabase/migrations/20261024000006_verify_access.sql', 'utf8');
+    const run = (setup) => {
+      try {
+        execFileSync('docker', ['exec', '-i', 'supabase_db_gymapptest2', 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q'], { input: `begin;\n${setup}\n${check}\nrollback;`, encoding: 'utf8', stdio: 'pipe' });
+        return 'passed';
+      } catch (e) { return String(e.stderr).match(/Unexpected[^\n]*|Views[^\n]*|Tables[^\n]*/)?.[0] || String(e.stderr); }
+    };
+    expect(run('select 1;')).toBe('passed');
+    expect(run('create view public.all_weights as select * from public.body_weight_logs; grant select on public.all_weights to anon;')).toMatch(/Views readable/);
+    expect(run('create function public.find_profile(t text, n integer) returns int language sql as $$ select 1 $$; grant execute on function public.find_profile(text, integer) to authenticated;')).toMatch(/Unexpected functions/);
+    expect(run('alter publication supabase_realtime add table public.gym_date_rsvps;')).toMatch(/live updates/);
+  });
+
   it('removes the rate-limit records with the account', async () => {
     const { execFileSync } = await import('node:child_process');
     const q = (sql) => execFileSync('docker', ['exec', '-i', 'supabase_db_gymapptest2', 'psql', '-U', 'postgres', '-d', 'postgres', '-At', '-c', sql], { encoding: 'utf8' }).trim();

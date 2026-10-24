@@ -22,6 +22,8 @@ security definer
 set search_path = ''
 as $$
 begin
+  -- One writer per account at a time, so parallel requests can't all pass the count.
+  perform pg_advisory_xact_lock(hashtextextended('weights:' || new.user_id::text, 0));
   if new.log_date < date '1900-01-01' or new.log_date > current_date + 2 then
     raise exception 'A weigh-in needs a date between 1900 and today' using errcode = '22023';
   end if;
@@ -45,11 +47,14 @@ security definer
 set search_path = ''
 as $$
 begin
+  -- One writer per account and table at a time, so parallel requests can't all pass the count.
   if tg_table_name = 'shared_workouts' then
+    perform pg_advisory_xact_lock(hashtextextended('shared:' || new.owner_id::text, 0));
     if (select count(*) from public.shared_workouts s where s.owner_id = new.owner_id) >= 50 then
       raise exception 'You can share up to 50 routines' using errcode = '54000';
     end if;
   elsif tg_table_name = 'gym_dates' then
+    perform pg_advisory_xact_lock(hashtextextended('dates:' || new.host_id::text, 0));
     if (select count(*) from public.gym_dates g where g.host_id = new.host_id and g.created_at > now() - interval '1 day') >= 20 then
       raise exception 'You can post up to 20 gym dates a day' using errcode = '54000';
     end if;

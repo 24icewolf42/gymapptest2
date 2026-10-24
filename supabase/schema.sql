@@ -1323,6 +1323,8 @@ security definer
 set search_path = ''
 as $$
 begin
+  -- One writer per account at a time, so parallel requests can't all pass the count.
+  perform pg_advisory_xact_lock(hashtextextended('weights:' || new.user_id::text, 0));
   if new.log_date < date '1900-01-01' or new.log_date > current_date + 2 then
     raise exception 'A weigh-in needs a date between 1900 and today' using errcode = '22023';
   end if;
@@ -1346,11 +1348,14 @@ security definer
 set search_path = ''
 as $$
 begin
+  -- One writer per account and table at a time, so parallel requests can't all pass the count.
   if tg_table_name = 'shared_workouts' then
+    perform pg_advisory_xact_lock(hashtextextended('shared:' || new.owner_id::text, 0));
     if (select count(*) from public.shared_workouts s where s.owner_id = new.owner_id) >= 50 then
       raise exception 'You can share up to 50 routines' using errcode = '54000';
     end if;
   elsif tg_table_name = 'gym_dates' then
+    perform pg_advisory_xact_lock(hashtextextended('dates:' || new.host_id::text, 0));
     if (select count(*) from public.gym_dates g where g.host_id = new.host_id and g.created_at > now() - interval '1 day') >= 20 then
       raise exception 'You can post up to 20 gym dates a day' using errcode = '54000';
     end if;
@@ -1374,11 +1379,17 @@ create trigger gym_dates_count_limit before insert on public.gym_dates
 -- app version: the original app (still on some phones) puts routine and
 -- exercise names and the rest-day picture into the page unescaped, so a
 -- friend's shared routine could otherwise run code there. This app removes
--- these characters before saving. NOT VALID: only new writes are checked.
+-- these characters before saving. Plans and history are checked on new
+-- writes only (NOT VALID); existing shared routines are cleaned below.
 
 alter table public.shared_workouts drop constraint if exists shared_workouts_plain_text;
 alter table public.shared_workouts add constraint shared_workouts_plain_text
   check (title !~ '[<>"`]' and workout::text !~ '[<>`]|\\"') not valid;
+-- Shared routines are copies offered to friends: any that already carry markup
+-- are removed (the owner's own plan keeps the routine), so a payload planted
+-- before this deploy can't reach the original app either.
+delete from public.shared_workouts where title ~ '[<>"`]' or workout::text ~ '[<>`]|\\"';
+alter table public.shared_workouts validate constraint shared_workouts_plain_text;
 
 alter table public.workout_plans drop constraint if exists workout_plans_plain_text;
 alter table public.workout_plans add constraint workout_plans_plain_text check (
@@ -1391,11 +1402,14 @@ alter table public.workout_data add constraint workout_data_plain_text
   check (logs::text !~ '[<>`]|\\"') not valid;
 
 -- ===== 20261024000006_verify_access.sql =====
--- Stops the deploy if the live database has row-level security policies or
--- callable functions that these migrations don't define. Policies combine
--- with OR, so one extra permissive policy made in the dashboard (e.g. "Enable
--- read access for all users") would quietly undo the privacy rules. If this
--- fails, look at the names it lists and drop them, or add them here on purpose.
+-- Stops the deploy that applies it if the live database has row-level
+-- security policies (by name), callable functions (by signature), API-readable
+-- views or live-update tables that these migrations don't define. Policies
+-- with these names were re-created by the migrations before this one.
+-- Policies combine with OR, so one extra permissive policy made in the
+-- dashboard (e.g. "Enable read access for all users") would quietly undo the
+-- privacy rules. If this fails, look at what it lists and drop it, or add it
+-- here on purpose.
 do $$
 declare
   extra text;
@@ -1447,20 +1461,38 @@ begin
     raise exception 'Unexpected row-level security policies: %', extra;
   end if;
 
+  -- Exact signatures, so an overload left over from SQL-editor work is caught too.
   select string_agg(p.oid::regprocedure::text, '; ') into extra
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public'
     and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute'))
-    and p.proname not in ('delete_my_account', 'find_profile', 'friend_summaries', 'gym_date_counts', 'my_blocks', 'save_my_weights');
+    and p.oid::regprocedure::text not in ('delete_my_account()', 'find_profile(text)', 'friend_summaries()', 'gym_date_counts(uuid[])', 'my_blocks()', 'save_my_weights(jsonb)');
   if extra is not null then
     raise exception 'Unexpected functions callable through the API: %', extra;
   end if;
 
   select string_agg(c.relname, '; ') into extra
   from pg_class c join pg_namespace n on n.oid = c.relnamespace
-  where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity;
+  where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity;
   if extra is not null then
     raise exception 'Tables without row-level security: %', extra;
+  end if;
+
+  -- Views and other relations bypass row-level security unless built for it; the app needs none.
+  select string_agg(c.relname, '; ') into extra
+  from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public' and c.relkind in ('v', 'm', 'f')
+    and (has_table_privilege('anon', c.oid, 'select') or has_table_privilege('authenticated', c.oid, 'select'));
+  if extra is not null then
+    raise exception 'Views readable through the API: %', extra;
+  end if;
+
+  -- Live updates may carry only gym dates (replies would reveal who joined).
+  select string_agg(t.tablename, '; ') into extra
+  from pg_publication_tables t
+  where t.pubname = 'supabase_realtime' and t.schemaname = 'public' and t.tablename <> 'gym_dates';
+  if extra is not null then
+    raise exception 'Unexpected tables in live updates: %', extra;
   end if;
 end;
 $$;

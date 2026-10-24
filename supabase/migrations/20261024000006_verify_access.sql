@@ -1,8 +1,11 @@
--- Stops the deploy if the live database has row-level security policies or
--- callable functions that these migrations don't define. Policies combine
--- with OR, so one extra permissive policy made in the dashboard (e.g. "Enable
--- read access for all users") would quietly undo the privacy rules. If this
--- fails, look at the names it lists and drop them, or add them here on purpose.
+-- Stops the deploy that applies it if the live database has row-level
+-- security policies (by name), callable functions (by signature), API-readable
+-- views or live-update tables that these migrations don't define. Policies
+-- with these names were re-created by the migrations before this one.
+-- Policies combine with OR, so one extra permissive policy made in the
+-- dashboard (e.g. "Enable read access for all users") would quietly undo the
+-- privacy rules. If this fails, look at what it lists and drop it, or add it
+-- here on purpose.
 do $$
 declare
   extra text;
@@ -54,20 +57,38 @@ begin
     raise exception 'Unexpected row-level security policies: %', extra;
   end if;
 
+  -- Exact signatures, so an overload left over from SQL-editor work is caught too.
   select string_agg(p.oid::regprocedure::text, '; ') into extra
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public'
     and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute'))
-    and p.proname not in ('delete_my_account', 'find_profile', 'friend_summaries', 'gym_date_counts', 'my_blocks', 'save_my_weights');
+    and p.oid::regprocedure::text not in ('delete_my_account()', 'find_profile(text)', 'friend_summaries()', 'gym_date_counts(uuid[])', 'my_blocks()', 'save_my_weights(jsonb)');
   if extra is not null then
     raise exception 'Unexpected functions callable through the API: %', extra;
   end if;
 
   select string_agg(c.relname, '; ') into extra
   from pg_class c join pg_namespace n on n.oid = c.relnamespace
-  where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity;
+  where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity;
   if extra is not null then
     raise exception 'Tables without row-level security: %', extra;
+  end if;
+
+  -- Views and other relations bypass row-level security unless built for it; the app needs none.
+  select string_agg(c.relname, '; ') into extra
+  from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public' and c.relkind in ('v', 'm', 'f')
+    and (has_table_privilege('anon', c.oid, 'select') or has_table_privilege('authenticated', c.oid, 'select'));
+  if extra is not null then
+    raise exception 'Views readable through the API: %', extra;
+  end if;
+
+  -- Live updates may carry only gym dates (replies would reveal who joined).
+  select string_agg(t.tablename, '; ') into extra
+  from pg_publication_tables t
+  where t.pubname = 'supabase_realtime' and t.schemaname = 'public' and t.tablename <> 'gym_dates';
+  if extra is not null then
+    raise exception 'Unexpected tables in live updates: %', extra;
   end if;
 end;
 $$;
