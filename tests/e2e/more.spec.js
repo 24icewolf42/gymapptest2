@@ -480,7 +480,7 @@ test('a routine deleted in another tab while it is open is announced and can be 
   await open(a);
   await createWorkout(a, 'Legs', ['Plank']);
   await a.locator('[data-edit="Legs"]').click();
-  await a.locator('[data-ex="Plank"] input[data-field=note]').focus();
+  await a.locator('[data-ex="Plank"] input[data-field=note]').fill('seat 4');
   const b = await ctx.newPage();
   await open(b);
   await b.evaluate(() => {
@@ -493,7 +493,7 @@ test('a routine deleted in another tab while it is open is announced and can be 
   await a.locator('#toast .toast-action').click();
   // Back, with the editor open again.
   await expect(a.locator('#page-plan h1')).toHaveText('Legs');
-  expect(await a.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('gymCustomWorkouts'))))).toContain('Legs');
+  expect(await a.evaluate(() => JSON.parse(localStorage.getItem('gymCustomWorkouts')).Legs[0].note)).toBe('seat 4');
 });
 
 test('dialogs are described, toasts stay clear of the rest timer, and stacked sheets stay modal', async ({ page }) => {
@@ -601,9 +601,108 @@ test('the "someone else used this phone" question is asked only in the tab that 
   await one.locator('#authForm [name=password]').fill(y.password);
   await one.locator('#authForm [type=submit]').click();
   await expect(one.getByText('Someone else used this phone')).toBeVisible({ timeout: 15000 });
-  await two.waitForTimeout(1500);
+  // Positive signal: tab two knows another window handles the sign-in.
+  await expect.poll(() => two.evaluate(async () => (await import('/js/cloud/sync.js')).account.status)).toBe('Finish signing in in the other window.');
   await expect(two.locator('.sheet-backdrop.open')).toHaveCount(0);
   await expect(two.locator('#weightInput')).toBeFocused();
   await sheetAction(one, 'Add them to my account');
   await expect(one.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 15000 });
+});
+
+test('the Undo goes when the workout closes, and is out of reach under a dialog', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await createWorkout(page, 'Pull', ['Lat Pulldown']);
+  await scheduleToday(page, 'Pull');
+  await tab(page, 'today');
+  await page.locator('#startToday').click();
+  await page.locator('#sessionMain').click();
+  const card = page.locator('#session .ex-card').first();
+  await card.locator('.w').last().fill('10');
+  await card.locator('[data-remove]').click();
+  await expect(page.locator('#toast .toast-action')).toBeVisible();
+  // A dialog opens: Tab can't reach the Undo behind it.
+  await page.evaluate(async () => { (await import('/js/ui/sheet.js')).confirmDialog('Finish?'); });
+  await expect.poll(() => page.evaluate(() => document.querySelector('#toast .toast-action')?.inert)).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => document.querySelector('#toast .toast-action')?.inert)).toBe(false);
+  await page.locator('#sessionBack').click();
+  await expect(page.locator('#toast .toast-action')).toHaveCount(0);
+});
+
+test('calendar: Today moves keyboard focus, and the chosen day keeps the tab stop', async ({ browser }) => {
+  const ctx = await newPhone(browser);
+  await ctx.route('**/cloud-config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: 'window.GYM_CLOUD_CONFIG = {};' }));
+  const page = await ctx.newPage();
+  await open(page);
+  await tab(page, 'calendar');
+  const today = await page.evaluate(() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); });
+  await page.locator('[data-jump-today]').click();
+  await expect(page.locator(`[data-day="${today}"]`)).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  const chosen = await page.evaluate(() => document.activeElement.dataset.day);
+  // A change from another tab re-renders the calendar.
+  const other = await ctx.newPage();
+  await open(other);
+  await other.evaluate(() => localStorage.setItem('gymSettings', JSON.stringify({ weightStep: 2.5 })));
+  await page.waitForTimeout(500);
+  expect(await page.evaluate((d) => document.querySelector(`[data-day="${d}"]`).getAttribute('tabindex'), chosen)).toBe('0');
+  // The Undo focus ring is visible against the toast.
+  await page.evaluate(async () => (await import('/js/core/dom.js')).toast('Removed.', { action: { label: 'Undo', onClick: () => {} } }));
+  await page.locator('#toast .toast-action').focus();
+  const [ring, bg] = await page.evaluate(() => [getComputedStyle(document.querySelector('#toast .toast-action')).outlineColor, getComputedStyle(document.getElementById('toast')).backgroundColor]);
+  expect(ring).not.toBe(bg);
+});
+
+test('signing out elsewhere removes Share without putting focus on Delete', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('shr'));
+  const ctx = await newPhone(browser);
+  const page = await ctx.newPage();
+  await open(page); await signInAs(page, u);
+  await createWorkout(page, 'Upper', ['Dips']);
+  await page.locator('[data-edit="Upper"]').click();
+  await page.locator('[data-share]').focus();
+  const other = await ctx.newPage();
+  await open(other);
+  await other.evaluate(async () => (await import('/js/cloud/client.js')).supabase.auth.signOut());
+  await expect(page.locator('[data-share]')).toHaveCount(0, { timeout: 15000 });
+  expect(await page.evaluate(() => document.activeElement.matches('.danger'))).toBe(false);
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
+});
+
+test('closing the sheet while a gym date is being posted takes it back', async ({ browser }) => {
+  const { pa, a, errors } = await friendsPair(browser, 'tb');
+  await tab(pa, 'crew');
+  await pa.route('**/rest/v1/gym_dates*', async (r) => {
+    if (r.request().method() === 'POST') await new Promise((res) => setTimeout(res, 800));
+    return r.continue();
+  });
+  await pa.locator('[data-quick="60"]').click();
+  await pa.locator('.sheet-backdrop.open .date-sheet [name=gym]').fill('Taken Back Gym');
+  await pa.locator('.sheet-backdrop.open .date-sheet [type=submit]').click();
+  await pa.keyboard.press('Escape');
+  await expect(pa.locator('#toast')).toContainText('taken back', { timeout: 15000 });
+  const rows = (await a.client.from('gym_dates').select('cancelled_at').eq('gym', 'Taken Back Gym')).data;
+  expect(rows).toHaveLength(1);
+  expect(rows[0].cancelled_at).not.toBeNull();
+  expect(errors.flat()).toEqual([]);
+});
+
+test('Try again keeps its place and says how it went', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('rty'));
+  const page = await (await newPhone(browser)).newPage();
+  let fail = true;
+  await page.route('**/rest/v1/rpc/my_blocks*', (r) => (fail ? r.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"down"}' }) : r.continue()));
+  await open(page); await signInAs(page, u);
+  await page.locator('.page.active [data-open-settings]').click();
+  const retry = page.locator('[data-retry-blocks]');
+  await retry.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#toastAlert')).not.toBeEmpty();
+  await expect(retry).toBeFocused();
+  fail = false;
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#toast')).toContainText('Loaded');
 });
