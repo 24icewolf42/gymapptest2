@@ -2366,3 +2366,63 @@ test('food and drink before and after a workout are saved with it, synced and sh
   await expect(page.locator('.sheet-backdrop.open .log-food')).toContainText('Before');
   await expect(page.locator('.sheet-backdrop.open .log-food')).toContainText('25 g protein');
 });
+
+test('food: a removed entry stays removed, usual amounts are accepted, typos are explained', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await createWorkout(page, 'Push', ['Dips']);
+  await scheduleToday(page, 'Push');
+  await tab(page, 'today');
+  await page.locator('#startToday').click();
+  const session = page.locator('#session');
+  const sheet = page.locator('.sheet-backdrop.open .food-sheet');
+  await session.locator('[data-food="pre"]').click();
+  await sheet.locator('[data-item="meal"]').click();
+  await sheet.locator('[data-item="nothing"]').click();
+  await expect(sheet.locator('[data-item="meal"]')).toHaveAttribute('aria-pressed', 'false');
+  await sheet.locator('[name=water]').fill('330');
+  await sheet.locator('[name=protein]').fill('22.5');
+  await sheetAction(page, 'Save');
+  await expect(session.locator('[data-food-summary="pre"]')).toHaveText('Nothing · 330 ml water · 22.5 g protein');
+  // Save the workout, then open it again to edit, remove the food, close and reopen: it stays removed.
+  await session.getByRole('button', { name: 'Start workout' }).click();
+  await session.locator('.ex-card').first().locator('.r').first().fill('8');
+  await session.locator('.ex-card').first().locator('.check').first().click();
+  await session.getByRole('button', { name: 'Finish workout' }).click();
+  await sheetAction(page, 'Save workout');
+  await expect(session).toBeHidden();
+  await page.locator('[data-start="Push"]').click();
+  await expect(session.locator('[data-food-summary="pre"]')).toContainText('330 ml');
+  await session.locator('[data-food="pre"]').click();
+  await sheetAction(page, 'Remove');
+  await expect(session.locator('[data-food-summary="pre"]')).toHaveText('Not logged');
+  await page.locator('#sessionBack').click();
+  await expect(session).toBeHidden();
+  await page.locator('[data-start="Push"]').click();
+  await expect(session.locator('[data-food-summary="pre"]')).toHaveText('Not logged');
+  // Something that is not a number is explained, not dropped.
+  await session.locator('[data-food="post"]').click();
+  await sheet.locator('[name=water]').pressSequentially('5e');
+  await sheetAction(page, 'Save');
+  await expect(sheet.locator('.form-error')).toContainText('Water');
+});
+
+test('theme: no dark flash for a light theme, and it follows the settings after sign-out removes them', async ({ page }) => {
+  await offline(page);
+  await page.addInitScript(() => { if (!sessionStorage.getItem('x')) { localStorage.setItem('gymSettings', JSON.stringify({ weightStep: 0, theme: { base: 'light', preset: 'mint' } })); sessionStorage.setItem('x', '1'); } });
+  let release;
+  const held = new Promise((r) => { release = r; });
+  await page.route('**/js/main.js', async (r) => { await held; return r.continue(); });
+  await page.goto('/', { waitUntil: 'commit' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light'); // before the app has loaded
+  release();
+  await expect(page.locator('#page-today h1')).toHaveText('Today');
+  // The settings are gone (as after "Sign out and remove my data"): the default theme comes back.
+  await page.evaluate(async () => {
+    localStorage.removeItem('gymSettings');
+    const { loadState } = await import('/js/state.js');
+    loadState();
+    (await import('/js/core/store.js')).emit('gym:account');
+  });
+  await expect(page.locator('html')).not.toHaveAttribute('data-theme', 'light');
+});
