@@ -8,7 +8,14 @@ import { randomUUID } from 'node:crypto';
 export function trackErrors(page) {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|ERR_|net::/.test(m.text())) errors.push(m.text()); });
+  // WebKit's test tooling injects a "body {}" style that the CSP refuses; that is not the app
+  // (the Chromium runs still catch any inline style of the app's own).
+  const webkit = page.context().browser()?.browserType().name() === 'webkit';
+  page.on('console', (m) => {
+    if (m.type() !== 'error' || /Failed to load resource|ERR_|net::/.test(m.text())) return;
+    if (webkit && /^Refused to apply a stylesheet because/.test(m.text())) return;
+    errors.push(m.text());
+  });
   page.on('response', (r) => { if (r.status() >= 500) errors.push(`HTTP ${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`); });
   return errors;
 }

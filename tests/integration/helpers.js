@@ -1,18 +1,18 @@
 // Shared setup for tests that talk to the local Supabase stack (`npx supabase start`).
-import { execFileSync } from 'node:child_process';
+import { supabaseStatus } from '../supabase-status.js';
 import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 
 let env = null;
 export function localEnv() {
   if (env) return env;
-  const out = execFileSync('npx', ['supabase', 'status', '-o', 'env'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  const out = supabaseStatus();
   env = {};
   out.split('\n').forEach((line) => {
     const m = /^([A-Z_]+)="?(.*?)"?$/.exec(line.trim());
     if (m) env[m[1]] = m[2];
   });
-  if (!env.API_URL || !env.ANON_KEY || !env.SERVICE_ROLE_KEY) throw new Error('Local Supabase is not running. Start it with `npx supabase start`.');
+  if (!env.API_URL || !env.ANON_KEY || !env.SERVICE_ROLE_KEY || !/^http:\/\/(127\.0\.0\.1|localhost):/.test(env.API_URL)) throw new Error('Local Supabase is not running. Start it with `npx supabase start`.');
   return env;
 }
 
