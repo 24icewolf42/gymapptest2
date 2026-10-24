@@ -2259,7 +2259,8 @@ test('a custom rest-day picture shows on rest days and in "Coming up"', async ({
   await page.locator('[data-pick-image]').click();
   await (await chooser2).setFiles({ name: 'photo.heic', mimeType: 'image/heic', buffer: Buffer.from('not really a picture') });
   await expect(page.locator('#toast')).toContainText('format can’t be used');
-||||||| parent of 5498b45 (feat(theme): add light theme, color presets and own primary color)
+});
+
 // ---- features: theming ----
 
 test('appearance: light or dark, a preset or own color, kept readable and remembered', async ({ page }) => {
