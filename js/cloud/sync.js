@@ -22,8 +22,12 @@ export const account = {
   lastSync: 0,
 };
 
-let accountSwitchHandler = async () => 'merge';
-/** UI hook: decides what happens when a different account signs in on this phone. Returns 'replace' | 'merge' | 'cancel'. */
+let accountSwitchHandler = async () => 'cancel';
+/**
+ * UI hook: decides what happens to this phone's data when an account signs in
+ * that it did not come from. Gets { email, first } (first: the phone never had
+ * an account). Returns 'replace' | 'merge' | 'cancel' ('replace' only if not first).
+ */
 export function onAccountSwitch(handler) { accountSwitchHandler = handler; }
 
 function setStatus(text, tone = 'default') {
@@ -93,10 +97,20 @@ function resetAccountBookkeeping() {
   state.sync = { ...state.sync, syncedWeightDates: [], pendingWeightDeletes: {} };
 }
 
+// Set when the user signs in through the app's own form, which is their own
+// decision to back up this phone's data in that account.
+let formSignInAt = 0;
+const FORM_SIGN_IN_MS = 2 * 60 * 1000;
+
 async function startSession(user) {
   const owner = state.sync.accountId;
-  if (owner && owner !== user.id && hasLocalData()) {
-    const choice = await accountSwitchHandler();
+  if (!owner && hasLocalData() && Date.now() - formSignInAt > FORM_SIGN_IN_MS) {
+    // Signed in some other way (e.g. a link): ask before the data goes to that account.
+    const choice = await accountSwitchHandler({ email: user.email || '', first: true });
+    if (account.user?.id !== user.id) return;
+    if (choice !== 'merge') { await supabase.auth.signOut(); return; }
+  } else if (owner && owner !== user.id && hasLocalData()) {
+    const choice = await accountSwitchHandler({ email: user.email || '', first: false });
     if (account.user?.id !== user.id) return;
     if (choice === 'cancel') { await supabase.auth.signOut(); return; }
     if (choice === 'replace') {
@@ -368,6 +382,7 @@ export async function syncAll() {
 
 // ---------- account actions (return an error message, or '' on success) ----------
 export async function signIn(email, password) {
+  formSignInAt = Date.now();
   const r = await supabase.auth.signInWithPassword({ email, password });
   return r.error ? errorText(r.error) : '';
 }
@@ -375,6 +390,7 @@ export async function signIn(email, password) {
 export async function signUp(email, password, username) {
   // The age/permission confirmation is recorded with the account.
   const data = { username, age_confirmed: 'true' };
+  formSignInAt = Date.now();
   const r = await supabase.auth.signUp({ email, password, options: { data, emailRedirectTo: SITE_URL } });
   if (r.error) return errorText(r.error);
   return r.data.session ? '' : 'confirm-email';
@@ -387,6 +403,7 @@ export async function resetPassword(email) {
 
 /** Signs in with the code from a password-reset email; PASSWORD_RECOVERY then asks for a new password. */
 export async function verifyRecoveryCode(email, token) {
+  formSignInAt = Date.now();
   const r = await supabase.auth.verifyOtp({ email, token, type: 'recovery' });
   // Success fires PASSWORD_RECOVERY through onAuthStateChange, which asks for the new password.
   return r.error ? errorText(r.error, 'That code did not work. Request a new email and try again.') : '';

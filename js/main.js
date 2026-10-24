@@ -81,10 +81,18 @@ window.addEventListener('storage', (e) => {
   refresh();
 });
 
-// A different account signing in on this phone must not absorb the previous person's data.
-onAccountSwitch(() => openSheet({
+// An account this phone's data did not come from signed in: nothing joins it
+// without asking, and the question names the account.
+onAccountSwitch(({ email, first }) => openSheet(first ? {
+  title: 'Add this phone’s workouts to this account?',
+  body: html`<p class="sheet-text">You are signed in as <b>${email}</b>. The workouts, plan and weigh-ins on this phone will be saved in that account. If you did not sign in yourself, sign out.</p>`,
+  actions: [
+    { label: 'Add them to this account', value: 'merge', tone: 'primary' },
+    { label: 'Sign out', value: 'cancel', tone: 'ghost' },
+  ],
+} : {
   title: 'Someone else used this phone',
-  body: html`<p class="sheet-text">This phone has workouts from another account. What should happen to them?</p>`,
+  body: html`<p class="sheet-text">You are signed in as <b>${email}</b>, but this phone has workouts from another account. What should happen to them?</p>`,
   actions: [
     { label: 'Replace with my account’s data', value: 'replace', tone: 'primary' },
     { label: 'Add them to my account', value: 'merge', tone: 'secondary' },

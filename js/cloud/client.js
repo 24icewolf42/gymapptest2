@@ -27,7 +27,9 @@ function boundedFetch(input, init = {}) {
 
 export const supabase = cloudConfigured()
   ? window.supabase.createClient(cfg.url, cfg.anonKey, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+    // PKCE: a sign-in link is accepted only by the browser that asked for it,
+    // so nobody can sign this app into their account by sending a link.
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' },
     global: { fetch: boundedFetch },
     // Sync retries on its own schedule; built-in backoff (1+2+4 s per request) only delays errors.
     db: { retry: false },

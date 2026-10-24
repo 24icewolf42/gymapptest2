@@ -314,3 +314,19 @@ test('an unsaved extra workout of a day can be opened again', async ({ page }) =
   await openFresh();
   await expect(page.locator('#session .w').first()).toHaveValue('120');
 });
+
+test('a link with someone else\'s session does not sign in or take this phone\'s data', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const other = await makeUser(uniqueName('csrf'));
+  const { session } = (await other.client.auth.getSession()).data;
+  await page.addInitScript(() => {
+    if (localStorage.getItem('seeded')) return;
+    localStorage.setItem('seeded', '1');
+    localStorage.setItem('bodyWeightLogs', JSON.stringify([{ date: '2026-10-20', weight: 48.3 }]));
+  });
+  await page.goto(`/#access_token=${session.access_token}&refresh_token=${session.refresh_token}&expires_in=3600&token_type=bearer&type=magiclink`);
+  await expect(page.locator('#page-today h1')).toHaveText('Today');
+  await page.waitForTimeout(3000);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('gymSyncState') || '{}').accountId ?? null)).toBeNull();
+  expect((await other.client.from('body_weight_logs').select('log_date').eq('user_id', other.id)).data).toEqual([]);
+});
