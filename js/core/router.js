@@ -106,9 +106,16 @@ export function initNav() {
 
 function setupSwipe() {
   let startX = 0, startY = 0, tracking = false, horizontal = false;
-  const ignore = 'input, textarea, select, .no-swipe, .sheet-backdrop, .session, .graph';
+  const ignore = 'input, textarea, select, .no-swipe, .sheet-backdrop, .session, .graph, [data-drag]';
+  // Anything that scrolls sideways (e.g. chip rows) keeps its own swipe.
+  const inSideScroller = (el) => {
+    for (; el && el !== document.body; el = el.parentElement) {
+      if (el.scrollWidth > el.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return true;
+    }
+    return false;
+  };
   document.addEventListener('touchstart', (e) => {
-    tracking = !e.target.closest(ignore) && TABS.includes(current);
+    tracking = !e.target.closest(ignore) && !inSideScroller(e.target) && TABS.includes(current);
     if (!tracking) return;
     startX = e.touches[0].clientX; startY = e.touches[0].clientY; horizontal = false;
   }, { passive: true });
