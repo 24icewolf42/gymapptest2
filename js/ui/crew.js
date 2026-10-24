@@ -376,7 +376,15 @@ async function openDateSheet(minutes) {
     button.removeAttribute('aria-busy');
     // Closed while sending: the user changed their mind, so the date is taken back.
     if (!sheet.closest('.sheet-backdrop.open')) {
-      if (!r.error) { await api.cancelDate(r.data.id); toast('Gym date not posted.'); refreshCrew(); }
+      if (!r.error) {
+        const c = await api.cancelDate(r.data.id);
+        toast(c.error ? 'The gym date was posted and could not be taken back. Cancel it in Crew.' : 'Gym date taken back: you closed the sheet while it was being posted.', { tone: c.error ? 'error' : 'default' });
+        refreshCrew();
+      } else {
+        // It may still have reached the server (e.g. a timeout): show what is there.
+        toast('Posting the gym date failed or timed out. Check Crew whether it is there.', { tone: 'error' });
+        refreshCrew();
+      }
       return;
     }
     if (r.error) { err.textContent = r.error; return; }
