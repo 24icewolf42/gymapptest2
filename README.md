@@ -33,14 +33,14 @@ The app has **no build step**. Edit a file, reload, done. npm is only needed for
   - your username;
   - gym dates you post;
   - your replies and check-ins at any gym date they can see (a friend's date you reply to is seen by the host's other friends too: by name if they are your friends as well, otherwise only as a number);
-  - stats you choose to share: number of workouts, total kg × reps and training time (the database computes these from your synced history), your streak, and how many routines and exercises your plan has;
+  - stats you choose to share: number of workouts, total kg × reps and training time (the database computes these from your synced history, so they update after every synced workout and show when you trained and for how long), your streak, and how many routines and exercises your plan has;
   - routines you choose to share;
   - your latest weigh-in, **only** if you turn on *Show my weight to friends*. They never see your weigh-in history.
 - **Gym dates** are visible only to your friends, or only to the friends you pick. A date can be cancelled but not changed, so a reply always refers to the time and place it was given for. If someone is a friend of your friend but not yours, they appear only as a number ("+2"), never by name.
-- **Ending things:** you can decline or cancel requests, remove friends and block people. A removed or blocked person immediately loses access, and their replies to your gym dates (and yours to theirs) are removed; a blocked person can't find you or send requests again. Username searches are limited to 30 an hour, and friend requests to 20 a day. A blocked person isn't told: their requests just never arrive.
+- **Ending things:** you can decline or cancel requests, remove friends and block people. A removed or blocked person immediately loses access, and their replies to your gym dates (and yours to theirs) are removed; a blocked person can't find you or send requests again. Username searches are limited to 30 an hour, and friend requests to 20 a day. A blocked person gets no error message: their requests just never arrive (they could still notice that nothing happens).
 - **Age:** creating an account requires confirming you are 14 or older, or that a parent or guardian agreed. The app shows a short privacy notice (Settings → Privacy).
 - **Deleting your account** (Settings → Delete account) removes your account, everything stored for it in the cloud, and its entries in the sign-in audit log.
-- **Limits:** each account can store up to 1 MB of plan, 8 MB of workout history and 20,000 weigh-ins, far more than years of daily use.
+- **Limits:** each account can store up to 1 MB of plan, 8 MB of workout history, 20,000 weigh-ins and 50 shared routines, and post 20 gym dates a day (30 upcoming at once), far more than real use.
 - **Signing in** happens only through the app's own form (or the code in a reset email). A link with someone else's session is ignored, and if the app ever finds itself signed in to an account its data did not come from, it names the account and asks before anything is uploaded.
 - **Shared phone:** when you sign out you can remove your data from the phone (only after it reached your account, unless you accept losing what didn't). If a different account signs in, the app asks before mixing anyone's workouts, and nothing syncs until that is answered.
 - **Live updates** carry only gym-date changes your friendship allows you to see; who replied to a date is never broadcast.
@@ -84,7 +84,7 @@ only approved jobs can read them:
 | `SUPABASE_DB_PASSWORD` | secret | The database password |
 | `SUPABASE_PROJECT_REF` | variable | `aiiyombsmvlbhifxgkhp` |
 
-The five new migrations, applied in this order:
+The seven new migrations, applied in this order:
 
 1. `20261024000000_friendships.sql` closes a security hole and adds unfriending and blocking:
    - It **fixes a hole that let anyone make themselves an accepted friend of any user** and read their data.
@@ -98,6 +98,8 @@ The five new migrations, applied in this order:
 3. `20261024000002_gym_dates.sql` adds gym dates.
 4. `20261024000003_policy_performance.sql` speeds up the original row-level security policies and removes table rights the app never uses.
 5. `20261024000004_storage_limits.sql` limits how much one account can store (existing rows are not checked).
+6. `20261024000005_plain_text.sql` refuses markup characters (`< > " \``) in routine and exercise names, notes and logs, and anything but a picture as rest image. The original app shows those unescaped, so a shared routine could otherwise run code on phones that have not updated. Existing rows are not checked; a phone of the original app whose stored names contain those characters can't save its plan until they are renamed.
+7. `20261024000006_verify_access.sql` stops the deploy if the live database has row-level security policies or callable functions that these migrations don't define (for example one added in the dashboard). The error lists them: drop them, or add them to the migration on purpose, then run the deploy again.
 
 After the first deploy, check for friendships created through the hole. In
 particular, look for `accepted` rows that nobody remembers accepting:
@@ -134,7 +136,7 @@ pointed at the local database, installs it on a headless emulator and drives the
 real app through its WebView with Playwright.
 
 After adding a migration, run `npm run schema` to regenerate `supabase/schema.sql`.
-After a version bump, change `js/version.js`, `Version` and the `VERSION` in `sw.js`.
+After changing any file the app loads, run `npm run sw-hash` so installed copies re-cache it. After a version bump, change `js/version.js`, `Version` and the `VERSION` in `sw.js`.
 `tests/unit/project.test.js` fails if they disagree.
 
 ## Android signing

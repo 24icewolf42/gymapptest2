@@ -50,6 +50,24 @@ All findings are fixed in code. What remains for the app's owner is configuratio
 
 After the rework, three independent Opus reviews (security/privacy, data correctness, UX/accessibility/tests) rated the branch and listed findings. Every critical, major and minor finding and every nit was fixed and re-reviewed.
 
+### Round 5 (security 7.5/10, correctness 8/10, UX/tests 7.5/10)
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| R5-01 | Major | The database still accepted markup in shared routines, plans and the rest picture, which the original app runs | Database checks refuse markup characters in shared routines, plans and logs, and anything but image data as rest picture (20261024000005); this app strips those characters before saving; tests |
+| UX-M1 | Major | The username prompt reopened at every start and in every tab | Asked once, in the tab where the user just signed up; test |
+| UX-M2 | Major | Unkeyed sections made the renderer re-create what lay below them | Crew sections and lift cards are keyed, and the renderer looks a few elements ahead for a removed unkeyed one; tests assert the focused node itself survives |
+| UX-M3 | Major | Focus tests passed with a re-created copy | Tests hold the focused node and count blur events; checked against removed keys |
+| R5-02 | Minor | Stats card said "update after training" though totals are live | Card, privacy notice and README say the totals update after each synced workout and show when and how long someone trained |
+| R5-03 | Minor | Limits skipped shared routines and gym dates | 50 shared routines per account; 20 gym dates a day and 30 upcoming per host; test |
+| mi-1, mi-3 | Minor | Restored or merged-in workouts on a day cleared in the original app were deleted again | They get the current time (and a derived id), so both apps keep them |
+| mi-2 | Minor | Restore did not bring back routines deleted since | Restored routines and the week are stamped as changed now and leave the deleted list |
+| mi-4 | Minor | Two tabs both asked "Someone else used this phone" | An answer in one tab closes the question in the others and is the one that counts |
+| UX-m1..m8 | Minor | Success dropped after an error, last "Show more days", routine deleted elsewhere, Undo reach, toast over the rest timer, prompt not described, deleted-account prompt, stacked sheets | Only background messages yield to an error; focus goes to the first new day; a message with "Keep it"; Undo stays for keyboard users and Ctrl/Cmd+Z runs it; toast above the rest bar; aria-describedby on required prompts; a "Keep the workouts from the deleted account?" question; a lower sheet closing keeps the upper one modal |
+| n-1, n-2 | Nit | Long legacy keys cut, weigh-ins lost with a fast phone clock | Legacy keys kept whole; the server reports each weigh-in's outcome, and dates it refuses stay on the phone |
+| R5-N1..N4 | Nit | Block detectable, previous user's extras moved silently, PKCE row after deletion, no check of the live policies | Wording corrected; those extras count as data on the phone; the row is deleted; 20261024000006 stops the deploy on unknown policies or callable functions |
+| UX nits | Nit | Status announcements, focus after deletion, cache not refreshed without a version bump, live set counters | Background status is silent ("Sync now" reports its result); focus goes to the sign-in form; sw.js carries a content hash checked by a test (`npm run sw-hash`); one status line announces the changed set count |
+
 ### Round 4 (security 8/10, correctness 7.5/10, UX/tests 7/10)
 
 | ID | Severity | Finding | Fix |
