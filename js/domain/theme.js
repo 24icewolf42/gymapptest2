@@ -19,7 +19,7 @@ const SURFACES = {
 };
 const INKS = ['#0d0e10', '#ffffff'];
 const TEXT_CONTRAST = 4.5; // WCAG AA for normal text
-const TINT = 0.16; // the strongest tint of the color used behind text in it (css/app.css)
+const TINT = 0.25; // the strongest tint (stacked tints, e.g. a soft chip on a tinted card) of the color used behind text in it (css/app.css)
 
 export const DEFAULT_THEME = { base: 'dark', preset: 'lime', color: PRESETS[0].color };
 

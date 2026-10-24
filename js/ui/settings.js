@@ -14,7 +14,7 @@ import { loadBlocks, unblock } from '../cloud/social.js';
 import { openSheet, confirmDialog, promptDialog, markBusy } from './sheet.js';
 import { icons } from './icons.js';
 import { APP_VERSION } from '../version.js';
-import { PRESETS, sanitizeTheme } from '../domain/theme.js';
+import { PRESETS, sanitizeTheme, themeColors } from '../domain/theme.js';
 import { applyTheme, currentTheme } from './theme.js';
 import { updateOffer } from '../native.js';
 
@@ -130,15 +130,15 @@ function accountCard() {
 function appearanceCard() {
   const t = currentTheme();
   const bases = [['dark', 'Dark'], ['light', 'Light'], ['system', 'Match phone']];
-  const radio = (on, attrs, label, swatch = '') => html`<button type="button" class="chip${on ? ' on' : ''}" role="radio" aria-checked="${on ? 'true' : 'false'}" tabindex="${on ? '0' : '-1'}"${attrs}>${swatch}${label}</button>`;
+  const radio = (on, attrs, label, swatch = '', stop = on) => html`<button type="button" class="chip${on ? ' on' : ''}" role="radio" aria-checked="${on ? 'true' : 'false'}" tabindex="${stop ? '0' : '-1'}"${attrs}>${swatch}${label}</button>`;
   return html`<section class="card" data-key="appearance">
     <h2>Appearance</h2>
     <div class="field"><span id="baseLabel">Theme</span>
       <div class="chips wrap" role="radiogroup" aria-labelledby="baseLabel">${bases.map(([v, l]) => radio(t.base === v, raw(` data-base="${v}"`), l))}</div></div>
     <div class="field"><span id="colorLabel">Color</span>
-      <div class="chips wrap" role="radiogroup" aria-labelledby="colorLabel">${PRESETS.map((p) => radio(t.preset === p.id, raw(` data-preset="${p.id}"`), p.name, html`<span class="swatch swatch-${p.id}" aria-hidden="true"></span>`))}</div>
+      <div class="chips wrap" role="radiogroup" aria-labelledby="colorLabel">${PRESETS.map((p, i) => radio(t.preset === p.id, raw(` data-preset="${p.id}"`), p.name, html`<span class="swatch" data-swatch="${p.id}" aria-hidden="true"></span>`, t.preset === p.id || (t.preset === 'custom' && i === 0)))}</div>
       <label class="color-pick"><input type="color" data-custom-color value="${t.preset === 'custom' ? t.color : t.accent}"> <span>Your own color${t.preset === 'custom' ? ' (chosen)' : ''}</span></label>
-      ${t.adjusted ? html`<p class="hint" data-key="color-adjusted">Shown a little ${t.shown === 'light' ? 'darker' : 'lighter'} than chosen, so text in it stays readable.</p>` : ''}</div>
+      ${t.adjusted ? html`<p class="hint" data-key="color-adjusted">Shown ${t.shown === 'light' ? 'darker' : 'lighter'} than chosen in this theme, so text in it stays readable. The color dots show it as used.</p>` : ''}</div>
   </section>`;
 }
 
@@ -202,6 +202,9 @@ export function renderSettings() {
         <ol class="plain small"><li>Settings → Backup → Save file (or, if you are signed in, check that your account says “Synced”).</li><li>Uninstall Tracker.</li><li>Install the new version from the download page, then restore or sign in.</li></ol>` : ''}
       <button type="button" class="btn btn-primary btn-sm" data-apply-update${busyAttr(applyingUpdate)}>${applyingUpdate ? 'Working…' : updateOffer().action}</button></div>` : ''}
     <p class="about muted small" data-key="about"><button type="button" class="link-btn inline" data-privacy>Privacy</button> · <button type="button" class="link-btn inline" data-check-update>Check for updates</button></p>`);
+  // Color dots as they are shown in this theme (set through the CSS object model; inline styles are blocked).
+  const shown = currentTheme().shown;
+  $('page-settings').querySelectorAll('[data-swatch]').forEach((el) => { el.style.setProperty('background', themeColors({ preset: el.dataset.swatch }, shown).accent); });
   // Signed in or out from within the account card: focus its new heading.
   const card = $('page-settings').querySelector('[data-key^="account-"]');
   if (accountKey && card && card.dataset.key !== accountKey) {
@@ -520,6 +523,7 @@ export function initSettings() {
     renderSettings();
     try { await updateOffer()?.apply(); } finally { applyingUpdate = false; renderSettings(); }
   });
+  listen('gym:theme-changed', () => { if (currentPage() === 'settings') renderSettings(); });
   listen('gym:update-ready', () => {
     if (currentPage() !== 'settings') return;
     renderSettings();

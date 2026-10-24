@@ -1,6 +1,6 @@
 // Applies the chosen theme (Settings → Appearance) to the page.
 import { state } from '../state.js';
-import { listen } from '../core/store.js';
+import { listen, emit } from '../core/store.js';
 import { sanitizeTheme, resolveBase, themeColors } from '../domain/theme.js';
 
 const light = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: light)') : null;
@@ -27,7 +27,7 @@ export function applyTheme() {
 /** Follows the phone's dark/light setting while "Match phone" is chosen. */
 export function initTheme() {
   applyTheme();
-  light?.addEventListener?.('change', () => { if (sanitizeTheme(state.settings.theme).base === 'system') applyTheme(); });
+  light?.addEventListener?.('change', () => { if (sanitizeTheme(state.settings.theme).base === 'system') { applyTheme(); emit('gym:theme-changed'); } });
   // Settings removed at sign-out, or another account's on this phone: the page follows.
   listen('gym:account', applyTheme);
 }
