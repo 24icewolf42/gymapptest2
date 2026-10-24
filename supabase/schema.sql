@@ -1393,6 +1393,7 @@ create or replace function private.plain_json(j jsonb)
 returns jsonb
 language plpgsql
 immutable
+strict -- null in, null out (the NOT NULL constraints then refuse it)
 set search_path = ''
 as $$
 declare
@@ -1406,7 +1407,7 @@ begin
   loop
     prev := t;
     t := regexp_replace(t, '(^|[^\\])((\\\\)*)\\"', '\1\2”', 'g');
-    exit when t = prev;
+    exit when t is not distinct from prev;
   end loop;
   return t::jsonb;
 end;

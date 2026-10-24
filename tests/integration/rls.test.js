@@ -379,6 +379,14 @@ describe('hardening', () => {
     expect(logs['2026-01-01'][0].exercises[0].name).toBe('‹b›x‹/b›');
   });
 
+  it('refuses a null plan or history quickly instead of hanging', async () => {
+    const a = await makeUser(uniqueName('nul'));
+    const t0 = Date.now();
+    expect((await a.client.from('workout_plans').upsert({ user_id: a.id, plan: null })).error?.code).toBe('23502');
+    expect((await a.client.from('workout_data').upsert({ user_id: a.id, logs: {}, progress: null })).error).not.toBeNull();
+    expect(Date.now() - t0).toBeLessThan(3000);
+  });
+
   it('limits shared routines and gym dates per account', async () => {
     const a = await makeUser(uniqueName('cnt'));
     const rows = Array.from({ length: 50 }, (_, i) => ({ owner_id: a.id, title: 'R' + i, workout: [] }));
