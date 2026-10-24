@@ -46,7 +46,7 @@ echo "Release certificate SHA-256: $sha"
 # Backup for the owner (secrets cannot be read back from GitHub), encrypted to
 # their EC certificate; opening it needs the owner's password-protected private key.
 printf '%s\n' "$BACKUP_CERT" > owner.pem
-openssl x509 -in owner.pem -noout -text | grep -q 'id-ecPublicKey' || { echo "ERROR: the backup certificate must be EC (not RSA)" >&2; exit 1; }
+openssl x509 -in owner.pem -noout -text | grep -q 'Public Key Algorithm: id-ecPublicKey' || { echo "ERROR: the backup certificate must be EC (not RSA)" >&2; exit 1; }
 printf 'alias=tracker\npassword=%s\nsha256=%s\n' "$pass" "$sha" > key-info.txt
 tar -czf backup.tgz release.keystore lineage.bin key-info.txt
 openssl cms -encrypt -binary -aes256 -outform DER -in backup.tgz -out "$out" owner.pem
