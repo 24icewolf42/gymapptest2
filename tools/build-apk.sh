@@ -36,6 +36,9 @@ console.log('cloud-config.js ->', url);
 NODE
 fi
 
+# Only the Android app checks GitHub for a newer APK, so only its page may connect there.
+sed -i "s|connect-src 'self'|connect-src 'self' https://api.github.com|" "$OUT/www/index.html"
+
 # Plain-http backends (the local test database) need cleartext; other builds never allow it.
 CLEARTEXT=false
 case "${GYM_CLOUD_URL:-}" in http://*) CLEARTEXT=true ;; esac

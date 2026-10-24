@@ -48,6 +48,9 @@ describe('project', () => {
     expect(connect).toContain(host);
     expect(connect).toContain(host.replace(/^https/, 'wss'));
     expect(connect.filter((c) => c.includes('*'))).toEqual([]);
+    // GitHub (the APK update check) is added for the Android build only.
+    expect(connect).not.toContain('https://api.github.com');
+    expect(readFileSync('tools/build-apk.sh', 'utf8')).toContain("connect-src 'self' https://api.github.com");
   });
 
   it('keeps supabase/schema.sql generated from the migrations', () => {
