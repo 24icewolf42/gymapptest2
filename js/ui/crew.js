@@ -1,7 +1,7 @@
 // Crew tab: gym dates, friends and the leaderboard. All server traffic runs in
 // the background; results patch the page in place (render() keeps focus).
 import { cut } from '../core/text.js';
-import { $, html, render, on, toast, avatar, haptic, busyAttr } from '../core/dom.js';
+import { $, html, render, on, toast, toastLater, avatar, haptic, busyAttr } from '../core/dom.js';
 import { KEYS, read, write, listen, emit } from '../core/store.js';
 import { ymd, fmtTime, relativeDay, relativeFromNow, toLocalInput } from '../core/dates.js';
 import { refresh, currentPage } from '../core/router.js';
@@ -368,6 +368,7 @@ async function openDateSheet(minutes) {
     const inviteIds = pickOnly ? [...sheet.querySelectorAll('input[name=invite]:checked')].map((x) => x.value) : [];
     const problem = validateDraft(draft) || (pickOnly && !inviteIds.length ? 'Pick at least one friend.' : '');
     if (problem) { err.textContent = problem; return; }
+    const later = toastLater();
     const button = sheet.querySelector('[type=submit]');
     // Busy, not disabled: disabling the focused button would push focus out of the sheet.
     if (button.getAttribute('aria-disabled') === 'true') return;
@@ -380,11 +381,11 @@ async function openDateSheet(minutes) {
     if (!sheet.closest('.sheet-backdrop.open')) {
       if (!r.error) {
         const c = await api.cancelDate(r.data.id);
-        toast(c.error ? 'The gym date was posted and could not be taken back. Cancel it in Crew.' : 'Gym date taken back (you closed the sheet while it was being posted). Friends with the app open may already have seen it.', { tone: c.error ? 'error' : 'default' });
+        later(c.error ? 'The gym date was posted and could not be taken back. Cancel it in Crew.' : 'Gym date taken back (you closed the sheet while it was being posted). Friends with the app open may already have seen it.', { tone: c.error ? 'error' : 'default' });
         refreshCrew();
       } else {
         // It may still have reached the server (e.g. a timeout): show what is there.
-        toast('Posting the gym date failed or timed out. Check Crew whether it is there.', { tone: 'error' });
+        later('Posting the gym date failed or timed out. Check Crew whether it is there.', { tone: 'error' });
         refreshCrew();
       }
       return;
@@ -460,6 +461,7 @@ export function initCrew() {
   });
   // A retry the user asked for keeps its button (busy) and says how it went.
   on(page, 'click', '[data-retry]', async () => {
+    const toast = toastLater();
     retrying = true;
     renderCrew();
     await refreshCrew();
@@ -501,17 +503,25 @@ export function initCrew() {
     if (!(await confirmDialog('Your friends will see that it is off.', { title: 'Cancel this gym date?', ok: 'Cancel date', cancel: 'Keep it', danger: true }))) return;
     if (await act('date:' + id, () => api.cancelDate(id), 'Gym date cancelled.')) refreshCrew();
   });
-  on(page, 'submit', '#addFriendForm', async (e) => {
-    e.preventDefault();
-    const input = $('friendName');
-    const name = input.value;
-    if (!name.trim()) { input.focus(); return; }
+  // A name sent while the last request is on its way goes next, not lost.
+  let addQueue = Promise.resolve();
+  const sendRequest = async (name) => {
+    const toast = toastLater();
     let message = '';
     const ok = await act('add', async () => { const r = await social.sendFriendRequest(name); message = r.data; return r; });
     if (!ok) return;
     toast(message);
-    if (input.value === name) input.value = ''; // not what the user has typed since
+    const input = $('friendName');
+    if (input && input.value === name) input.value = ''; // not what the user has typed since
     refreshCrew();
+  };
+  on(page, 'submit', '#addFriendForm', (e) => {
+    e.preventDefault();
+    const input = $('friendName');
+    const name = input.value;
+    if (!name.trim()) { input.focus(); return; }
+    if (pending.has('add')) toast(`@${name.trim().replace(/^@/, '')} is sent next, after the request on its way.`);
+    addQueue = addQueue.then(() => sendRequest(name));
   });
   on(page, 'click', '[data-accept]', async (e, b) => { if (await act(b.dataset.accept, () => social.acceptRequest(b.dataset.accept), 'You are now friends.')) refreshCrew(); });
   on(page, 'click', '[data-decline]', (e, b) => removeOrBlock(b.dataset.decline, b.dataset.user, b.dataset.name, 'request'));

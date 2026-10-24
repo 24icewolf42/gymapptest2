@@ -10,7 +10,7 @@ let counter = 0;
  * Opens a bottom sheet. Resolves with the value of the action pressed, or with
  * whatever `close(value)` was called with; null when dismissed.
  * - body: SafeHtml (use html``)
- * - actions: [{ label, value, tone: 'primary'|'secondary'|'danger'|'ghost', submit, onClick(finish, sheet) }]
+ * - actions: [{ label, value, tone: 'primary'|'secondary'|'danger'|'ghost', submit, onClick(finish, sheet, button) }]
  *   listed in the order they are shown and read (main action first)
  * - onMount(sheet, close): wire up custom controls
  * - dismissible: false for a question that must be answered (no close button;
@@ -87,12 +87,13 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
     if (dismissible) sheet.querySelector('[data-sheet-close]').onclick = () => { if (closable()) finish(null); };
     sheet.querySelectorAll('[data-sheet-action]').forEach((b) => {
       const a = actions[+b.dataset.sheetAction];
-      if (!a.submit) b.onclick = () => { if (!sheet.dataset.busy) (a.onClick ? a.onClick(finish, sheet) : finish(a.value)); };
+      if (!a.submit) b.onclick = () => { if (!sheet.dataset.busy) (a.onClick ? a.onClick(finish, sheet, b) : finish(a.value)); };
     });
     sheet.addEventListener('submit', (e) => {
       e.preventDefault();
-      const a = actions.find((x) => x.submit);
-      if (a) a.onClick ? a.onClick(finish, sheet) : finish(a.value);
+      const i = actions.findIndex((x) => x.submit), a = actions[i];
+      if (!a || sheet.dataset.busy) return;
+      if (a.onClick) a.onClick(finish, sheet, sheet.querySelector(`[data-sheet-action="${i}"]`)); else finish(a.value);
     });
     if (dismissible) enableDragToClose(sheet, () => { if (closable()) finish(null); });
     onMount?.(sheet, finish);
@@ -129,6 +130,39 @@ function enableDragToClose(sheet, close) {
   });
 }
 
+/**
+ * Marks an open sheet busy while it waits for the server: the pressed button
+ * and a status line say what is happening (e.g. "Sending…"), fields are
+ * read-only, and the ways to close it are marked unavailable. Returns a
+ * function that ends the busy state.
+ */
+export function markBusy(sheet, button, label = 'Saving…') {
+  const closers = [...sheet.querySelectorAll('[data-sheet-close], [data-sheet-action]')].filter((b) => b !== button);
+  const fields = [...sheet.querySelectorAll('input, textarea')].filter((f) => !f.readOnly);
+  let status = sheet.querySelector('.form-status');
+  if (!status) {
+    status = document.createElement('p');
+    status.className = 'form-status';
+    status.setAttribute('aria-live', 'polite');
+    sheet.querySelector('.sheet-body').append(status);
+  }
+  const text = button.textContent;
+  sheet.dataset.busy = '1';
+  [button, ...closers].forEach((b) => b.setAttribute('aria-disabled', 'true'));
+  button.textContent = label;
+  fields.forEach((f) => { f.readOnly = true; });
+  const error = sheet.querySelector('.form-error');
+  if (error) error.textContent = '';
+  status.textContent = label;
+  return () => {
+    delete sheet.dataset.busy;
+    [button, ...closers].forEach((b) => b.removeAttribute('aria-disabled'));
+    button.textContent = text;
+    fields.forEach((f) => { f.readOnly = false; });
+    status.textContent = '';
+  };
+}
+
 export async function confirmDialog(message, { title = 'Are you sure?', ok = 'OK', cancel = 'Cancel', danger = false } = {}) {
   const value = await openSheet({
     title,
@@ -141,13 +175,16 @@ export async function confirmDialog(message, { title = 'Are you sure?', ok = 'OK
 /**
  * Asks for one value. `input` adds attributes for the field
  * (e.g. { inputmode: 'numeric', autocomplete: 'one-time-code' }).
+ * `busy` says what submit() is doing ("Sending…"); `required` makes it a
+ * question that only `cancel` (e.g. "Not now") or a valid answer closes.
  */
-export function promptDialog({ title, label, value = '', placeholder = '', maxLength = 80, hint = '', ok = 'Save', type = 'text', validate, input = {}, submit, trim = true }) {
+export function promptDialog({ title, label, value = '', placeholder = '', maxLength = 80, hint = '', ok = 'Save', type = 'text', validate, input = {}, submit, trim = true, busy = 'Saving…', cancel = 'Cancel', required = false }) {
   const extra = Object.entries({ autocomplete: 'off', ...input }).map(([k, v]) => html` ${k}="${v}"`);
   // The hint (why this is asked) and any error describe the field.
   const hintId = 'prompt-hint-' + ++counter, errorId = 'prompt-error-' + counter;
   return openSheet({
     title,
+    dismissible: !required,
     body: html`
       <label class="field"><span>${label}</span>
         <input class="input" name="value" type="${type}" value="${value}" placeholder="${placeholder}" maxlength="${maxLength}"${extra} aria-describedby="${hint ? hintId + ' ' : ''}${errorId}" autofocus>
@@ -166,28 +203,16 @@ export function promptDialog({ title, label, value = '', placeholder = '', maxLe
           if (error) { showError(error); return; }
           // submit(v) saves on the server and returns an error to show, or '' (the prompt stays open on an error).
           if (submit) {
-            // Saving: said in the status line, the field is read-only, and the
-            // ways to close are marked unavailable until the server answers.
-            const label = button.textContent;
-            const closers = [...sheet.querySelectorAll('[data-sheet-close], [data-sheet-action]:not([type=submit])')];
-            const status = sheet.querySelector('.form-error');
-            const busy = (on) => {
-              if (on) sheet.dataset.busy = '1'; else delete sheet.dataset.busy;
-              [button, ...closers].forEach((b) => (on ? b.setAttribute('aria-disabled', 'true') : b.removeAttribute('aria-disabled')));
-              button.textContent = on ? 'Saving…' : label;
-              field.readOnly = on;
-              status.textContent = on ? 'Saving…' : '';
-            };
-            busy(true);
+            const done = markBusy(sheet, button, busy);
             // A step that throws (e.g. the session ended) must not leave the prompt stuck.
             const failed = await Promise.resolve().then(() => submit(v)).catch((e) => (e && e.message) || 'Something went wrong. Try again.');
-            busy(false);
+            done();
             if (failed) { showError(failed); return; }
           }
           finish(v);
         },
       },
-      { label: 'Cancel', value: null, tone: 'ghost' },
+      { label: cancel, value: null, tone: 'ghost' },
     ],
   });
 }

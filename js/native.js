@@ -1,8 +1,7 @@
 // Platform glue: Android back button, APK self-update, the web update check,
 // the "get the app" banner and the offline service worker.
-import { $, html, toast, scriptURL } from './core/dom.js';
+import { $, toast, toastLater, scriptURL } from './core/dom.js';
 import { emit } from './core/store.js';
-import { openSheet } from './ui/sheet.js';
 import { handleNativeBack, currentPage } from './core/router.js';
 import { APP_VERSION } from './version.js';
 import { isNewer, parseRelease, releaseIsNewer } from './domain/release.js';
@@ -23,16 +22,16 @@ export function isNativeApp() {
 // An available update is offered in Settings (nothing appears over or above
 // the page while the user is using it), and announced once.
 let offer = null;
-/** The update on offer: { title, action, apply }, or null. */
+/** The update on offer: { title, action, apply, reinstall }, or null. */
 export const updateOffer = () => offer;
 // Found in the background it waits behind an Undo or an error; asked for, it answers at once.
-const announceOffer = (manual) => toast(currentPage() === 'settings'
+const announceOffer = (manual, show = toast) => show(currentPage() === 'settings'
   ? `${offer.title}. “${offer.action}” is just above “Check for updates”.`
   : `${offer.title}. Open Settings to ${offer.action.toLowerCase()}.`, { background: !manual });
-function offerUpdate(title, action, onTap, manual = false) {
+function offerUpdate(title, action, onTap, manual = false, show = toast) {
   const first = !offer;
   offer = { title, action, apply: onTap };
-  if (first || manual) announceOffer(manual);
+  if (first || manual) announceOffer(manual, show);
   emit('gym:update-ready');
 }
 
@@ -47,34 +46,35 @@ function installUpdate() {
   const P = plugin('ApkUpdater');
   if (!P) { toast('The updater is not available in this build.'); return Promise.resolve(); }
   toast('Downloading update…');
+  const later = toastLater(); // the download takes a while; the user may be elsewhere by then
   return P.install({ url: APK_URL })
-    .then(() => toast('Tap Install when Android asks.'))
+    .then(() => later('Tap Install when Android asks.'))
     .catch((e) => {
       if (e && e.code === 'SIGNATURE_MISMATCH') {
         // The installed app was not signed by the release key or its predecessor
         // (e.g. a test build): Android only allows the release as a fresh install.
-        openSheet({
-          title: 'One-time reinstall needed',
-          body: html`<p class="sheet-text">This update is signed with a different key than the app on this phone (for example a test build), so Android can't install it over it.</p>
-            <ol class="plain"><li>Settings → Backup → Save file (or sign in, so your data is in your account).</li><li>Uninstall Tracker.</li><li>Install the new version from the link below, then restore or sign in.</li></ol>`,
-          actions: [{ label: 'Open download page', value: 'open', tone: 'primary' }, { label: 'Later', value: null, tone: 'ghost' }],
-        }).then((v) => { if (v) window.open(APK_URL, '_blank'); });
+        // The steps replace the offer in Settings; nothing opens over the page.
+        offer = { title: 'One-time reinstall needed', action: 'Open download page', apply: () => { window.open(APK_URL, '_blank'); }, reinstall: true };
+        emit('gym:update-ready');
+        later(currentPage() === 'settings' ? 'This update needs a one-time reinstall. The steps are under “One-time reinstall needed”.' : 'This update needs a one-time reinstall. Open Settings for the steps.', { tone: 'error' });
         return;
       }
-      toast('Update failed: ' + ((e && e.message) || e), { tone: 'error' });
+      later('Update failed: ' + ((e && e.message) || e), { tone: 'error' });
     });
 }
 
 let lastApkCheck = 0;
 async function checkApk(manual) {
   if (!manual && Date.now() - lastApkCheck < 10 * 60 * 1000) return;
+  if (offer?.reinstall) { if (manual) announceOffer(true); return; } // keep the steps on screen
+  const toast = toastLater();
   lastApkCheck = Date.now();
   try {
     const r = await fetch(`https://api.github.com/repos/${APK_REPO}/releases/tags/latest`, { cache: 'no-store', headers: { Accept: 'application/vnd.github+json' } });
     const rel = r.ok ? parseRelease((await r.json()).name) : null;
     if (rel && releaseIsNewer(rel, await installedBuild())) {
-      offerUpdate(`Update available${rel.version ? ': v' + rel.version : ''}`, 'Download and install', installUpdate, manual);
-    } else if (manual) { if (offer) announceOffer(true); else toast('You have the latest version.'); }
+      offerUpdate(`Update available${rel.version ? ': v' + rel.version : ''}`, 'Download and install', installUpdate, manual, toast);
+    } else if (manual) { if (offer) announceOffer(true, toast); else toast('You have the latest version.'); }
   } catch { if (manual) toast('Could not check for updates. Are you online?'); }
 }
 
@@ -94,13 +94,14 @@ async function applyWebUpdate() {
 }
 
 async function checkWeb(manual) {
+  const toast = toastLater();
   try {
     const r = await fetch('./Version?t=' + Date.now(), { cache: 'no-store' });
     const data = r.ok ? await r.json() : null;
     // Only offer newer versions, so a stale cached file never prompts a downgrade.
     if (data && data.version && isNewer(data.version, APP_VERSION)) {
-      offerUpdate('New version available', 'Reload now', applyWebUpdate, manual);
-    } else if (manual) { if (offer) announceOffer(true); else toast('You have the latest version.'); }
+      offerUpdate('New version available', 'Reload now', applyWebUpdate, manual, toast);
+    } else if (manual) { if (offer) announceOffer(true, toast); else toast('You have the latest version.'); }
   } catch { if (manual) toast('Could not check for updates. Are you online?'); }
 }
 

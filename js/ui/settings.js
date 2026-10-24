@@ -1,5 +1,5 @@
 // Settings: account, privacy, training options, rest-day image, backup, about.
-import { $, html, render, on, toast, busyAttr } from '../core/dom.js';
+import { $, html, render, on, toast, toastLater, busyAttr } from '../core/dom.js';
 import { listen, readText, write, KEYS } from '../core/store.js';
 import { pushLayer, go, currentPage } from '../core/router.js';
 import { state, saveSettings, restImage, setRestImage, loadState, planTombstones, setPlanTombstones } from '../state.js';
@@ -11,7 +11,7 @@ import {
   deleteAccount, syncAll,
 } from '../cloud/sync.js';
 import { loadBlocks, unblock } from '../cloud/social.js';
-import { openSheet, confirmDialog, promptDialog } from './sheet.js';
+import { openSheet, confirmDialog, promptDialog, markBusy } from './sheet.js';
 import { icons } from './icons.js';
 import { APP_VERSION } from '../version.js';
 import { updateOffer } from '../native.js';
@@ -108,6 +108,7 @@ function accountCard() {
     <p class="status ${account.statusTone}">${account.status}</p>
     <div class="btn-row">
       <button type="button" class="btn btn-soft" data-sync>Sync now</button>
+      <button type="button" class="btn btn-soft" data-change-password>Change password</button>
       <button type="button" class="btn btn-ghost" data-signout${busyAttr(signingOut)}>${signingOut ? 'Syncing…' : 'Sign out'}</button>
     </div>
   </section>
@@ -178,7 +179,9 @@ export function renderSettings() {
     ${trainingCard()}
     ${backupCard()}
     ${dangerCard()}
-    ${updateOffer() ? html`<p class="notice update-notice" data-key="update"><b>${updateOffer().title}</b> <button type="button" class="btn btn-primary btn-sm" data-apply-update${busyAttr(applyingUpdate)}>${applyingUpdate ? 'Working…' : updateOffer().action}</button></p>` : ''}
+    ${updateOffer() ? html`<div class="notice update-notice" data-key="update"><b>${updateOffer().title}</b> <button type="button" class="btn btn-primary btn-sm" data-apply-update${busyAttr(applyingUpdate)}>${applyingUpdate ? 'Working…' : updateOffer().action}</button>
+      ${updateOffer().reinstall ? html`<p class="small">This update is signed with a different key than the app on this phone (for example a test build), so Android can't install it over it.</p>
+        <ol class="plain small"><li>Settings → Backup → Save file (or sign in, so your data is in your account).</li><li>Uninstall Tracker.</li><li>Install the new version from the download page, then restore or sign in.</li></ol>` : ''}</div>` : ''}
     <p class="about muted small" data-key="about"><button type="button" class="link-btn inline" data-privacy>Privacy</button> · <button type="button" class="link-btn inline" data-check-update>Check for updates</button></p>`);
   // Signed in or out from within the account card: focus its new heading.
   const card = $('page-settings').querySelector('[data-key^="account-"]');
@@ -273,7 +276,7 @@ async function restoreFrom(text) {
 async function forgotPassword() {
   // Each step waits for the server inside its own prompt ("Saving…"), so no
   // answer arrives later and opens something while the user is elsewhere.
-  const email = await promptDialog({ title: 'Reset password', label: 'Your account email', type: 'email', value: $('authForm')?.email.value || '', ok: 'Send email', maxLength: 120, submit: resetPassword });
+  const email = await promptDialog({ title: 'Reset password', label: 'Your account email', type: 'email', value: $('authForm')?.email.value || '', ok: 'Send email', busy: 'Sending…', maxLength: 120, submit: resetPassword });
   if (!email) return;
   // The email has a link (opens the web app) and, if the project's email
   // template includes it, a code that works right here, e.g. in the Android app.
@@ -281,7 +284,7 @@ async function forgotPassword() {
     title: 'Check your email',
     label: 'Code from the email',
     hint: 'Or tap the link in the email instead. It opens Tracker in your browser.',
-    ok: 'Continue', maxLength: 10, type: 'text', input: { inputmode: 'numeric', autocomplete: 'one-time-code' },
+    ok: 'Continue', busy: 'Checking…', maxLength: 10, type: 'text', input: { inputmode: 'numeric', autocomplete: 'one-time-code' },
     validate: (v) => (/^\d{6,10}$/.test(v) ? '' : 'Enter the code from the email.'),
     submit: (v) => verifyRecoveryCode(email, v),
   });
@@ -295,6 +298,7 @@ export function initSettings() {
   on(page, 'click', '[data-privacy]', (e) => { e.preventDefault(); showPrivacy(); });
   on(page, 'click', '[data-auth-mode]', (e, b) => { authMode = b.dataset.authMode; authError = ''; renderSettings(); $('auth-tab-' + authMode)?.focus({ preventScroll: true }); });
   on(page, 'click', '[data-retry-blocks]', async () => {
+    const toast = toastLater();
     retryingBlocks = true;
     renderSettings();
     await refreshBlocks();
@@ -320,6 +324,7 @@ export function initSettings() {
     if (signup && !/^[a-z0-9_]{3,20}$/.test(username)) { setAuthError('Usernames have 3–20 letters, numbers or _.'); return; }
     if (signup && !f.consent.checked) { setAuthError(`Please confirm you are ${MIN_AGE} or older, or have a parent's permission.`); f.consent.focus(); return; }
     if (busy) return;
+    const toast = toastLater();
     busy = true; renderSettings();
     const r = signup ? await signUp(email, password, username) : await signIn(email, password);
     busy = false;
@@ -331,29 +336,20 @@ export function initSettings() {
   on(page, 'click', '[data-forgot]', forgotPassword);
   // Background syncs update the status quietly; a sync the user asked for reports its result.
   on(page, 'click', '[data-sync]', async () => {
+    const toast = toastLater();
     const ok = await syncAll();
     toast(ok ? 'Synced.' : account.status || 'Sync failed.', { tone: ok ? 'default' : 'error' });
   });
-  on(page, 'click', '[data-signout]', async () => {
-    const choice = await openSheet({
-      title: 'Sign out?',
-      body: html`<p class="sheet-text">If someone else uses this phone, remove your workouts from it. They stay in your account. Signing out here keeps your other devices signed in; if one was lost or shared, sign out everywhere.</p>`,
-      actions: [
-        { label: 'Sign out, keep data here', value: 'keep', tone: 'secondary' },
-        { label: 'Sign out and remove my data', value: 'remove', tone: 'danger' },
-        { label: 'Sign out on all devices', value: 'everywhere', tone: 'secondary' },
-        { label: 'Cancel', value: null, tone: 'ghost' },
-      ],
-    });
-    if (!choice || signingOut) return;
+  // Each choice signs out inside the sheet ("Syncing…"), so its result and the
+  // "Not synced yet" question come while the user is still in it, never later.
+  const signOutStep = (choice) => async (finish, sheet, button) => {
+    if (signingOut) return;
     signingOut = true; renderSettings();
-    const r = await signOut({ removeLocalData: choice === 'remove', everywhere: choice === 'everywhere' });
-    signingOut = false; renderSettings();
-    if (r === 'everywhere-failed') {
-      toast('Signed out here, but your other devices could not be signed out (no connection?). Try again online, or change your password.', { tone: 'error' });
-      return;
-    }
-    if (r === 'not-synced') {
+    let done = markBusy(sheet, button, 'Syncing…');
+    try {
+      const r = await signOut({ removeLocalData: choice === 'remove', everywhere: choice === 'everywhere' });
+      if (r !== 'not-synced') { finish(r === 'everywhere-failed' ? r : 'out'); return; }
+      done(); done = null;
       const next = await openSheet({
         title: 'Not synced yet',
         body: html`<p class="sheet-text">Some workouts on this phone have not reached your account yet (no connection?). If you remove the data now, they are lost.</p>`,
@@ -363,12 +359,39 @@ export function initSettings() {
           { label: 'Stay signed in', value: null, tone: 'ghost' },
         ],
       });
-      if (!next) { toast('You are still signed in. Nothing was removed.'); return; }
+      if (!next) { finish('stayed'); return; }
+      done = markBusy(sheet, button, 'Signing out…');
       await signOut({ removeLocalData: next === 'remove', force: true });
-      toast(next === 'remove' ? 'Signed out and removed from this phone.' : 'Signed out. Your data stays on this phone.');
-      return;
+      finish(next === 'remove' ? 'removed' : 'kept');
+    } finally {
+      done?.();
+      signingOut = false; renderSettings();
     }
-    toast('Signed out.');
+  };
+  on(page, 'click', '[data-signout]', async () => {
+    if (signingOut) return;
+    const result = await openSheet({
+      title: 'Sign out?',
+      body: html`<p class="sheet-text">If someone else uses this phone, remove your workouts from it. They stay in your account. Signing out here keeps your other devices signed in; if one was lost or shared, sign out everywhere.</p>`,
+      actions: [
+        { label: 'Sign out, keep data here', tone: 'secondary', onClick: signOutStep('keep') },
+        { label: 'Sign out and remove my data', tone: 'danger', onClick: signOutStep('remove') },
+        { label: 'Sign out on all devices', tone: 'secondary', onClick: signOutStep('everywhere') },
+        { label: 'Cancel', value: null, tone: 'ghost' },
+      ],
+    });
+    const messages = {
+      out: 'Signed out.',
+      removed: 'Signed out and removed from this phone.',
+      kept: 'Signed out. Your data stays on this phone.',
+      stayed: 'You are still signed in. Nothing was removed.',
+    };
+    if (result === 'everywhere-failed') toast('Signed out here, but your other devices could not be signed out (no connection?). Try again online, or change your password.', { tone: 'error' });
+    else if (messages[result]) toast(messages[result]);
+  });
+  on(page, 'click', '[data-change-password]', async () => {
+    const pw = await promptDialog({ title: 'Change password', label: 'New password', type: 'password', maxLength: 72, ok: 'Save password', input: { autocomplete: 'new-password' }, trim: false, validate: (v) => (v.length >= 8 ? '' : 'Use at least 8 characters.'), submit: updatePassword });
+    if (pw) toast('Password changed.');
   });
   on(page, 'click', '[data-change-username]', async () => {
     const name = await promptDialog({ title: 'Change username', label: 'Username', value: account.profile?.username || '', maxLength: 20, hint: 'Friends find you by this exact name.', validate: (v) => (/^[a-z0-9_]{3,20}$/.test(v.toLowerCase()) ? '' : 'Use 3–20 letters, numbers or _.'), submit: changeUsername });
@@ -377,6 +400,7 @@ export function initSettings() {
   // Busy controls stay focusable (aria-disabled); on() cancels the click that would toggle one.
   on(page, 'click', '[data-share-weight]', () => {});
   on(page, 'change', '[data-share-weight]', async (e, input) => {
+    const toast = toastLater();
     const want = input.checked;
     savingWeight = true;
     renderSettings();
@@ -388,6 +412,7 @@ export function initSettings() {
   });
   on(page, 'click', '[data-unblock]', async (e, b) => {
     const id = b.dataset.unblock;
+    const toast = toastLater();
     unblocking.add(id);
     renderSettings();
     const r = await unblock(id);
@@ -447,6 +472,7 @@ export function initSettings() {
       ],
     });
     if (!result || deleting) return;
+    const toast = toastLater();
     deleting = true; renderSettings();
     const r = await deleteAccount({ removeLocalData: result.wipe });
     deleting = false; renderSettings();
@@ -482,9 +508,10 @@ export function initSettings() {
     if (askingPassword) return;
     askingPassword = true;
     // Kept exactly as typed (the sign-in form does not trim either); a refusal keeps the prompt open.
-    const pw = await promptDialog({ title: 'Choose a new password', label: 'New password', type: 'password', maxLength: 72, ok: 'Save password', input: { autocomplete: 'new-password' }, trim: false, validate: (v) => (v.length >= 8 ? '' : 'Use at least 8 characters.'), submit: updatePassword });
+    // A stray tap must not end the reset: only "Not now" or a saved password closes it.
+    const pw = await promptDialog({ title: 'Choose a new password', label: 'New password', type: 'password', maxLength: 72, ok: 'Save password', cancel: 'Not now', required: true, input: { autocomplete: 'new-password' }, trim: false, validate: (v) => (v.length >= 8 ? '' : 'Use at least 8 characters.'), submit: updatePassword });
     askingPassword = false;
-    if (pw) toast('Password changed.');
+    toast(pw ? 'Password changed.' : 'You can set a password later with “Change password” in Settings.');
   });
 }
 

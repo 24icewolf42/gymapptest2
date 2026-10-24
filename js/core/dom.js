@@ -270,6 +270,7 @@ export function busyAttr(isBusy) {
 let toastTimer = null;
 let toastOrigin = null;
 let errorUntil = 0;
+let shown = 0; // counts the messages shown, so a late answer can tell what came after its request
 const waiting = []; // background messages held back while an Undo or an error is on screen
 const TOAST_RESUME_MS = 3000;
 /**
@@ -277,12 +278,15 @@ const TOAST_RESUME_MS = 3000;
  * Errors stay longer and are announced assertively (through a separate alert
  * region). A background message waits while an Undo is on screen and does not
  * push aside a recent error; the user's own next result replaces either. The
- * toast stays while it has focus or the pointer.
+ * toast stays while it has focus or a mouse pointer.
+ * `since` (from toastLater) marks a late answer: anything shown after its
+ * request is newer, so the answer then waits like a background message.
  */
 export function toast(message, options = {}) {
   // background: not caused by the user (e.g. a friend's gym date); such a
   // message never pushes aside an error the user still has to read.
-  const { tone = 'default', ms = 2600, action = null, background = false } = options;
+  const { tone = 'default', ms = 2600, action = null, since = null } = options;
+  const background = !!options.background || (since != null && shown > since);
   const el = $('toast');
   if (!el) return;
   wireToast(el);
@@ -318,17 +322,31 @@ export function toast(message, options = {}) {
   el.dataset.tone = tone;
   el.classList.toggle('has-action', !!action);
   el.classList.add('show');
+  shown++;
   const duration = tone === 'error' ? Math.max(ms, 6000) : action ? Math.max(ms, 10000) : ms;
   if (tone === 'error') errorUntil = Date.now() + duration;
   scheduleHide(el, duration);
+}
+
+/**
+ * For an answer that arrives after an await: call it when the request starts,
+ * and show the answer with the function it returns. If the user got a newer
+ * message meanwhile (e.g. an Undo), the answer waits behind it.
+ */
+export function toastLater() {
+  const since = shown;
+  return (message, options = {}) => toast(message, { ...options, since });
 }
 
 const sheetOpen = () => !!document.querySelector('#sheetRoot .sheet-backdrop:not(.closing)');
 
 /** Keeps the toast's Undo out of reach while a dialog is open (called by the sheets). */
 export function updateToastReach() {
+  const open = sheetOpen();
   const b = document.querySelector('#toast .toast-action');
-  if (b) b.inert = sheetOpen();
+  if (b) b.inert = open;
+  // Taps go through to the dialog's buttons under it.
+  $('toast')?.classList.toggle('under-sheet', open);
 }
 
 /** Removes an Undo whose screen has gone (page change, workout closed): it could no longer act. */
@@ -362,9 +380,10 @@ function wireToast(el) {
   const hold = () => clearTimeout(toastTimer);
   const resume = () => { if (el.classList.contains('show')) scheduleHide(el, TOAST_RESUME_MS); };
   el.addEventListener('focusin', hold);
-  el.addEventListener('mouseenter', hold);
+  // Only a mouse holds it: a tap fires enter but no leave until something else is tapped.
+  el.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') hold(); });
   el.addEventListener('focusout', (e) => { if (!el.contains(e.relatedTarget)) resume(); });
-  el.addEventListener('mouseleave', () => { if (!el.contains(document.activeElement)) resume(); });
+  el.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse' && !el.contains(document.activeElement)) resume(); });
 }
 
 // Focus on the toast goes back to where the user was, not to the page top.
