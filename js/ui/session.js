@@ -149,6 +149,7 @@ export function openSession(day, date = ymd(), { key = null, fresh = false } = {
   const started = !!(activeHere && activeHere.key === sessionRef);
   s = {
     day, date, key: sessionRef, draftId: id, exercises, existing,
+    existingText: existing ? JSON.stringify(existing.exercises) : '', // to see a sync change it meanwhile
     started,
     startedAt: started ? activeHere.startedAt : (resume && Date.now() - (resume.active || 0) < DRAFT_STALE_MS ? resume.startedAt || 0 : 0),
     retro: date < today || !!existing,
@@ -413,6 +414,11 @@ async function finish() {
   );
   if (!ok || !s) return;
   const id = s.existing?.id || (s.key.startsWith(NEW) && s.key !== NEW + 'legacy' ? s.key.slice(NEW.length) : newSessionId());
+  // A logged workout that a sync defused while it was open: its text stays defused.
+  const stored = s.existing && (state.logs[s.date] || []).find((x) => sessionKey(s.date, x) === sessionKey(s.date, s.existing));
+  if (stored && JSON.stringify(stored.exercises) !== s.existingText) {
+    entry.forEach((x) => { x.name = defang(x.name); if (x.target) x.target = defang(x.target); x.sets.forEach((y) => { y.w = defang(String(y.w)); y.r = defang(String(y.r)); }); });
+  }
   const record = { id, day: s.day, exercises: entry, time: new Date().toISOString() };
   if (duration) record.duration = duration;
   const previous = state.logs[s.date];
@@ -449,19 +455,25 @@ export function initSession() {
   // A sync defused exercise names in the open workout's routine: the workout
   // follows, so it is saved (and its last-used values kept) under the new names.
   listen('gym:plan-updated', () => {
-    const names = new Set((state.workouts[s?.day] || []).map((e) => e.name));
-    if (!s || !names.size) return;
+    const routine = new Map((state.workouts[s?.day] || []).map((e) => [e.name, e]));
+    if (!s || !routine.size) return;
     let changed = false;
     s.exercises = s.exercises.map((e, i) => {
       const clean = defang(e.name);
-      if (names.has(e.name) || clean === e.name || !names.has(clean)) return e;
+      const now = routine.get(e.name) || (clean !== e.name ? routine.get(clean) : null);
+      if (!now) return e;
+      // The routine has the defused name or target: the workout takes it.
+      const target = now.target !== e.target && now.target === defang(e.target || '') ? now.target : e.target;
+      if (now.name === e.name && target === e.target) return e;
       changed = true;
-      const title = document.getElementById('ex-title-' + i);
-      if (title) title.textContent = clean;
-      // Its last-used values move along, so there are not two for one exercise.
-      if (state.lastUsed[e.name] && !state.lastUsed[clean]) state.lastUsed[clean] = { ...state.lastUsed[e.name], updatedAt: Date.now() };
-      delete state.lastUsed[e.name];
-      return { ...e, name: clean };
+      if (now.name !== e.name) {
+        const title = document.getElementById('ex-title-' + i);
+        if (title) title.textContent = now.name;
+        // Its last-used values move along, so there are not two for one exercise.
+        if (state.lastUsed[e.name] && !state.lastUsed[now.name]) state.lastUsed[now.name] = { ...state.lastUsed[e.name], updatedAt: Date.now() };
+        delete state.lastUsed[e.name];
+      }
+      return { ...e, name: now.name, target };
     });
     if (changed) { saveDraft(); saveLastUsed(); }
   });
