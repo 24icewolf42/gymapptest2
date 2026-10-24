@@ -50,6 +50,21 @@ All findings are fixed in code. What remains for the app's owner is configuratio
 
 After the rework, three independent Opus reviews (security/privacy, data correctness, UX/accessibility/tests) rated the branch and listed findings. Every critical, major and minor finding and every nit was fixed and re-reviewed.
 
+### Round 9 (security 8/10, correctness 7.5/10, UX/tests 7/10)
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| MA-1 | Major | Names with spaces at either end or over 40 characters were trimmed or cut, duplicating routines in the original app | Stored names are kept whole; only this app's own prompts trim and limit typing; test |
+| UX-M1 | Major | A successful "Try again" pulled focus from wherever the user had moved | The notice stays while retrying; focus moves only if the user is still on it |
+| UX-M2 | Major | Ten round-8 behaviours untested; the gym-date test could not fail | Tests for the heartbeat (3 minutes on a fake clock), a failed sign-in, request sizes, "Reload now", offers while Settings is open, retries with another tab's old error, the calendar tab stop, the Accept name, .btn-danger; each checked against its removal |
+| S9-01..S9-03 | Minor | Shared-phone data: foreign exercises in a known routine, additions after a sign-out that kept the data, and the previous person's deletions | Exercises new to a known routine are defused; data added after such a sign-out is distrusted at the next sign-in; an unowned join clears earlier deletions and edit times first; tests |
+| mi-1 | Minor | Defusing still renamed own backups, routines the account deleted, merged workouts | Restores keep names and are defused at sync only where new; deleted names count as known; defusing runs after the merge protection; test |
+| mi-2 | Minor | First sign-in let the account's older cleared days delete workouts it never saw | Joined workouts are protected from cleared days unless the account deleted their key |
+| UX-m1..m4 | Minor | A taken username closed the prompt, no busy state on "Download and install", misleading update announcements, calendar memory per calendar | Prompts can save on the server and stay open on a refusal; the update button is busy while it works; announcements fit where the user is and a second check says so; the visited day is remembered per month |
+| S9-N1..N3, n-1, n-2, UX nits | Nit | Lax shape check, unvalidated size check, targets and sets not defused, README wording, replied dates beyond 200, draft prefix, heading choice, banner leftovers | Strict shape check and validated size check; targets and sets defused too; README exact; replied dates always load; drafts matched by their routine; focus goes to the heading just above the row; banner names removed |
+
+Remaining by design: a weigh-in without a timestamp from a phone joining an account stays deleted if the account deleted that day (weakening this would bring back weigh-ins deleted elsewhere for everyone upgrading from the original app).
+
 ### Round 8 (security 8.5/10, correctness 7/10, UX/tests 6.5/10)
 
 | ID | Severity | Finding | Fix |
