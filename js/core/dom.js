@@ -116,7 +116,16 @@ export function render(el, content) {
   }
   // Then the heading of the closest section that is still there, then the page heading.
   const scope = ancestors.find((n) => n.isConnected && el.contains(n) && n.querySelector('h2, h3'));
-  if (!scope || !focusHeading(scope, 'h2, h3')) focusHeading(el);
+  if (scope) {
+    // The heading just above where the row was (e.g. "Blocked people", not the card's first heading).
+    const ref = ancestors.find((n) => n.isConnected && el.contains(n));
+    const before = [...scope.querySelectorAll('h2, h3')].filter((h) => h.compareDocumentPosition(ref) & Node.DOCUMENT_POSITION_FOLLOWING && !h.contains(ref));
+    const h = before.pop() || scope.querySelector('h2, h3');
+    if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex', '-1');
+    h.focus({ preventScroll: true });
+    return;
+  }
+  focusHeading(el);
 }
 
 /** Replaces the content outright (a new screen, not an update of the current one). */

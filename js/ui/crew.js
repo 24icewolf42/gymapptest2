@@ -161,7 +161,7 @@ export function renderCrew() {
     <div class="segmented" role="tablist" aria-label="Crew sections">
       ${SECTIONS.map(([id, label]) => html`<button type="button" role="tab" id="crew-tab-${id}" aria-controls="crew-panel" aria-selected="${crew.tab === id ? 'true' : 'false'}" tabindex="${crew.tab === id ? '0' : '-1'}" data-crew-tab="${id}">${label}${id === 'friends' && incoming ? html`<span class="dot-badge" aria-hidden="true">${incoming}</span><span class="sr-only">, ${incoming} new</span>` : ''}</button>`)}
     </div>
-    ${crew.error ? html`<div class="notice error" data-key="crew-error"><span>${crew.error}</span> <button type="button" class="link-btn inline" data-retry${busyAttr(retrying)}>${retrying ? 'Trying…' : 'Try again'}</button></div>` : ''}
+    ${crew.error || retrying ? html`<div class="notice error" data-key="crew-error"><span>${crew.error || 'Loading…'}</span> <button type="button" class="link-btn inline" data-retry${busyAttr(retrying)}>${retrying ? 'Trying…' : 'Try again'}</button></div>` : ''}
     <div id="crew-panel" role="tabpanel" aria-labelledby="crew-tab-${crew.tab}">
       <div data-key="panel-${crew.tab}">${crew.tab === 'dates' ? datesPanel() : crew.tab === 'friends' ? friendsPanel() : rankingPanel()}</div>
     </div>`);
@@ -462,12 +462,14 @@ export function initCrew() {
     renderCrew();
     await refreshCrew();
     await loadTabData();
+    // The notice stayed while retrying; move focus only if the user is still on it.
+    const stayed = !!document.activeElement?.closest?.('[data-key="crew-error"]');
     retrying = false;
     renderCrew();
     // Only what this retry loaded counts (other tabs keep their own state).
     const err = crew.error || (crew.tab === 'friends' && crew.shared?.error) || (crew.tab === 'ranking' && crew.leaderboard?.error);
     toast(err || 'Loaded.', { tone: err ? 'error' : 'default' });
-    if (!err) $('crew-tab-' + crew.tab)?.focus({ preventScroll: true }); // the notice is gone: back to the section
+    if (!err && stayed) $('crew-tab-' + crew.tab)?.focus({ preventScroll: true }); // the notice is gone: back to the section
   });
   on(page, 'click', '[data-quick]', (e, b) => openDateSheet(b.dataset.quick === 'later' ? 'later' : +b.dataset.quick));
   on(page, 'click', '[data-reply]', async (e, b) => {

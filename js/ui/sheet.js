@@ -140,7 +140,7 @@ export async function confirmDialog(message, { title = 'Are you sure?', ok = 'OK
  * Asks for one value. `input` adds attributes for the field
  * (e.g. { inputmode: 'numeric', autocomplete: 'one-time-code' }).
  */
-export function promptDialog({ title, label, value = '', placeholder = '', maxLength = 80, hint = '', ok = 'Save', type = 'text', validate, input = {} }) {
+export function promptDialog({ title, label, value = '', placeholder = '', maxLength = 80, hint = '', ok = 'Save', type = 'text', validate, input = {}, submit }) {
   const extra = Object.entries({ autocomplete: 'off', ...input }).map(([k, v]) => html` ${k}="${v}"`);
   // The hint (why this is asked) and any error describe the field.
   const hintId = 'prompt-hint-' + ++counter, errorId = 'prompt-error-' + counter;
@@ -155,10 +155,20 @@ export function promptDialog({ title, label, value = '', placeholder = '', maxLe
     actions: [
       {
         label: ok, tone: 'primary', submit: true,
-        onClick: (finish, sheet) => {
+        onClick: async (finish, sheet) => {
           const field = sheet.querySelector('input[name=value]'), v = field.value.trim();
+          const button = sheet.querySelector('[type=submit]');
+          if (button.getAttribute('aria-disabled') === 'true') return;
+          const showError = (error) => { sheet.querySelector('.form-error').textContent = error; field.focus(); };
           const error = validate ? validate(v) : (v ? '' : 'Please fill this in.');
-          if (error) { sheet.querySelector('.form-error').textContent = error; field.focus(); return; }
+          if (error) { showError(error); return; }
+          // submit(v) saves on the server and returns an error to show, or '' (the prompt stays open on an error).
+          if (submit) {
+            button.setAttribute('aria-disabled', 'true');
+            const failed = await submit(v);
+            button.removeAttribute('aria-disabled');
+            if (failed) { showError(failed); return; }
+          }
           finish(v);
         },
       },

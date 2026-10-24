@@ -3,7 +3,7 @@
 import { $, html, toast, scriptURL } from './core/dom.js';
 import { emit } from './core/store.js';
 import { openSheet } from './ui/sheet.js';
-import { handleNativeBack } from './core/router.js';
+import { handleNativeBack, currentPage } from './core/router.js';
 import { APP_VERSION } from './version.js';
 import { isNewer, parseRelease, releaseIsNewer } from './domain/release.js';
 
@@ -21,14 +21,15 @@ export function isNativeApp() {
 }
 
 // An available update is offered in Settings (nothing appears over or above
-// the page while the user is using it), and announced once, politely.
+// the page while the user is using it), and announced once.
 let offer = null;
 /** The update on offer: { title, action, apply }, or null. */
 export const updateOffer = () => offer;
-function showBanner(title, action, onTap) {
+const announceOffer = () => toast(currentPage() === 'settings' ? `${offer.title}: “${offer.action}” is below.` : `${offer.title}. Open Settings to ${offer.action.toLowerCase()}.`);
+function offerUpdate(title, action, onTap, manual = false) {
   const first = !offer;
   offer = { title, action, apply: onTap };
-  if (first) toast(`${title}. Open Settings to ${action.toLowerCase()}.`, { background: true });
+  if (first || manual) announceOffer();
   emit('gym:update-ready');
 }
 
@@ -41,9 +42,9 @@ async function installedBuild() {
 
 function installUpdate() {
   const P = plugin('ApkUpdater');
-  if (!P) { toast('The updater is not available in this build.'); return; }
+  if (!P) { toast('The updater is not available in this build.'); return Promise.resolve(); }
   toast('Downloading update…');
-  P.install({ url: APK_URL })
+  return P.install({ url: APK_URL })
     .then(() => toast('Tap Install when Android asks.'))
     .catch((e) => {
       if (e && e.code === 'SIGNATURE_MISMATCH') {
@@ -69,8 +70,8 @@ async function checkApk(manual) {
     const r = await fetch(`https://api.github.com/repos/${APK_REPO}/releases/tags/latest`, { cache: 'no-store', headers: { Accept: 'application/vnd.github+json' } });
     const rel = r.ok ? parseRelease((await r.json()).name) : null;
     if (rel && releaseIsNewer(rel, await installedBuild())) {
-      showBanner(`Update available${rel.version ? ': v' + rel.version : ''}`, 'Download and install', installUpdate);
-    } else if (manual) toast('You have the latest version.');
+      offerUpdate(`Update available${rel.version ? ': v' + rel.version : ''}`, 'Download and install', installUpdate, manual);
+    } else if (manual) { if (offer) announceOffer(); else toast('You have the latest version.'); }
   } catch { if (manual) toast('Could not check for updates. Are you online?'); }
 }
 
@@ -95,8 +96,8 @@ async function checkWeb(manual) {
     const data = r.ok ? await r.json() : null;
     // Only offer newer versions, so a stale cached file never prompts a downgrade.
     if (data && data.version && isNewer(data.version, APP_VERSION)) {
-      showBanner('New version available', 'Reload now', applyWebUpdate);
-    } else if (manual) toast('You have the latest version.');
+      offerUpdate('New version available', 'Reload now', applyWebUpdate, manual);
+    } else if (manual) { if (offer) announceOffer(); else toast('You have the latest version.'); }
   } catch { if (manual) toast('Could not check for updates. Are you online?'); }
 }
 
@@ -124,12 +125,12 @@ export function initNative() {
     // asked for (applyWebUpdate) reloads the page.
     // A change without a version bump still installs a new worker (sw.js
     // carries a content hash); offer it instead of waiting for every window to close.
-    const offerUpdate = () => showBanner('Update ready', 'Reload now', applyWebUpdate);
+    const offerReady = () => offerUpdate('Update ready', 'Reload now', applyWebUpdate);
     navigator.serviceWorker.register(scriptURL('sw.js')).then((reg) => {
-      if (reg.waiting && navigator.serviceWorker.controller) offerUpdate();
+      if (reg.waiting && navigator.serviceWorker.controller) offerReady();
       reg.addEventListener('updatefound', () => {
         const sw = reg.installing;
-        sw?.addEventListener('statechange', () => { if (sw.state === 'installed' && navigator.serviceWorker.controller) offerUpdate(); });
+        sw?.addEventListener('statechange', () => { if (sw.state === 'installed' && navigator.serviceWorker.controller) offerReady(); });
       });
     }).catch(() => {});
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (updateRequested) location.reload(); });

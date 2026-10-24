@@ -13,7 +13,7 @@ import { icons } from './icons.js';
 
 const MONTHS_AHEAD = 6;
 
-let chosenDay = null;
+const chosenDay = {}; // month (YYYY-MM) -> the day last visited there
 
 function monthGrid(y, m, today, dates, chosen) {
   const days = new Date(y, m + 1, 0).getDate(), first = mondayIndex(new Date(y, m, 1).getDay());
@@ -32,7 +32,7 @@ function monthGrid(y, m, today, dates, chosen) {
     // One tab stop per month (today, else the 1st); arrow keys move between days.
     // A day the user moved to keeps the month's tab stop across re-renders.
     const month = ds.slice(0, 7);
-    const stop = chosen && chosen.startsWith(month) ? ds === chosen : ds === today || (d === 1 && !today.startsWith(month));
+    const stop = chosen[month] ? ds === chosen[month] : ds === today || (d === 1 && !today.startsWith(month));
     cells.push(html`<button type="button" class="${cls}" data-day="${ds}" data-key="day-${ds}" tabindex="${stop ? '0' : '-1'}"><span class="sr-only">${label}</span><span class="cal-num" aria-hidden="true">${d}</span><span class="cal-tag" aria-hidden="true">${tag}</span></button>`);
   }
   return html`<section class="cal-month" data-month="${y}-${m}" data-key="month-${y}-${m}">
@@ -149,7 +149,7 @@ export function initCalendar() {
   on(page, 'click', '[data-day]', (e, b) => openDay(b.dataset.day));
   // The last day the user was on keeps its month's tab stop, also while a
   // sheet is open or focus is elsewhere when a refresh lands.
-  page.addEventListener('focusin', (e) => { const d = e.target.closest?.('[data-day]'); if (d) chosenDay = d.dataset.day; });
+  page.addEventListener('focusin', (e) => { const d = e.target.closest?.('[data-day]'); if (d) chosenDay[d.dataset.day.slice(0, 7)] = d.dataset.day; });
   on(page, 'click', '[data-jump-today]', () => {
     scrollToThisMonth(true);
     // Keyboard focus follows: to today's day, the month's tab stop.

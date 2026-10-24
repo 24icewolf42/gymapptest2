@@ -29,6 +29,7 @@ let authError = ''; // kept in state so a background re-render does not wipe it
 let deleting = false;
 let savingWeight = false;
 let retryingBlocks = false;
+let applyingUpdate = false;
 const unblocking = new Set(); // blocked ids with a request in flight
 
 export function openSettings() {
@@ -116,7 +117,7 @@ function accountCard() {
       <span><b>Show my weight to friends</b><small>Friends see only your latest weigh-in, never the full history.</small></span></label>
     <p class="muted small">Friends see your username, gym dates you share with them, your replies and check-ins at gym dates they can see, and stats or routines you choose to share. Your workout history syncs only to your own account. <button type="button" class="link-btn inline" data-privacy>Read the privacy notice</button></p>
     <h3 class="sub">Blocked people</h3>
-    ${blocks == null ? html`<p class="muted small">Loading…</p>` : blocks.error ? html`<p class="notice error" data-key="blocks-error">${blocks.error} <button type="button" class="link-btn inline" data-retry-blocks${busyAttr(retryingBlocks)}>${retryingBlocks ? 'Trying…' : 'Try again'}</button></p>` : blocks.length ? html`<div class="list">${blocks.map((b) => html`
+    ${blocks == null ? html`<p class="muted small">Loading…</p>` : blocks.error || retryingBlocks ? html`<p class="notice error" data-key="blocks-error">${blocks.error || 'Loading…'} <button type="button" class="link-btn inline" data-retry-blocks${busyAttr(retryingBlocks)}>${retryingBlocks ? 'Trying…' : 'Try again'}</button></p>` : blocks.length ? html`<div class="list">${blocks.map((b) => html`
       <div class="row" data-key="block-${b.blocked_id}"><div class="row-main"><b>@${b.username}</b></div>
         <button type="button" class="btn btn-ghost btn-sm" data-unblock="${b.blocked_id}"${busyAttr(unblocking.has(b.blocked_id))} aria-label="Unblock ${b.username}">Unblock</button></div>`)}</div>`
       : html`<p class="muted small">Nobody. You can block someone from the Crew tab.</p>`}
@@ -177,7 +178,7 @@ export function renderSettings() {
     ${trainingCard()}
     ${backupCard()}
     ${dangerCard()}
-    ${updateOffer() ? html`<p class="notice update-notice" data-key="update"><b>${updateOffer().title}</b> <button type="button" class="btn btn-primary btn-sm" data-apply-update>${updateOffer().action}</button></p>` : ''}
+    ${updateOffer() ? html`<p class="notice update-notice" data-key="update"><b>${updateOffer().title}</b> <button type="button" class="btn btn-primary btn-sm" data-apply-update${busyAttr(applyingUpdate)}>${applyingUpdate ? 'Working…' : updateOffer().action}</button></p>` : ''}
     <p class="about muted small" data-key="about"><button type="button" class="link-btn inline" data-privacy>Privacy</button> · <button type="button" class="link-btn inline" data-check-update>Check for updates</button></p>`);
   // Signed in or out from within the account card: focus its new heading.
   const card = $('page-settings').querySelector('[data-key^="account-"]');
@@ -293,10 +294,12 @@ export function initSettings() {
     retryingBlocks = true;
     renderSettings();
     await refreshBlocks();
+    // The notice stayed while retrying; move focus only if the user is still on it.
+    const stayed = !!document.activeElement?.closest?.('[data-key="blocks-error"]');
     retryingBlocks = false;
     renderSettings();
     toast(blocks?.error || 'Loaded.', { tone: blocks?.error ? 'error' : 'default' });
-    if (!blocks?.error) {
+    if (!blocks?.error && stayed) {
       const h = $('page-settings').querySelector('h3.sub');
       if (h) { h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
     }
@@ -359,10 +362,8 @@ export function initSettings() {
     toast('Signed out.');
   });
   on(page, 'click', '[data-change-username]', async () => {
-    const name = await promptDialog({ title: 'Change username', label: 'Username', value: account.profile?.username || '', maxLength: 20, hint: 'Friends find you by this exact name.', validate: (v) => (/^[a-z0-9_]{3,20}$/.test(v.toLowerCase()) ? '' : 'Use 3–20 letters, numbers or _.') });
-    if (!name) return;
-    const r = await changeUsername(name);
-    toast(r || 'Username changed.', { tone: r ? 'error' : 'default' });
+    const name = await promptDialog({ title: 'Change username', label: 'Username', value: account.profile?.username || '', maxLength: 20, hint: 'Friends find you by this exact name.', validate: (v) => (/^[a-z0-9_]{3,20}$/.test(v.toLowerCase()) ? '' : 'Use 3–20 letters, numbers or _.'), submit: changeUsername });
+    if (name) toast('Username changed.');
   });
   // Busy controls stay focusable (aria-disabled); on() cancels the click that would toggle one.
   on(page, 'click', '[data-share-weight]', () => {});
@@ -442,7 +443,12 @@ export function initSettings() {
     deleting = false; renderSettings();
     toast(r || 'Your account was deleted.', { tone: r ? 'error' : 'default' });
   });
-  on(page, 'click', '[data-apply-update]', () => updateOffer()?.apply());
+  // Busy while it works (a second tap must not start a second download).
+  on(page, 'click', '[data-apply-update]', async () => {
+    applyingUpdate = true;
+    renderSettings();
+    try { await updateOffer()?.apply(); } finally { applyingUpdate = false; renderSettings(); }
+  });
   listen('gym:update-ready', () => { if (currentPage() === 'settings') renderSettings(); });
   on(page, 'click', '[data-check-update]', () => window.dispatchEvent(new CustomEvent('gym:check-update', { detail: { manual: true } })));
 
@@ -458,10 +464,9 @@ export function initSettings() {
       hint: `@${e.detail.wanted} was already taken, so your account got @${e.detail.given} for now. Friends find you by this exact name.`,
       maxLength: 20, ok: 'Save', input: { autocomplete: 'nickname', autocapitalize: 'none' },
       validate: (v) => (/^[a-z0-9_]{3,20}$/.test(v.toLowerCase()) ? '' : 'Use 3–20 letters, numbers or _.'),
+      submit: changeUsername, // a taken name keeps the prompt open with the reason
     });
-    if (!name) return;
-    const r = await changeUsername(name);
-    toast(r || 'Username saved.', { tone: r ? 'error' : 'default' });
+    if (name) toast('Username saved.');
   });
   let askingPassword = false;
   listen('gym:password-recovery', async () => {
