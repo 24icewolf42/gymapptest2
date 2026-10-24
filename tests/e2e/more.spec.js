@@ -2642,3 +2642,11 @@ test('an abandoned edit does not hide food added later from the calendar', async
   await expect(session.locator('[data-food-summary="pre"]')).toHaveText('Snack');
   await expect(session.locator('[data-food-summary="post"]')).toHaveText('Meal, Fruit');
 });
+
+test('on Android the banner offers the app download, not the iPhone steps', async ({ page }) => {
+  await page.route('**/cloud-config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: 'window.GYM_CLOUD_CONFIG = {};' }));
+  await page.goto('/');
+  await expect(page.locator('#installBanner')).toBeVisible();
+  await expect(page.locator('#installLink')).toBeVisible();
+  await expect(page.locator('#installHelp')).toBeHidden();
+});
