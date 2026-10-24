@@ -1,6 +1,7 @@
 // Tabs, the back gesture/button, and swipe navigation between tabs.
 // Every overlay (workout screen, sheet, non-home tab) pushes a "layer" onto the
 // browser history, so the phone's back gesture closes it instead of leaving the app.
+import { dismissUndo } from './dom.js';
 
 export const TABS = ['today', 'plan', 'calendar', 'stats', 'crew'];
 const pages = {};
@@ -65,7 +66,7 @@ export function go(name, { fromBack = false } = {}) {
   if (!pages[name]) return;
   const changed = name !== current;
   // Let the page we leave close its own history layers (e.g. the plan editor).
-  if (changed) pages[current]?.leave?.();
+  if (changed) { pages[current]?.leave?.(); dismissUndo(); }
   // Focus inside the page being hidden would be lost: it moves to the new page's heading.
   const leaving = document.getElementById('page-' + current);
   const focusWasInPage = changed && !!leaving && leaving.contains(document.activeElement);

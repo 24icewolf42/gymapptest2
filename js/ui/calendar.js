@@ -142,7 +142,11 @@ export async function openDay(ds) {
 export function initCalendar() {
   const page = $('page-calendar');
   on(page, 'click', '[data-day]', (e, b) => openDay(b.dataset.day));
-  on(page, 'click', '[data-jump-today]', () => scrollToThisMonth(true));
+  on(page, 'click', '[data-jump-today]', () => {
+    scrollToThisMonth(true);
+    // Keyboard focus follows: to today's day, the month's tab stop.
+    page.querySelector(`[data-day="${ymd()}"]`)?.focus({ preventScroll: true });
+  });
 }
 
 export function onCalendarShown() {

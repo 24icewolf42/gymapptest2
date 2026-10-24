@@ -3,7 +3,7 @@ import { $, html, render, on, toast, busyAttr } from '../core/dom.js';
 import { DOW, fmtClock } from '../core/dates.js';
 import { pushLayer } from '../core/router.js';
 import { state, savePlan, createWorkout, deleteWorkout, planTombstones, setPlanTombstones } from '../state.js';
-import { sanitizeWorkoutName, workoutSummary, displaySets, scheduledDays, renameInSchedule, MAX_SETS, DEFAULT_TARGET, DEFAULT_SETS, REST_DEFAULTS, DEFAULT_REST } from '../domain/plan.js';
+import { sanitizeWorkoutName, sanitizeWorkout, workoutSummary, displaySets, scheduledDays, renameInSchedule, MAX_SETS, DEFAULT_TARGET, DEFAULT_SETS, REST_DEFAULTS, DEFAULT_REST } from '../domain/plan.js';
 import { searchCatalog, categoryLabel, CATEGORIES, CATALOG, GROUP_FILTERS, looksUnilateral } from '../domain/catalog.js';
 import { account } from '../cloud/sync.js';
 import { shareWorkout } from '../cloud/social.js';
@@ -78,11 +78,11 @@ function editorView() {
   editorCopy = { name, list: JSON.parse(JSON.stringify(list)) };
   return html`
     <header class="top editor-top" data-view="editor-${name}">
-      <button type="button" class="icon-btn" data-close-editor aria-label="Back to my plan">${icons.back}</button>
+      <button type="button" class="icon-btn" data-close-editor data-key="back" aria-label="Back to my plan">${icons.back}</button>
       <div class="grow"><p class="eyebrow">Workout · ${workoutSummary(list)}</p><h1 class="h1-sm">${name}</h1></div>
-      <button type="button" class="icon-btn" data-rename aria-label="Rename workout">${icons.edit}</button>
-      ${account.user ? html`<button type="button" class="icon-btn" data-share aria-label="Share with friends">${icons.share}</button>` : ''}
-      <button type="button" class="icon-btn danger" data-delete aria-label="Delete workout">${icons.trash}</button>
+      <button type="button" class="icon-btn" data-rename data-key="rename" aria-label="Rename workout">${icons.edit}</button>
+      ${account.user ? html`<button type="button" class="icon-btn" data-share data-key="share" aria-label="Share with friends">${icons.share}</button>` : ''}
+      <button type="button" class="icon-btn danger" data-delete data-key="delete" aria-label="Delete workout">${icons.trash}</button>
     </header>
     ${list.length ? html`<ol class="ex-edit-list" data-key="ex-list">${list.map((e, i) => exerciseRow(e, i, list.length))}</ol>`
       : html`<div class="empty-inline" data-key="ex-empty"><p>Start with one exercise.</p><p class="muted">Search below or add your own.</p></div>`}
@@ -100,13 +100,19 @@ export function renderPlan() {
   if (editing && !Object.hasOwn(state.workouts, editing)) {
     // Deleted on another device or tab: say so, keep focus on the plan, and offer it back.
     const gone = editorCopy, hadFocus = page.contains(document.activeElement);
+    // Keep what was being typed, so "Keep it" brings it back too.
+    const field = document.activeElement?.closest?.('#page-plan [data-ex] [data-field]');
+    if (gone && field && field.type !== 'checkbox') {
+      const ex = gone.list.find((x) => x.name === field.closest('[data-ex]').dataset.ex);
+      if (ex) ex[field.dataset.field] = field.dataset.field === 'rest' ? +field.value : field.value;
+    }
     closeEditor();
     render(page, weekView());
     const h = page.querySelector('[data-key="mine"]');
     if (hadFocus && h) { h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
     if (gone) {
       toast(`${gone.name} was deleted or renamed on another device or tab.`, {
-        action: { label: 'Keep it', onClick: () => { if (!Object.hasOwn(state.workouts, gone.name)) { state.workouts[gone.name] = gone.list; savePlan(); } } },
+        action: { label: 'Keep it', onClick: () => { if (!Object.hasOwn(state.workouts, gone.name)) { state.workouts[gone.name] = sanitizeWorkout(gone.list); savePlan(); } openEditor(gone.name); } },
       });
     }
     return;

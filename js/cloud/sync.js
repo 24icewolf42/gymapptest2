@@ -116,6 +116,14 @@ async function startSession(user) {
     if (answeredElsewhere(user)) return finishStart(user);
     if (choice !== 'merge') { await endSession(); return; }
   } else if (owner && owner !== user.id && hasLocalData()) {
+    // Another tab of the app is signing in through its form: that tab asks;
+    // this one waits for its answer instead of opening the question too.
+    if (Date.now() - formAt < FORM_SIGN_IN_MS && Date.now() - signedInHere > FORM_SIGN_IN_MS) {
+      setStatus('Finish signing in in the other window.');
+      const answered = await waitForOtherTab(user);
+      if (account.user?.id !== user.id) return;
+      if (answered) return finishStart(user);
+    }
     const choice = await accountSwitchHandler({ email: user.email || '', first: false, deleted: String(owner).startsWith('deleted:') });
     if (account.user?.id !== user.id) return;
     // Another tab answered the same question meanwhile: its answer stands.
@@ -141,6 +149,20 @@ async function startSession(user) {
     resetAccountBookkeeping();
   }
   return finishStart(user);
+}
+
+/** Resolves true once another tab answered for this account, false if it signed out or gave up. */
+function waitForOtherTab(user) {
+  return new Promise((resolve) => {
+    const done = (v) => { window.removeEventListener('storage', check); clearTimeout(timer); resolve(v); };
+    const check = () => {
+      if (answeredElsewhere(user)) done(true);
+      else if (account.user?.id !== user.id) done(false);
+    };
+    window.addEventListener('storage', check);
+    const timer = setTimeout(() => done(answeredElsewhere(user)), FORM_SIGN_IN_MS);
+    check();
+  });
 }
 
 /** True when another tab of the app already settled this phone's data for this account. */

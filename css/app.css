@@ -522,3 +522,4 @@ body.session-open:has(#restBar:not([hidden])) .toast { bottom: calc(172px + var(
 .noscript { padding: 40px; text-align: center; }
 .card-head > div { min-width: 0; }
 .card-head small { overflow-wrap: anywhere; }
+.toast-action:focus-visible { outline: 3px solid currentColor; outline-offset: 2px; }

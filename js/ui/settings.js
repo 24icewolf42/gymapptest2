@@ -175,7 +175,7 @@ export function renderSettings() {
     ${trainingCard()}
     ${backupCard()}
     ${dangerCard()}
-    <p class="about muted small"><button type="button" class="link-btn inline" data-privacy>Privacy</button> · <button type="button" class="link-btn inline" data-check-update>Check for updates</button></p>`);
+    <p class="about muted small" data-key="about"><button type="button" class="link-btn inline" data-privacy>Privacy</button> · <button type="button" class="link-btn inline" data-check-update>Check for updates</button></p>`);
   // Signed in or out from within the account card: focus its new heading.
   const card = $('page-settings').querySelector('[data-key^="account-"]');
   if (accountKey && card && card.dataset.key !== accountKey) {

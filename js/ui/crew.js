@@ -160,7 +160,7 @@ export function renderCrew() {
     <div class="segmented" role="tablist" aria-label="Crew sections">
       ${SECTIONS.map(([id, label]) => html`<button type="button" role="tab" id="crew-tab-${id}" aria-controls="crew-panel" aria-selected="${crew.tab === id ? 'true' : 'false'}" tabindex="${crew.tab === id ? '0' : '-1'}" data-crew-tab="${id}">${label}${id === 'friends' && incoming ? html`<span class="dot-badge" aria-hidden="true">${incoming}</span><span class="sr-only">, ${incoming} new</span>` : ''}</button>`)}
     </div>
-    ${crew.error ? html`<div class="notice error" role="alert"><span>${crew.error}</span> <button type="button" class="link-btn inline" data-retry>Try again</button></div>` : ''}
+    ${crew.error ? html`<div class="notice error" data-key="crew-error"><span>${crew.error}</span> <button type="button" class="link-btn inline" data-retry>Try again</button></div>` : ''}
     <div id="crew-panel" role="tabpanel" aria-labelledby="crew-tab-${crew.tab}">
       <div data-key="panel-${crew.tab}">${crew.tab === 'dates' ? datesPanel() : crew.tab === 'friends' ? friendsPanel() : rankingPanel()}</div>
     </div>`);
@@ -374,6 +374,11 @@ async function openDateSheet(minutes) {
     const r = await api.createDate({ ...draft, workout: form('workout').value, inviteIds });
     button.removeAttribute('aria-disabled');
     button.removeAttribute('aria-busy');
+    // Closed while sending: the user changed their mind, so the date is taken back.
+    if (!sheet.closest('.sheet-backdrop.open')) {
+      if (!r.error) { await api.cancelDate(r.data.id); toast('Gym date not posted.'); refreshCrew(); }
+      return;
+    }
     if (r.error) { err.textContent = r.error; return; }
     write(KEYS.gyms, rememberGym(gyms, draft.gym));
     finish(true);

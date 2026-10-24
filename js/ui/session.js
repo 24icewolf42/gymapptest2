@@ -1,7 +1,7 @@
 // The workout screen: log sets, smart rest timer, autosave, start/finish.
 // Every opened session has its own draft, so editing an old workout never
 // touches the one that is running.
-import { $, html, replaceContent, appendContent, on, toast, haptic, reducedMotion } from '../core/dom.js';
+import { $, html, replaceContent, appendContent, on, toast, haptic, reducedMotion, dismissUndo } from '../core/dom.js';
 import { KEYS, read, write, remove, emit } from '../core/store.js';
 import { ymd, parseYmd, fmtLong, fmtClock, fmtShort, relativeDay } from '../core/dates.js';
 import { pushLayer } from '../core/router.js';
@@ -360,6 +360,7 @@ function closeSession(fromBack) {
   setBackgroundInert(false);
   if (!fromBack && closeLayer) closeLayer();
   closeLayer = null;
+  dismissUndo(); // an Undo for a set can't act once the workout is closed
   // Show the "Workout running" bar first, so focus can go back to it.
   emit('gym:active-changed');
   if (returnFocus && document.contains(returnFocus)) returnFocus.focus({ preventScroll: true });

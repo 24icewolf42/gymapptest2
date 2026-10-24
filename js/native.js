@@ -116,7 +116,16 @@ export function initNative() {
   if (!native && 'serviceWorker' in navigator && location.protocol === 'https:') {
     // The first install takes control without a reload; only an update the user
     // asked for (applyWebUpdate) reloads the page.
-    navigator.serviceWorker.register(scriptURL('sw.js')).catch(() => {});
+    // A change without a version bump still installs a new worker (sw.js
+    // carries a content hash); offer it instead of waiting for every window to close.
+    const offer = () => showBanner('Update ready', 'Tap to reload with the latest changes', applyWebUpdate);
+    navigator.serviceWorker.register(scriptURL('sw.js')).then((reg) => {
+      if (reg.waiting && navigator.serviceWorker.controller) offer();
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        sw?.addEventListener('statechange', () => { if (sw.state === 'installed' && navigator.serviceWorker.controller) offer(); });
+      });
+    }).catch(() => {});
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (updateRequested) location.reload(); });
   }
 }

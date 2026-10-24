@@ -46,6 +46,8 @@ listen('gym:plan-updated', () => { if (currentPage() === 'plan') onPlanUpdated()
 listen('gym:logs-updated', () => refresh());
 listen('gym:weights-updated', () => refresh('stats'));
 listen('gym:crew-updated', () => { if (['today', 'calendar'].includes(currentPage())) refresh(); });
+// The plan editor shows account-only controls (Share).
+listen('gym:account', () => { if (currentPage() === 'plan') onPlanUpdated(); });
 listen('gym:storage-error', () => toast('This phone’s storage is full. Free up space or make a backup.', { tone: 'error', ms: 5000 }));
 
 // "Workout running" bar while a started workout is closed.

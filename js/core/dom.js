@@ -135,12 +135,15 @@ function morphChildren(from, to) {
   [...from.childNodes].forEach((n) => { const k = keyOf(n); if (k) keyed.set(k, n); });
   let cursor = from.firstChild;
   [...to.childNodes].forEach((next) => {
+    // Keyed nodes that are no longer wanted go first, so they never stand
+    // between an unkeyed node and its match.
+    while (cursor && keyOf(cursor) && !wanted.has(keyOf(cursor))) { const n = cursor.nextSibling; cursor.remove(); cursor = n; }
     const k = keyOf(next);
     let match = null;
     if (k) {
       match = keyed.get(k) || null;
       if (match && !sameKind(match, next)) match = null;
-    } else if (cursor && !keyOf(cursor) && sameKind(cursor, next)) {
+    } else if (cursor && !keyOf(cursor) && sameKind(cursor, next) && sameAction(cursor, next)) {
       match = cursor;
     } else if (cursor && !keyOf(cursor)) {
       match = unkeyedAhead(cursor, next);
@@ -153,8 +156,13 @@ function morphChildren(from, to) {
         cursor.remove();
         cursor = n;
       }
-      if (match !== cursor) from.insertBefore(match, cursor);
-      else cursor = cursor.nextSibling;
+      if (match === cursor) cursor = cursor.nextSibling;
+      else if (match.contains(document.activeElement)) {
+        // Moving the focused node would blur it: move what stands in front of it behind it instead.
+        const after = match.nextSibling;
+        for (let n = cursor; n && n !== match;) { const nx = n.nextSibling; from.insertBefore(n, after); n = nx; }
+        cursor = match.nextSibling;
+      } else from.insertBefore(match, cursor);
       morphNode(match, next);
       if (k) keyed.delete(k);
     } else {
@@ -168,7 +176,11 @@ function morphChildren(from, to) {
 // one a few elements further on, unless the current one is itself wanted a
 // little later (then something was inserted instead, and nothing matches).
 const LOOKAHEAD = 6;
-const signature = (n) => (n.nodeType === 1 ? n.tagName + '|' + (n.getAttribute('type') || '') + '|' + (n.getAttribute('class') || '') : null);
+const actionOf = (n) => [...n.attributes].map((a) => a.name).filter((a) => a.startsWith('data-')).sort().join(',');
+const signature = (n) => (n.nodeType === 1 ? n.tagName + '|' + (n.getAttribute('type') || '') + '|' + (n.getAttribute('class') || '') + '|' + actionOf(n) : null);
+// Two unkeyed elements of the same kind are only the same control if they do
+// the same thing (same data-* attributes): Share must never turn into Delete.
+const sameAction = (a, b) => a.nodeType !== 1 || actionOf(a) === actionOf(b);
 function unkeyedAhead(cursor, next) {
   if (next.nodeType !== 1 || cursor.nodeType !== 1) return null;
   const want = signature(next), have = signature(cursor);
@@ -260,8 +272,9 @@ export function toast(message, options = {}) {
   if (!el) return;
   wireToast(el);
   const alert = $('toastAlert');
-  if (!action && el.classList.contains('show') && el.classList.contains('has-action')) {
-    if (tone === 'error' && alert) alert.textContent = message;
+  // A background message waits while an Undo is on screen; the user's own
+  // next result replaces it (they have moved on).
+  if (!action && background && el.classList.contains('show') && el.classList.contains('has-action')) {
     waiting = { message, options };
     return;
   }
@@ -290,20 +303,22 @@ export function toast(message, options = {}) {
   el.classList.add('show');
   const duration = tone === 'error' ? Math.max(ms, 6000) : action ? Math.max(ms, 10000) : ms;
   if (tone === 'error') errorUntil = Date.now() + duration;
-  // Someone using the keyboard may need longer to reach Undo: it stays until
-  // used, dismissed with Escape, or replaced (Ctrl/Cmd+Z also runs it).
-  if (action && usingKeyboard) clearTimeout(toastTimer);
-  else scheduleHide(el, duration);
+  scheduleHide(el, duration);
 }
 
-let usingKeyboard = false;
+/** Removes an Undo whose screen has gone (page change, workout closed): it could no longer act. */
+export function dismissUndo() {
+  const el = $('toast');
+  if (el && el.classList.contains('show') && el.classList.contains('has-action')) hideToast(el);
+}
+
+// Ctrl/Cmd+Z runs the Undo on screen (Undo is far down the tab order), and
+// Escape dismisses it; not while a dialog is open or a field is being edited.
 if (typeof document !== 'undefined') {
-  document.addEventListener('pointerdown', () => { usingKeyboard = false; }, true);
   document.addEventListener('keydown', (e) => {
-    if (['Tab', 'Enter', ' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) usingKeyboard = true;
     const el = $('toast');
     const undo = el && el.classList.contains('show') ? el.querySelector('.toast-action') : null;
-    if (!undo) return;
+    if (!undo || document.querySelector('#sheetRoot .sheet-backdrop:not(.closing)')) return;
     const typing = e.target.closest?.('input:not([type=checkbox]):not([type=radio]), textarea, select, [contenteditable]');
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !typing) { e.preventDefault(); undo.click(); }
     else if (e.key === 'Escape' && !e.defaultPrevented) hideToast(el);

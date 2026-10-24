@@ -23,7 +23,7 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
     const backdrop = document.createElement('div');
     backdrop.className = 'sheet-backdrop';
     replaceContent(backdrop, html`
-      <form class="sheet ${className}" role="${dismissible ? 'dialog' : 'alertdialog'}" aria-modal="true" aria-labelledby="${id}"${dismissible ? '' : html` aria-describedby="${id}-body"`} tabindex="-1" novalidate>
+      <form class="sheet ${className}" role="${dismissible ? 'dialog' : 'alertdialog'}" aria-modal="true" aria-labelledby="${id}"${body ? html` aria-describedby="${id}-body"` : ''} tabindex="-1" novalidate>
         <div class="sheet-handle" aria-hidden="true"></div>
         <header class="sheet-head">
           <div>
