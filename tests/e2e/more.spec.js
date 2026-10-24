@@ -2296,7 +2296,7 @@ test('appearance: light or dark, a preset or own color, kept readable and rememb
   const ratio = await page.evaluate(async () => {
     const { contrast } = await import('/js/domain/theme.js');
     const s = getComputedStyle(document.documentElement);
-    return contrast(s.getPropertyValue('--accent').trim(), '#ffffff');
+    return contrast(s.getPropertyValue('--accent-text').trim(), '#ffffff');
   });
   expect(ratio).toBeGreaterThanOrEqual(4.5);
   // Own color.
@@ -2317,8 +2317,12 @@ test('appearance: light or dark, a preset or own color, kept readable and rememb
   await page.locator('.page.active [data-open-settings]').click();
   await page.locator('[data-base="system"]').click();
   await expect(root).toHaveAttribute('data-theme', 'light');
+  await page.locator('[data-preset="lime"]').click();
+  await expect(page.locator('[data-key="color-adjusted"]')).toContainText('darker');
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(root).not.toHaveAttribute('data-theme', 'light');
+  // Settings, open meanwhile, follows: lime needs no adjusting on dark.
+  await expect(page.locator('[data-key="color-adjusted"]')).toHaveCount(0);
 });
 
 test('a theme from a backup file cannot inject CSS', async ({ page }) => {
@@ -2391,13 +2395,16 @@ test('food: a removed entry stays removed, usual amounts are accepted, typos are
   const session = page.locator('#session');
   const sheet = page.locator('.sheet-backdrop.open .food-sheet');
   await session.locator('[data-food="pre"]').click();
+  await sheet.locator('[data-item="nothing"]').click();
   await sheet.locator('[data-item="meal"]').click();
+  await expect(sheet.locator('[data-item="nothing"]')).toHaveAttribute('aria-pressed', 'false');
   await sheet.locator('[data-item="nothing"]').click();
   await expect(sheet.locator('[data-item="meal"]')).toHaveAttribute('aria-pressed', 'false');
   await sheet.locator('[name=water]').fill('330');
   await sheet.locator('[name=protein]').fill('22.5');
   await sheetAction(page, 'Save');
   await expect(session.locator('[data-food-summary="pre"]')).toHaveText('Nothing · 330 ml water · 22.5 g protein');
+  await expect(session.locator('[data-food="pre"]')).toHaveText('Edit');
   // Save the workout, then open it again to edit, remove the food, close and reopen: it stays removed.
   await session.getByRole('button', { name: 'Start workout' }).click();
   await session.locator('.ex-card').first().locator('.r').first().fill('8');
@@ -2414,11 +2421,13 @@ test('food: a removed entry stays removed, usual amounts are accepted, typos are
   await expect(session).toBeHidden();
   await page.locator('[data-start="Push"]').click();
   await expect(session.locator('[data-food-summary="pre"]')).toHaveText('Not logged');
+  await expect(session.locator('[data-food="pre"]')).toHaveText('Add');
   // Something that is not a number, or too much, is explained, not dropped.
   await session.locator('[data-food="post"]').click();
   await sheet.locator('[name=water]').pressSequentially('5e');
   await sheetAction(page, 'Save');
   await expect(sheet.locator('.form-error')).toContainText('Water');
+  await expect(sheet.locator('[name=water]')).toHaveAttribute('aria-invalid', 'true');
   await sheet.locator('[name=water]').fill('6000');
   await sheetAction(page, 'Save');
   await expect(sheet.locator('.form-error')).toContainText('5000');
@@ -2471,14 +2480,15 @@ test('food after a workout can be added later from the calendar, straight to the
   await page.locator(`[data-day="${today}"]`).click();
   const day = page.locator('.sheet-backdrop.open').first();
   const add = day.locator('[data-food-log][data-side="post"]');
-  await expect(add).toHaveText('Add');
+  await expect(add).toHaveText('Add food');
   await add.click();
   const food = page.locator('.sheet-backdrop.open .food-sheet');
   await food.locator('[data-item="meal"]').click();
   await sheetAction(page, 'Save');
   await expect(day.locator('[data-food-text="post"]')).toHaveText('Meal');
   await expect(add).toBeFocused();
-  await expect(add).toHaveText('Edit');
+  await expect(add).toHaveText('Change food');
+  await expect(add).toHaveAttribute('aria-label', 'Food and drink after: Meal. Edit');
   const saved = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('gymLogs'))).flat()[0]);
   expect(saved.nutrition).toEqual({ post: { items: ['meal'], note: '', when: '' } });
   expect(Date.now() - Date.parse(saved.time)).toBeLessThan(60000); // saved now, so this copy wins the sync
@@ -2511,13 +2521,20 @@ test('light theme: small status texts reach AA contrast (running bar, calendar t
   });
   const ratios = await page.evaluate(async () => {
     const { contrast } = await import('/js/domain/theme.js');
-    const hex = (c) => '#' + c.match(/\d+/g).slice(0, 3).map((n) => (+n).toString(16).padStart(2, '0')).join('');
+    // Chromium reports color-mix() results as color(srgb r g b / a) with 0..1 channels.
+    const parts = (c) => {
+      const m = c.match(/color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)(?: \/ ([\d.]+))?\)/);
+      if (m) return [+m[1] * 255, +m[2] * 255, +m[3] * 255, m[4] == null ? 1 : +m[4]];
+      const n = c.match(/[\d.]+/g).map(Number);
+      return [n[0], n[1], n[2], n[3] == null ? 1 : n[3]];
+    };
+    const hex = (c) => '#' + parts(c).slice(0, 3).map((n) => Math.round(n).toString(16).padStart(2, '0')).join('');
     const bgOf = (el) => {
       // The pill's own tint over its card's tint over the page (ignoring gradients' lighter ends).
       for (let e = el; e; e = e.parentElement) {
         const b = getComputedStyle(e).backgroundColor;
-        if (b && !/rgba\(0, 0, 0, 0\)|transparent/.test(b) && !/, 0\)$/.test(b)) {
-          const a = b.match(/[\d.]+/g); if (a.length < 4 || +a[3] === 1) return hex(b);
+        if (b && parts(b)[3] > 0) {
+          const a = parts(b); if (a[3] === 1) return hex(b);
           const under = bgOf(e.parentElement); const u = [1, 3, 5].map((i) => parseInt(under.slice(i, i + 2), 16));
           return '#' + [0, 1, 2].map((i) => Math.round(+a[i] * +a[3] + u[i] * (1 - +a[3])).toString(16).padStart(2, '0')).join('');
         }
