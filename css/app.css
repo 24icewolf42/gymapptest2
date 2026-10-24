@@ -565,3 +565,18 @@ body.session-open:has(#restBar:not([hidden])) .toast { bottom: calc(172px + var(
 .swatch-mint { background: #34d399; }
 .color-pick { display: inline-flex; align-items: center; gap: 10px; min-height: 48px; margin-top: 8px; font-weight: 600; cursor: pointer; }
 .color-pick input { width: 48px; height: 36px; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--surface-2); cursor: pointer; }
+
+/* Food & drink (workout screen, calendar) */
+.nutrition { padding: 14px 16px; margin-bottom: 12px; }
+.nutrition h3 { margin: 0 0 6px; font-size: 15px; }
+.food-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
+.food-row + .food-row { border-top: 1px solid var(--line); }
+.food-text { min-width: 0; }
+.food-text b { display: block; font-size: 14px; }
+.food-amounts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.food-sheet fieldset { border: 0; padding: 0; margin: 0 0 12px; }
+.food-sheet legend { padding: 0; margin-bottom: 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.log-food { margin: 4px 0 8px; font-size: 13px; }
+.log-food div { display: flex; gap: 8px; }
+.log-food dt { flex: none; width: 52px; color: var(--muted); font-weight: 600; }
+.log-food dd { margin: 0; }

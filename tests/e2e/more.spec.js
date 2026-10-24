@@ -2313,3 +2313,55 @@ test('a theme from a backup file cannot inject CSS', async ({ page }) => {
   expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).not.toContain('url');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
 });
+
+// ---- features: food & drink ----
+
+test('food and drink before and after a workout are saved with it, synced and shown in the calendar', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('fd'));
+  await open(page); await signInAs(page, u);
+  await createWorkout(page, 'Push', ['Barbell Bench Press']);
+  await scheduleToday(page, 'Push');
+  await tab(page, 'today');
+  await page.locator('#startToday').click();
+  const session = page.locator('#session');
+  await session.locator('[data-food="pre"]').click();
+  const sheet = page.locator('.sheet-backdrop.open .food-sheet');
+  await sheet.locator('[data-item="shake"]').click();
+  await expect(sheet.locator('[data-item="shake"]')).toHaveAttribute('aria-pressed', 'true');
+  await sheet.locator('[name=note]').fill('banana');
+  await sheet.locator('[data-when="30-60"]').click();
+  await sheet.locator('[name=water]').fill('500');
+  await sheetAction(page, 'Save');
+  await expect(session.locator('[data-food-summary="pre"]')).toHaveText('Shake: banana · 30–60 min before · 500 ml water');
+  await expect(session.locator('[data-food="pre"]')).toBeFocused();
+  // A value out of range is refused in the sheet.
+  await session.locator('[data-food="post"]').click();
+  await sheet.locator('[name=protein]').fill('900');
+  await sheetAction(page, 'Save');
+  await expect(sheet.locator('.form-error')).toContainText('Protein');
+  await sheet.locator('[name=protein]').fill('25');
+  await sheetAction(page, 'Save');
+  await expect(session.locator('[data-food-summary="post"]')).toHaveText('25 g protein');
+  await session.getByRole('button', { name: 'Start workout' }).click();
+  const card = session.locator('.ex-card').first();
+  await card.locator('.w').first().fill('60');
+  await card.locator('.r').first().fill('8');
+  await card.locator('.check').first().click();
+  await session.getByRole('button', { name: 'Finish workout' }).click();
+  await sheetAction(page, 'Save workout');
+  await expect(session).toBeHidden();
+  const saved = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('gymLogs'))).flat()[0].nutrition);
+  expect(saved).toEqual({ pre: { items: ['shake'], note: 'banana', when: '30-60', water: 500 }, post: { items: [], note: '', when: '', protein: 25 } });
+  // In the account (never visible to friends: it is in the owner's workout data only).
+  await expect.poll(async () => {
+    const r = await u.client.from('workout_data').select('logs').eq('user_id', u.id).maybeSingle();
+    return Object.values(r.data?.logs || {}).flat()[0]?.nutrition?.pre?.note;
+  }, { timeout: 15000 }).toBe('banana');
+  // In the calendar.
+  await tab(page, 'calendar');
+  const today = await page.evaluate(() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); });
+  await page.locator(`[data-day="${today}"]`).click();
+  await expect(page.locator('.sheet-backdrop.open .log-food')).toContainText('Before');
+  await expect(page.locator('.sheet-backdrop.open .log-food')).toContainText('25 g protein');
+});

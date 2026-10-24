@@ -6,6 +6,7 @@ import { account } from '../cloud/sync.js';
 import { streak, sessionKey } from '../domain/logs.js';
 import { categoryLabel } from '../domain/catalog.js';
 import { displaySets } from '../domain/plan.js';
+import { entrySummary } from '../domain/nutrition.js';
 import { openSession } from './session.js';
 import { gymDateDays } from './crew.js';
 import { openSheet, confirmDialog } from './sheet.js';
@@ -97,6 +98,7 @@ export async function openDay(ds) {
       body: html`${logs.map((s) => html`
         <section class="log-session">
           <header class="log-head"><h3>${s.day}</h3><small>${s.duration ? fmtClock(s.duration) : ''}</small></header>
+          ${s.nutrition ? html`<dl class="log-food">${['pre', 'post'].filter((k) => s.nutrition[k]).map((k) => html`<div><dt>${k === 'pre' ? 'Before' : 'After'}</dt><dd>${entrySummary(s.nutrition[k], k)}</dd></div>`)}</dl>` : ''}
           ${s.exercises.map((e) => html`<div class="log-ex"><b>${e.name}</b>
             <ol class="log-sets">${e.sets.map((x) => html`<li><span>${x.w || '–'} kg × ${x.r || '–'}</span>${x.done ? html`<i aria-label="done">${icons.check}</i>` : ''}</li>`)}</ol></div>`)}
           <div class="btn-row">

@@ -2,6 +2,7 @@
 // Pure functions, no DOM or storage.
 import { mondayIndex, addDays, ymd } from '../core/dates.js';
 import { cut } from '../core/text.js';
+import { sanitizeNutrition } from './nutrition.js';
 
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/;
 
@@ -79,6 +80,8 @@ function cleanSession(s) {
   // An id that is an original-app key (date|day|JSON, stored by an earlier version) becomes its hash.
   if (typeof s.id === 'string' && s.id) out.id = s.id.includes('|') ? legacyId(s.id) : s.id.slice(0, 64);
   if (Number.isFinite(+s.duration) && +s.duration >= 0) out.duration = Math.round(+s.duration);
+  const nutrition = sanitizeNutrition(s.nutrition);
+  if (nutrition) out.nutrition = nutrition;
   return out;
 }
 

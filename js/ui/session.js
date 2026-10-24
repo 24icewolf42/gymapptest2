@@ -10,7 +10,8 @@ import { sanitizeWorkout, rowCount, REST_DEFAULTS, DEFAULT_REST, defang } from '
 import { bestWeight, trimSets, sessionKey, newSessionId } from '../domain/logs.js';
 import { restState, roundToStep, muscleGroup } from '../domain/rest-timer.js';
 import { categoryLabel, CATALOG, looksUnilateral } from '../domain/catalog.js';
-import { confirmDialog } from './sheet.js';
+import { confirmDialog, openSheet } from './sheet.js';
+import { ITEMS, TIMES, NOTE_MAX, sanitizeEntry, sanitizeNutrition, entrySummary } from '../domain/nutrition.js';
 import { icons } from './icons.js';
 
 const DRAFT_STALE_MS = 4 * 3600 * 1000;
@@ -156,6 +157,8 @@ export function openSession(day, date = ymd(), { key = null, fresh = false } = {
     // Decided once: only a new workout started today updates "last used" (also after midnight).
     updatesLastUsed: !existing && date === today,
     doneAt: {}, anyAt: 0, selected: null, wasWaiting: false, prs: {},
+    // Food and drink before and after (kept with the draft and saved with the workout).
+    nutrition: sanitizeNutrition(resume?.nutrition || existing?.nutrition) || {},
   };
   returnFocus = document.activeElement;
   renderSession(resume);
@@ -217,6 +220,13 @@ function renderSession(resume) {
   $('sessionDate').textContent = s.date === ymd() ? 'Today' : fmtLong(s.date);
   replaceContent($('sessionList'), html`
     ${s.existing ? html`<p class="banner-note">You are editing the workout saved on ${fmtShort(s.date)}. Saving replaces it.</p>` : ''}
+    <section class="card nutrition" data-key="nutrition" aria-labelledby="food-title">
+      <h3 id="food-title">Food &amp; drink</h3>
+      ${['pre', 'post'].map((side) => html`<div class="food-row">
+        <div class="food-text"><b>${side === 'pre' ? 'Before' : 'After'}</b> <span class="muted small" data-food-summary="${side}">${entrySummary(s.nutrition[side], side) || 'Not logged'}</span></div>
+        <button type="button" class="btn btn-soft btn-sm" data-food="${side}" aria-label="${side === 'pre' ? 'Food and drink before' : 'Food and drink after'}: ${s.nutrition[side] ? 'edit' : 'add'}">${s.nutrition[side] ? 'Edit' : 'Add'}</button>
+      </div>`)}
+    </section>
     ${s.exercises.map((e, i) => html`
       <article class="ex-card" data-index="${i}" aria-labelledby="ex-title-${i}">
         <div class="ex-head">
@@ -280,7 +290,7 @@ function saveDraft() {
   if (!s) return;
   const ex = {};
   cards().forEach((card) => { ex[s.exercises[+card.dataset.index].name] = collectSets(card); });
-  writeDraft(s.draftId, { day: s.day, date: s.date, key: s.key, startedAt: s.startedAt, active: Date.now(), ex });
+  writeDraft(s.draftId, { day: s.day, date: s.date, key: s.key, startedAt: s.startedAt, active: Date.now(), ex, ...(sanitizeNutrition(s.nutrition) ? { nutrition: sanitizeNutrition(s.nutrition) } : {}) });
 }
 
 function autosave(card) {
@@ -420,6 +430,8 @@ async function finish() {
     entry.forEach((x) => { x.name = defang(x.name); if (x.target) x.target = defang(x.target); x.sets.forEach((y) => { y.w = defang(String(y.w)); y.r = defang(String(y.r)); }); });
   }
   const record = { id, day: s.day, exercises: entry, time: new Date().toISOString() };
+  const nutrition = sanitizeNutrition(s.nutrition);
+  if (nutrition) record.nutrition = nutrition;
   if (duration) record.duration = duration;
   const previous = state.logs[s.date];
   let list = previous || [];
@@ -447,6 +459,74 @@ async function finish() {
   closeSession(false);
   haptic(30);
   toast('Workout saved' + (duration ? ' · ' + fmtClock(duration) : '') + '. Nice work!');
+}
+
+// Food and drink before or after the session: what (quick picks and/or a
+// short note), when, and optionally water and protein. No calories on purpose.
+async function editFood(side) {
+  if (!s) return;
+  const now = s.nutrition[side] || { items: [], note: '', when: '' };
+  const label = side === 'pre' ? 'Before training' : 'After training';
+  const result = await openSheet({
+    title: label,
+    subtitle: 'Food and drink. Only you can see this.',
+    className: 'food-sheet',
+    body: html`
+      <fieldset class="field"><legend>What</legend>
+        <div class="chips wrap">${ITEMS.map(([id, name]) => html`<button type="button" class="chip${now.items.includes(id) ? ' on' : ''}" aria-pressed="${now.items.includes(id) ? 'true' : 'false'}" data-item="${id}">${name}</button>`)}</div></fieldset>
+      <label class="field"><span>Details (optional)</span><input class="input" name="note" maxlength="${NOTE_MAX}" value="${now.note}" placeholder="e.g. banana and oats" autocomplete="off"></label>
+      <fieldset class="field"><legend>When</legend>
+        <div class="chips wrap" role="radiogroup" aria-label="When">${TIMES[side].map(([id, name], i) => html`<button type="button" class="chip${now.when === id ? ' on' : ''}" role="radio" aria-checked="${now.when === id ? 'true' : 'false'}" tabindex="${now.when === id || (!now.when && i === 0) ? '0' : '-1'}" data-when="${id}">${name}</button>`)}</div></fieldset>
+      <div class="food-amounts">
+        <label class="field"><span>Water (ml, optional)</span><input class="input" name="water" type="number" inputmode="numeric" min="0" max="5000" step="50" value="${now.water ?? ''}"></label>
+        <label class="field"><span>Protein (g, optional)</span><input class="input" name="protein" type="number" inputmode="numeric" min="0" max="300" step="1" value="${now.protein ?? ''}"></label>
+      </div>
+      <p class="form-error" aria-live="polite"></p>`,
+    actions: [
+      {
+        label: 'Save', tone: 'primary', submit: true,
+        onClick: (finish, sheet) => {
+          const field = (n) => sheet.querySelector(`[name=${n}]`);
+          const bad = ['water', 'protein'].find((n) => field(n).value !== '' && !field(n).checkValidity());
+          if (bad) { sheet.querySelector('.form-error').textContent = bad === 'water' ? 'Water: 0 to 5000 ml.' : 'Protein: 0 to 300 g.'; field(bad).focus(); return; }
+          finish({
+            entry: sanitizeEntry({
+              items: [...sheet.querySelectorAll('[data-item][aria-pressed="true"]')].map((b) => b.dataset.item),
+              note: field('note').value,
+              when: sheet.querySelector('[data-when][aria-checked="true"]')?.dataset.when || '',
+              water: field('water').value,
+              protein: field('protein').value,
+            }, side),
+          });
+        },
+      },
+      ...(s.nutrition[side] ? [{ label: 'Remove', tone: 'ghost', value: { entry: null } }] : []),
+      { label: 'Cancel', tone: 'ghost', value: null },
+    ],
+    onMount: (sheet) => {
+      sheet.querySelectorAll('[data-item]').forEach((b) => { b.onclick = () => { const on = b.getAttribute('aria-pressed') !== 'true'; b.setAttribute('aria-pressed', String(on)); b.classList.toggle('on', on); }; });
+      const radios = [...sheet.querySelectorAll('[data-when]')];
+      radios.forEach((b) => {
+        b.onclick = () => {
+          // A second tap clears the choice (it is optional).
+          const on = b.getAttribute('aria-checked') !== 'true';
+          radios.forEach((x) => { const sel = x === b && on; x.setAttribute('aria-checked', String(sel)); x.classList.toggle('on', sel); x.tabIndex = sel || (!on && x === radios[0]) ? 0 : -1; });
+          if (on) b.tabIndex = 0;
+        };
+      });
+    },
+  });
+  if (!result || !s) return;
+  if (result.entry) s.nutrition[side] = result.entry; else delete s.nutrition[side];
+  saveDraft();
+  // Updated in place, so focus stays on the button that opened it.
+  const summary = $('sessionList').querySelector(`[data-food-summary="${side}"]`);
+  const btn = $('sessionList').querySelector(`[data-food="${side}"]`);
+  if (summary) summary.textContent = entrySummary(s.nutrition[side], side) || 'Not logged';
+  if (btn) {
+    btn.textContent = s.nutrition[side] ? 'Edit' : 'Add';
+    btn.setAttribute('aria-label', `${side === 'pre' ? 'Food and drink before' : 'Food and drink after'}: ${s.nutrition[side] ? 'edit' : 'add'}`);
+  }
 }
 
 export function initSession() {
@@ -516,6 +596,7 @@ export function initSession() {
     select(e.target.closest('.ex-card'));
   });
   list.addEventListener('click', (e) => { if (!s) return; unlockAudio(); select(e.target.closest('.ex-card')); });
+  on(list, 'click', '[data-food]', (e, btn) => editFood(btn.dataset.food));
   on(list, 'click', '[data-add]', (e, btn) => {
     if (!s) return;
     const card = btn.closest('.ex-card'), ex = s.exercises[+card.dataset.index], body = card.querySelector('tbody');
