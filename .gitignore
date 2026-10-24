@@ -1,4 +1,11 @@
 build-apk/
 node_modules/
+test-results/
+playwright-report/
+.android-e2e/
 __pycache__/
 *.pyc
+
+# Keys and certificates (e.g. the release-key backup) never go into the repo
+*.pem
+*.p7m

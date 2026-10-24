@@ -1,8 +1,0 @@
-[{
-  "relation": ["delegate_permission/common.handle_all_urls"],
-  "target": {
-    "namespace": "android_app",
-    "package_name": "io.github.roguelineageaccmanager.twa",
-    "sha256_cert_fingerprints": ["FE:E1:44:B4:00:E2:95:0B:F6:E9:9C:7B:08:5C:56:E0:18:BF:7A:F1:A2:86:BE:7E:BB:92:44:4A:3A:A5:70:34"]
-  }
-}]

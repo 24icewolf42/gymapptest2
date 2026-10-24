@@ -1,31 +1,63 @@
 #!/usr/bin/env bash
-# Builds an installable Android APK from the web app in this repo (Capacitor wrapper).
-# Runs on GitHub Actions (see .github/workflows/build-apk.yml). Set SKIP_GRADLE=1 to only prepare the project.
+# Builds the Android app (Capacitor wrapper around the web app).
+#
+# Default: a debug build (tests, local use) in build-apk/rat-tracker.apk, signed
+# with this machine's own debug key; it never installs over the published app.
+# ANDROID_UNSIGNED_RELEASE=1: a non-debuggable release build, left unsigned in
+# build-apk/rat-tracker-unsigned.apk. Signing happens in a separate CI job
+# (tools/sign-apk.sh) that never runs any of the build's third-party code.
+#
+# GYM_CLOUD_URL / GYM_CLOUD_KEY point a test build at another Supabase project.
+# SKIP_GRADLE=1 stops after preparing the Android project.
 set -euo pipefail
 
 APP_NAME="Tracker"
 APP_ID="com.roguelineage.rattracker"
-ROOT="$(pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/build-apk"
+RELEASE="${ANDROID_UNSIGNED_RELEASE:-0}"
 
+cd "$ROOT"
 rm -rf "$OUT" && mkdir -p "$OUT/www"
-cp index.html plan.js cloud.js cloud-config.js manifest.json Version rest.png snake-loading.gif icon-192.png icon-512.png icon-192-maskable.png icon-512-maskable.png "$OUT/www/"
-cp -r fonts "$OUT/www/fonts"
+cp index.html Version manifest.json cloud-config.js rest.png snake-loading.gif icon-192.png icon-512.png icon-192-maskable.png icon-512-maskable.png "$OUT/www/"
+cp -r css js vendor fonts "$OUT/www/"
+
+# Test builds can point the app at another Supabase project (e.g. the local one).
+# The page's Content-Security-Policy is widened to that address only.
+if [ -n "${GYM_CLOUD_URL:-}" ]; then
+  node - "$OUT/www" <<'NODE'
+const fs = require('fs'), path = require('path');
+const dir = process.argv[2], url = process.env.GYM_CLOUD_URL, key = process.env.GYM_CLOUD_KEY || '';
+fs.writeFileSync(path.join(dir, 'cloud-config.js'), `window.GYM_CLOUD_CONFIG = ${JSON.stringify({ url, anonKey: key })};\n`);
+const ws = url.replace(/^http/, 'ws');
+const file = path.join(dir, 'index.html');
+fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/connect-src 'self'/, `connect-src 'self' ${url} ${ws}`));
+console.log('cloud-config.js ->', url);
+NODE
+fi
+
+# Only the Android app checks GitHub for a newer APK, so only its page may connect there.
+sed -i "s|connect-src 'self'|connect-src 'self' https://api.github.com|" "$OUT/www/index.html"
+
+# Plain-http backends (the local test database) need cleartext; other builds never allow it.
+CLEARTEXT=false
+case "${GYM_CLOUD_URL:-}" in http://*) CLEARTEXT=true ;; esac
+DEBUGGABLE=true
+if [ "$RELEASE" = 1 ]; then DEBUGGABLE=false; CLEARTEXT=false; fi
 
 cd "$OUT"
-cat > package.json <<'JSON'
-{ "name": "rat-tracker-apk", "version": "1.0.0", "private": true }
-JSON
-npm install --no-audit --no-fund @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 @capacitor/app@7
+# Exact versions from a committed lockfile; install scripts are not needed.
+cp "$ROOT/tools/android/package.json" "$ROOT/tools/android/package-lock.json" .
+npm ci --no-audit --no-fund --ignore-scripts
 
 cat > capacitor.config.json <<JSON
 {
   "appId": "$APP_ID",
   "appName": "$APP_NAME",
   "webDir": "www",
-  "backgroundColor": "#000000",
-  "android": { "backgroundColor": "#000000", "adjustMarginsForEdgeToEdge": "auto" },
-  "server": { "androidScheme": "https" }
+  "backgroundColor": "#0d0e10",
+  "android": { "backgroundColor": "#0d0e10", "adjustMarginsForEdgeToEdge": "auto", "webContentsDebuggingEnabled": $DEBUGGABLE },
+  "server": { "androidScheme": "https", "cleartext": $CLEARTEXT }
 }
 JSON
 
@@ -34,57 +66,40 @@ npx cap sync android
 
 RES="android/app/src/main/res"
 
-# --- Black launch screen + black window (no white flash) ---
+# --- Dark launch screen + window (no white flash) ---
 cat > "$RES/values/styles.xml" <<'XML'
 <?xml version="1.0" encoding="utf-8" ?>
 <resources>
     <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
-        <item name="android:windowBackground">#000000</item>
-        <item name="android:statusBarColor">#000000</item>
-        <item name="android:navigationBarColor">#000000</item>
+        <item name="android:windowBackground">#0d0e10</item>
+        <item name="android:statusBarColor">#0d0e10</item>
+        <item name="android:navigationBarColor">#0d0e10</item>
     </style>
     <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
-        <item name="android:windowBackground">#000000</item>
-        <item name="android:statusBarColor">#000000</item>
-        <item name="android:navigationBarColor">#000000</item>
+        <item name="android:windowBackground">#0d0e10</item>
+        <item name="android:statusBarColor">#0d0e10</item>
+        <item name="android:navigationBarColor">#0d0e10</item>
     </style>
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">#000000</item>
+        <item name="windowSplashScreenBackground">#0d0e10</item>
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
         <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
-        <item name="android:background">#000000</item>
+        <item name="android:background">#0d0e10</item>
     </style>
 </resources>
 XML
 cat > "$RES/values/ic_launcher_background.xml" <<'XML'
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#000000</color>
+    <color name="ic_launcher_background">#0d0e10</color>
 </resources>
 XML
 
-# --- Launcher icons from the app's own icons ---
-python3 -m venv .venv
-.venv/bin/pip install --quiet pillow
-.venv/bin/python - <<'PY'
-from PIL import Image
-import os
-res = "android/app/src/main/res"
-legacy = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
-fore = {"mdpi": 108, "hdpi": 162, "xhdpi": 216, "xxhdpi": 324, "xxxhdpi": 432}
-icon = Image.open("www/icon-512.png").convert("RGBA")
-mask_icon = Image.open("www/icon-512-maskable.png").convert("RGBA")
-for d in legacy:
-    folder = os.path.join(res, "mipmap-" + d)
-    os.makedirs(folder, exist_ok=True)
-    icon.resize((legacy[d], legacy[d]), Image.LANCZOS).save(os.path.join(folder, "ic_launcher.png"))
-    icon.resize((legacy[d], legacy[d]), Image.LANCZOS).save(os.path.join(folder, "ic_launcher_round.png"))
-    mask_icon.resize((fore[d], fore[d]), Image.LANCZOS).save(os.path.join(folder, "ic_launcher_foreground.png"))
-print("icons written")
-PY
+# --- Launcher icons (pre-rendered from icon-512*.png, committed in tools/android/res) ---
+cp -r "$ROOT/tools/android/res/." "$RES/"
 
 # --- In-app updater: downloads the new APK from this repo's release and opens Android's installer ---
 PKG_DIR="android/app/src/main/java/$(echo "$APP_ID" | tr . /)"
@@ -94,7 +109,11 @@ cat > "$PKG_DIR/ApkUpdaterPlugin.java" <<'JAVA'
 package com.roguelineage.rattracker;
 
 import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.Signature;
 import android.net.Uri;
+import android.os.Build;
 import androidx.core.content.FileProvider;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -105,16 +124,22 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 
 @CapacitorPlugin(name = "ApkUpdater")
 public class ApkUpdaterPlugin extends Plugin {
-    // Only ever download from this app's own GitHub releases.
-    private static final String ALLOWED_PREFIX = "https://github.com/roguelineageaccmanager/gymapptest2/releases/download/";
+    // Only ever download this app's own release asset; a prefix check would accept
+    // "../" paths that GitHub normalizes into another repository's releases.
+    private static final String ALLOWED_URL = "https://github.com/roguelineageaccmanager/gymapptest2/releases/download/latest/rat-tracker.apk";
+    private static final long MIN_BYTES = 1_000_000L;
+    private static final long MAX_BYTES = 200_000_000L;
 
     @PluginMethod
     public void install(final PluginCall call) {
         final String url = call.getString("url");
-        if (url == null || !url.startsWith(ALLOWED_PREFIX)) {
+        if (!ALLOWED_URL.equals(url)) {
             call.reject("Update URL not allowed");
             return;
         }
@@ -134,17 +159,33 @@ public class ApkUpdaterPlugin extends Plugin {
                     conn.setRequestProperty("User-Agent", "RatTracker-Updater");
                     int code = conn.getResponseCode();
                     if (code != 200) throw new Exception("Download failed (HTTP " + code + ")");
+                    String type = conn.getContentType() == null ? "" : conn.getContentType();
+                    if (type.startsWith("text/")) throw new Exception("The download is not an app file");
+                    long declared = conn.getContentLengthLong();
+                    if (declared > MAX_BYTES) throw new Exception("The download is too large");
 
+                    long total = 0;
                     InputStream in = conn.getInputStream();
                     FileOutputStream fos = new FileOutputStream(out);
                     byte[] buf = new byte[16384];
                     int n;
-                    while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
+                    while ((n = in.read(buf)) > 0) {
+                        total += n;
+                        if (total > MAX_BYTES) { fos.close(); in.close(); out.delete(); throw new Exception("The download is too large"); }
+                        fos.write(buf, 0, n);
+                    }
                     fos.close();
                     in.close();
                     conn.disconnect();
+                    if (total < MIN_BYTES) throw new Exception("The download is incomplete");
 
-                    if (out.length() < 1000000) throw new Exception("Downloaded file is too small to be the app");
+                    // Android would refuse an update signed with another key anyway; checking
+                    // first gives a clear message (e.g. after the release key changes).
+                    if (!sameSigner(out)) {
+                        out.delete();
+                        call.reject("This update needs a one-time reinstall", "SIGNATURE_MISMATCH");
+                        return;
+                    }
 
                     Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", out);
                     Intent intent = new Intent(Intent.ACTION_VIEW);
@@ -157,6 +198,34 @@ public class ApkUpdaterPlugin extends Plugin {
                 }
             }
         }).start();
+    }
+
+    // Accepts the same signer, or a newer key that the installed key rotated to
+    // (APK signature scheme v3 lineage).
+    private boolean sameSigner(File apk) throws Exception {
+        PackageManager pm = getContext().getPackageManager();
+        String self = getContext().getPackageName();
+        if (Build.VERSION.SDK_INT >= 28) {
+            PackageInfo downloaded = pm.getPackageArchiveInfo(apk.getPath(), PackageManager.GET_SIGNING_CERTIFICATES);
+            PackageInfo installed = pm.getPackageInfo(self, PackageManager.GET_SIGNING_CERTIFICATES);
+            if (downloaded == null || downloaded.signingInfo == null || !self.equals(downloaded.packageName)) return false;
+            Set<String> current = signatureSet(installed.signingInfo.getApkContentsSigners());
+            Set<String> next = signatureSet(downloaded.signingInfo.getApkContentsSigners());
+            if (next.equals(current)) return true;
+            if (downloaded.signingInfo.hasMultipleSigners()) return false;
+            Set<String> history = signatureSet(downloaded.signingInfo.getSigningCertificateHistory());
+            return history.containsAll(current);
+        }
+        PackageInfo downloaded = pm.getPackageArchiveInfo(apk.getPath(), PackageManager.GET_SIGNATURES);
+        PackageInfo installed = pm.getPackageInfo(self, PackageManager.GET_SIGNATURES);
+        if (downloaded == null || downloaded.signatures == null || !self.equals(downloaded.packageName)) return false;
+        return signatureSet(downloaded.signatures).equals(signatureSet(installed.signatures));
+    }
+
+    private static Set<String> signatureSet(Signature[] signatures) {
+        Set<String> out = new HashSet<>();
+        if (signatures != null) for (Signature s : signatures) out.add(Arrays.toString(s.toByteArray()));
+        return out;
     }
 }
 JAVA
@@ -178,70 +247,59 @@ public class MainActivity extends BridgeActivity {
 }
 JAVA
 
-# the installer intent needs this permission, and a file provider path that covers the cache folder
+# The installer intent needs this permission, and a file provider for the cache folder only.
 MANIFEST="android/app/src/main/AndroidManifest.xml"
 if ! grep -q "REQUEST_INSTALL_PACKAGES" "$MANIFEST"; then
   sed -i 's#<uses-permission android:name="android.permission.INTERNET" />#&\n    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />#' "$MANIFEST"
 fi
 grep -q "REQUEST_INSTALL_PACKAGES" "$MANIFEST" || { echo "ERROR: could not add REQUEST_INSTALL_PACKAGES to the manifest" >&2; exit 1; }
 grep -q "fileprovider" "$MANIFEST" || { echo "ERROR: manifest has no fileprovider" >&2; exit 1; }
-mkdir -p android/app/src/main/res/xml
-cat > android/app/src/main/res/xml/file_paths.xml <<'XML'
+mkdir -p "$RES/xml"
+cat > "$RES/xml/file_paths.xml" <<'XML'
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <external-path name="my_images" path="." />
-    <cache-path name="my_cache_images" path="." />
+    <cache-path name="updates" path="updates/" />
 </paths>
 XML
 
-# --- Stable signing key so new builds install over the old app (keeps your data) ---
-# Gradle's default debug key lives in ~/.android and gets regenerated if it isn't picked up,
-# so point the debug signing config at the key stored in this repo explicitly.
-KEYSTORE="$ROOT/android-signing/debug.keystore"
-mkdir -p "$HOME/.android"
-cp "$KEYSTORE" "$HOME/.android/debug.keystore"
-python3 - "$KEYSTORE" <<'PY'
-import re, sys
-path = "android/app/build.gradle"
-src = open(path).read()
-block = '''android {
-    signingConfigs {
-        debug {
-            storeFile file("%s")
-            storePassword "android"
-            keyAlias "androiddebugkey"
-            keyPassword "android"
-        }
-    }
-''' % sys.argv[1]
-new, n = re.subn(r"^android \{\n", lambda m: block, src, count=1, flags=re.M)
-assert n == 1, "could not find the android { block in build.gradle"
-open(path, "w").write(new)
-print("debug signing config now points at", sys.argv[1])
-PY
+# --- No cloud or device-to-device backup: the WebView storage holds the session and health data ---
+cat > "$RES/xml/data_extraction_rules.xml" <<'XML'
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup><exclude domain="root" /><exclude domain="file" /><exclude domain="database" /><exclude domain="sharedpref" /><exclude domain="external" /></cloud-backup>
+    <device-transfer><exclude domain="root" /><exclude domain="file" /><exclude domain="database" /><exclude domain="sharedpref" /><exclude domain="external" /></device-transfer>
+</data-extraction-rules>
+XML
+sed -i 's#android:allowBackup="true"#android:allowBackup="false" android:dataExtractionRules="@xml/data_extraction_rules"#' "$MANIFEST"
+grep -q 'android:allowBackup="false"' "$MANIFEST" || { echo "ERROR: could not turn off backups in the manifest" >&2; exit 1; }
 
-# --- Version numbers: versionCode goes up with every build ---
-APP_VER="$(grep -o 'APP_VERSION = "[^"]*"' "$ROOT/index.html" | head -1 | sed 's/.*"\(.*\)"/\1/')"
-CODE="${GITHUB_RUN_NUMBER:-1}"
+# --- Version numbers: versionCode goes up with every CI build ---
+APP_VER="$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).version)" "$ROOT/Version")"
+# Local builds use minutes since 2026 so `adb install -r` always works on test devices.
+CODE="${GITHUB_RUN_NUMBER:-$(( ( $(date +%s) - 1767225600 ) / 60 ))}"
 sed -i "s/versionCode [0-9]*/versionCode $CODE/; s/versionName \"[^\"]*\"/versionName \"$APP_VER\"/" android/app/build.gradle
 grep -n "versionCode\|versionName" android/app/build.gradle
+
+# Dependency checksums: Gradle refuses artifacts whose SHA-256 differs from the
+# committed list, and the wrapper refuses a Gradle download with another checksum.
+mkdir -p android/gradle
+cp "$ROOT/tools/android/verification-metadata.xml" android/gradle/verification-metadata.xml
+read -r DIST_NAME DIST_SHA < "$ROOT/tools/android/gradle-distribution.sha256"
+WRAPPER=android/gradle/wrapper/gradle-wrapper.properties
+grep -q "distributions/$DIST_NAME" "$WRAPPER" || { echo "ERROR: Gradle wrapper is not $DIST_NAME; update tools/android/gradle-distribution.sha256" >&2; exit 1; }
+sed -i '/^distributionSha256Sum=/d' "$WRAPPER"
+echo "distributionSha256Sum=$DIST_SHA" >> "$WRAPPER"
 
 if [ "${SKIP_GRADLE:-0}" = "1" ]; then echo "SKIP_GRADLE set, stopping before the Android build"; exit 0; fi
 
 cd android
 chmod +x gradlew
-./gradlew assembleDebug --no-daemon --console=plain
-cp app/build/outputs/apk/debug/app-debug.apk "$OUT/rat-tracker.apk"
-ls -la "$OUT/rat-tracker.apk"
-
-# --- Safety check: never publish an APK signed with anything but the repo key ---
-# (a different key would make the next update refuse to install over the old app)
-want="$(keytool -list -v -keystore "$KEYSTORE" -storepass android 2>/dev/null | grep -m1 'SHA256:' | tr -d ' ')"
-have="$(keytool -printcert -jarfile "$OUT/rat-tracker.apk" 2>/dev/null | grep -m1 'SHA256:' | tr -d ' ')"
-echo "repo key : $want"
-echo "apk key  : $have"
-if [ -z "$want" ] || [ "$want" != "$have" ]; then
-  echo "ERROR: APK is not signed with android-signing/debug.keystore" >&2
-  exit 1
+if [ "$RELEASE" = 1 ]; then
+  ./gradlew assembleRelease --no-daemon --console=plain
+  cp app/build/outputs/apk/release/app-release-unsigned.apk "$OUT/rat-tracker-unsigned.apk"
+  ls -la "$OUT/rat-tracker-unsigned.apk"
+else
+  ./gradlew assembleDebug --no-daemon --console=plain
+  cp app/build/outputs/apk/debug/app-debug.apk "$OUT/rat-tracker.apk"
+  ls -la "$OUT/rat-tracker.apk"
 fi
-echo "signing key check passed"

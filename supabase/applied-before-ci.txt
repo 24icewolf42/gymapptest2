@@ -1,0 +1,8 @@
+# Migrations that were applied to the live project by hand (SQL Editor) before
+# the deploy workflow existed. The workflow records them as applied once, so
+# `supabase db push` does not run them again.
+20261001000000
+20261023000001
+20261023000002
+20261023000003
+20261023190000

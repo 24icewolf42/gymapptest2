@@ -1,0 +1,4 @@
+# Versions that may be recorded on the live project under an old file name.
+# The workflow marks them as reverted; the renamed file carries the same SQL.
+# 20261023 = 20261023_complete_workout_sync.sql -> 20261023000003_complete_workout_sync.sql
+20261023
