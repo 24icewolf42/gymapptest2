@@ -31,12 +31,18 @@ describe('theme', () => {
     surfaces.dark.forEach((s) => expect(contrast(light, s)).toBeGreaterThanOrEqual(4.5));
   });
 
+  it('the fill stays brighter than the text color where it can (3:1 for fills, 4.5:1 for text)', () => {
+    const c = themeColors({ preset: 'lime' }, 'light');
+    expect(contrast(c.accent, '#ffffff')).toBeLessThan(contrast(c.text, '#ffffff'));
+  });
+
   it('every preset is readable on both bases, and the text on it too', () => {
     for (const p of PRESETS) {
       for (const base of ['dark', 'light']) {
         const c = themeColors({ base, preset: p.id }, base);
-        surfaces[base].forEach((s) => expect(contrast(c.accent, s)).toBeGreaterThanOrEqual(4.5));
-        surfaces[base].forEach((s) => expect(contrast(c.accent, tinted(s, c.accent))).toBeGreaterThanOrEqual(4.5));
+        surfaces[base].forEach((s) => expect(contrast(c.accent, s)).toBeGreaterThanOrEqual(3));
+        surfaces[base].forEach((s) => expect(contrast(c.text, s)).toBeGreaterThanOrEqual(4.5));
+        surfaces[base].forEach((s) => expect(contrast(c.text, tinted(s, c.accent))).toBeGreaterThanOrEqual(4.5));
         expect(contrast(c.ink, c.accent)).toBeGreaterThanOrEqual(4.5);
       }
     }
@@ -46,9 +52,10 @@ describe('theme', () => {
     for (const color of ['#ffff00', '#000000', '#ffffff', '#808080', '#0000ff', '#ff0000']) {
       for (const base of ['dark', 'light']) {
         const c = themeColors({ base, preset: 'custom', color }, base);
-        surfaces[base].forEach((s) => expect(contrast(c.accent, s)).toBeGreaterThanOrEqual(4.5));
+        surfaces[base].forEach((s) => expect(contrast(c.accent, s)).toBeGreaterThanOrEqual(3));
+        surfaces[base].forEach((s) => expect(contrast(c.text, s)).toBeGreaterThanOrEqual(4.5));
         expect(contrast(inkFor(c.accent), c.accent)).toBeGreaterThanOrEqual(4.5);
-        expect(c.adjusted).toBe(c.accent !== color);
+        expect(c.adjusted).toBe(c.accent !== color || c.text !== color);
       }
     }
   });

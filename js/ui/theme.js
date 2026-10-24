@@ -18,6 +18,7 @@ export function applyTheme() {
   if (t.shown === 'light') root.dataset.theme = 'light'; else delete root.dataset.theme;
   root.style.setProperty('--accent', t.accent);
   root.style.setProperty('--accent-ink', t.ink);
+  root.style.setProperty('--accent-text', t.text);
   root.style.setProperty('--accent-soft', t.soft);
   // The phone's status bar matches the page.
   const bg = getComputedStyle(root).getPropertyValue('--bg').trim();

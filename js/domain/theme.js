@@ -19,6 +19,7 @@ const SURFACES = {
 };
 const INKS = ['#0d0e10', '#ffffff'];
 const TEXT_CONTRAST = 4.5; // WCAG AA for normal text
+const UI_CONTRAST = 3; // WCAG AA for buttons, borders and graph lines
 const TINT = 0.25; // the strongest tint (stacked tints, e.g. a soft chip on a tinted card) of the color used behind text in it (css/app.css)
 
 export const DEFAULT_THEME = { base: 'dark', preset: 'lime', color: PRESETS[0].color };
@@ -88,17 +89,21 @@ export function resolveBase(base, prefersLight) {
 
 /**
  * CSS custom properties for a theme on a resolved base: the primary color as
- * shown (adjusted for contrast if needed), the text color on it, and its soft
- * tint. `adjusted` says whether the chosen color had to change.
+ * a fill (buttons, lines: 3:1 against the surfaces, so it stays as bright as
+ * it can), as text (4.5:1, also on its own tints), the text color on the fill,
+ * and its soft tint. `adjusted` says whether the chosen color had to change.
  */
 export function themeColors(theme, base) {
   const t = sanitizeTheme(theme);
-  const accent = readableOn(t.color, SURFACES[base] || SURFACES.dark, TEXT_CONTRAST, TINT);
+  const surfaces = SURFACES[base] || SURFACES.dark;
+  const accent = readableOn(t.color, surfaces, UI_CONTRAST);
+  const text = readableOn(t.color, surfaces, TEXT_CONTRAST, TINT);
   const [r, g, b] = toRgb(accent);
   return {
     accent,
+    text,
     ink: inkFor(accent),
     soft: `rgba(${r}, ${g}, ${b}, ${base === 'light' ? 0.12 : 0.14})`,
-    adjusted: accent !== t.color,
+    adjusted: accent !== t.color || text !== t.color,
   };
 }
