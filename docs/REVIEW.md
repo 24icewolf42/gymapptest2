@@ -50,6 +50,23 @@ All findings are fixed in code. What remains for the app's owner is configuratio
 
 After the rework, three independent Opus reviews (security/privacy, data correctness, UX/accessibility/tests) rated the branch and listed findings. Every critical, major and minor finding and every nit was fixed and re-reviewed.
 
+### Round 6 (security 8.5/10, correctness 7/10, UX/tests 7/10)
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| MA-1..MA-3, mi-1 | Major/Minor | The round-5 markup checks refused whole plans or histories (rest picture "rest.png", "Arms <3", old deleted names, trailing backslashes) | Plans and history are cleaned by a database trigger instead (markup becomes look-alikes, non-image rest pictures are dropped); only shared routines are refused; the app makes the same substitution and cleans stored tombstone names; tests |
+| mi-2, n-1 | Minor/Nit | Notes rewritten silently, quote in a share title refused with a raw error | Look-alike characters keep the meaning (RPE ‹8); share titles are cleaned before sending |
+| UX-M1 | Major | A background render turned the focused Share button into Delete | Unkeyed controls only match if they do the same thing (data-* attributes); editor header keyed; plan re-renders on account changes; renderer test |
+| UX-M2 | Major | A keyed card going away re-created the unkeyed element after it | Unwanted keyed nodes are removed before matching; renderer test |
+| UX-M3 | Major | Every tab asked "Someone else used this phone" | Only the tab that signed in asks; the others wait for its answer; test |
+| UX-M4 | Major | The keyboard-sticky Undo held back messages, outlived its screen and ran under dialogs | Sticky Undo removed: the user's next result replaces it, background messages wait; it goes on page change and when the workout closes; Ctrl/Cmd+Z and Escape are ignored while a dialog is open; tests |
+| UX-M5 | Major | Round-5 behaviours could be removed with tests green | Renderer spec (each rule checked by mutation), tests for described dialogs, stacked sheets, show more days, toast vs rest timer, Undo shortcut rules, background messages, the status line |
+| R6-01 | Minor | Count limits beaten by parallel requests | Per-account advisory locks; test with 40 parallel posts |
+| R6-02 | Minor | Shared routines with markup survived the deploy | Deleted in the migration, then the constraint is validated |
+| UX-m1..m6 | Minor | Moving a focused keyed card blurred it, "Keep it" lost typed text, Cancel while posting still posted, confirm dialogs not described, Calendar "Today" left focus behind, Undo focus ring contrast | The focused node stays and the others move; typed text kept and editor reopened; a date posted after Cancel is taken back; every sheet with a body is described; focus goes to today's cell; focus ring in the text colour |
+| R6-N1, R6-N2, n-2, n-3 | Nit | Access check by name only, quotes in times and legacy ids, restore wording, legacy deletions | Signatures, views and live-update tables checked, README states its limits; times must be timestamps and legacy ids are hashes; restore dialog says routines return to the backup; legacy deletion limit documented |
+| UX nits | Nit | Background errors announced as alerts, waiting service worker never offered, fixed sleep in a test | Crew errors are not live regions; a waiting update shows "Update ready"; the test waits for the profile |
+
 ### Round 5 (security 7.5/10, correctness 8/10, UX/tests 7.5/10)
 
 | ID | Severity | Finding | Fix |
