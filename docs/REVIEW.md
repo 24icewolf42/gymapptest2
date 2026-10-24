@@ -50,6 +50,30 @@ All findings are fixed in code. What remains for the app's owner is configuratio
 
 After the rework, three independent Opus reviews (security/privacy, data correctness, UX/accessibility/tests) rated the branch and listed findings. Every critical, major and minor finding and every nit was fixed and re-reviewed.
 
+### Round 3 (security 6.5/10, correctness 7/10, UX/tests 6.5/10)
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| R3-01 | Major | A link carrying someone's session signed the web app in and uploaded local data | PKCE sign-in (links work only in the browser that asked); an unexpected account is named and asked before any upload; e2e test |
+| MA-1, mi-3 | Major/Minor | Weigh-ins deleted elsewhere came back; slow phone clocks reverted corrections | save_my_weights skips deleted dates unless the entry was changed on that phone; such entries win locally until uploaded, then take the server time; tests |
+| MA-2 | Major | More than 400 weigh-ins never synced | Uploads in batches of 200; e2e test with 450 |
+| MA-3 | Major | A sync in flight undid "Sign out and remove my data" | Syncs started before sign-out, deletion or another sign-in no longer write to the phone; queued uploads are dropped; e2e test |
+| UX-M1..M3 | Major | Controls disabled while focused dropped focus (picks, share-weight, unblock, post) | Busy controls stay focusable (aria-disabled); render() treats a disabled focused control as lost; e2e tests |
+| UX-M4 | Major | Focus tests passed with the fix removed | tests/e2e/focus.spec.js (8 cases), checked to fail against the reverted renderer |
+| R3-02 | Minor | Hosts could move or retarget a date after replies | Only cancelled_at is updatable, and a cancelled date stays cancelled; test |
+| R3-03 | Minor | Rotation left the public key with permission, shared-uid and auth rights | Shared uid, auth and rollback removed; the permission capability must stay (the update is refused without it, tested on Android 15), documented |
+| R3-04 | Minor | Key backup protected by a passphrase in a public artifact | Encrypted to the owner's certificate; artifact kept 1 day |
+| R3-05, R3-N3 | Minor/Nit | Repository-level secrets bypassed the production approval | Environment secrets, branch-limited environment; deploy secrets only in the steps that use them, password never on the command line |
+| mi-1 | Minor | A tab with a workout open overwrote another tab's data | Other tabs' changes load immediately, also during a workout; e2e test |
+| mi-2 | Minor | Drafts from "Log another workout" were unreachable | Fresh opens continue an unsaved draft of that workout and day; e2e test |
+| mi-4 | Minor | Restored sessions deleted since were dropped again | Restored sessions that the account deleted since get new ids; restored weigh-ins count as changed here |
+| mi-5 | Minor | Gym dates misfiled on daylight-saving days | Calendar arithmetic; unit test in Europe/Berlin |
+| UX-m1..m7 | Minor | Check-in focus, tab switch focus, closing from the active bar, Undo timing, unkeyed weigh-ins, polite errors, desktop test contexts | Focus stays on the check-in confirmation and on the tabs, returns to the active bar; the toast holds while focused and returns focus; keyed rows; separate alert region; Pixel 7 contexts |
+| R3-N1, N2, N4, N5 | Nit | Android 6 wording, settings "sync", self-referential hash check, table extras | Docs and comments corrected, privacy notice lists what syncs, hash check dropped, TRUNCATE/REFERENCES/TRIGGER/MAINTAIN revoked; test |
+| UX nits (4) | Nit | Weight field kept its value, aria-label on a span, chip tab stops, stepper names | All fixed |
+
+Upstream limits (not fixable in this client): an old-app device re-publishes leaderboard stats after "Stop sharing", and re-uploads routines that were deleted and re-created.
+
 ### Round 2 (security 7/10, correctness 6/10, UX/tests 6/10)
 
 | ID | Severity | Finding | Fix |

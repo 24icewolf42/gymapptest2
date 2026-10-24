@@ -35,10 +35,11 @@ The app has **no build step**. Edit a file, reload, done. npm is only needed for
   - stats you choose to share: number of workouts, total kg × reps and training time (the database computes these from your synced history), your streak, and how many routines and exercises your plan has;
   - routines you choose to share;
   - your latest weigh-in, **only** if you turn on *Show my weight to friends*. They never see your weigh-in history.
-- **Gym dates** are visible only to your friends, or only to the friends you pick. If someone is a friend of your friend but not yours, they appear only as a number ("+2"), never by name.
+- **Gym dates** are visible only to your friends, or only to the friends you pick. A date can be cancelled but not changed, so a reply always refers to the time and place it was given for. If someone is a friend of your friend but not yours, they appear only as a number ("+2"), never by name.
 - **Ending things:** you can decline or cancel requests, remove friends and block people. A removed or blocked person immediately loses access, and their replies to your gym dates (and yours to theirs) are removed; a blocked person can't find you or send requests again. Username searches are limited to 30 an hour, and friend requests to 20 a day.
 - **Age:** creating an account requires confirming you are 14 or older, or that a parent or guardian agreed. The app shows a short privacy notice (Settings → Privacy).
 - **Deleting your account** (Settings → Delete account) removes your account, everything stored for it in the cloud, and its entries in the sign-in audit log.
+- **Signing in** happens only through the app's own form (or the code in a reset email). A link with someone else's session is ignored, and if the app ever finds itself signed in to an account its data did not come from, it names the account and asks before anything is uploaded.
 - **Shared phone:** when you sign out you can remove your data from the phone (only after it reached your account, unless you accept losing what didn't). If a different account signs in, the app asks before mixing anyone's workouts, and nothing syncs until that is answered.
 - **Live updates** carry only gym-date changes your friendship allows you to see; who replied to a date is never broadcast.
 
@@ -70,8 +71,10 @@ with *dry run* to see what it would do. It:
 4. sets the password-reset email (`supabase/templates/recovery.html`, which
    contains the code the Android app asks for) through the Management API.
 
-One-time setup by the project owner, in a GitHub environment called `production`
-(add required reviewers there to approve each deploy):
+One-time setup by the project owner: create a GitHub environment called
+`production` (Settings → Environments), add required reviewers, limit it to the
+`main` branch, and add these **to the environment**, not to the repository, so
+only approved jobs can read them:
 
 | Name | Kind | Value |
 |---|---|---|
@@ -141,35 +144,44 @@ Releases are now signed with a private key that exists only in GitHub secrets,
 and the APK is no longer debuggable. The new key is introduced by **APK signature
 key rotation**: the old key signs a statement that the new key replaces it, so
 installed apps update without a reinstall, and on Android 9 and newer the old key
-can no longer sign updates afterwards. Android 7 and 8 do not understand
-rotation: there the APK still carries the old key's signature, so updates keep
-working, but so would a forged update signed with the public key. That residual
-risk ends only when those phones are retired.
+can no longer sign updates afterwards. In the rotation the old key keeps only
+what an update needs: it loses rollback, shared user id and account
+authentication. It keeps the permission capability, because the app declares a
+signature permission (added by androidx) and Android refuses the update without
+it (tested on Android 15). So an app signed with the public key could still be
+granted that one permission, which guards only androidx's internal,
+non-exported receivers.
 
-One-time setup by the repository owner, all in GitHub:
+Android 6 to 8 do not understand rotation: there the APK still carries the old
+key's signature, so updates keep working, but so would a forged update signed
+with the public key. That residual risk ends only when those phones are retired.
 
-1. Create an environment called `production` and add these secrets to the
-   repository:
-   - `ADMIN_GH_TOKEN`: a fine-grained token for this repository with
-     *Secrets* and *Variables* read/write, used once to store the new key;
-   - `KEYSTORE_BACKUP_PASSPHRASE`: at least 20 characters, protects the backup.
-2. Run **Actions → Set up Android release signing (run once)**. It creates the key and the rotation
-   proof (`tools/create-release-key.sh`), stores them as the secrets
-   `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
-   `ANDROID_KEY_PASSWORD` and `ANDROID_SIGNING_LINEAGE_BASE64` and the variable
-   `ANDROID_CERT_SHA256`, and uploads an encrypted backup as a 7-day artifact. It
-   refuses to run again unless *replace existing* is ticked.
-3. Download the backup and keep it offline (decrypt with
-   `openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in release-key-backup.tgz.enc -out backup.tgz`). Without
-   the key no future update can be installed over the app. Then delete
-   `ADMIN_GH_TOKEN`.
+One-time setup by the repository owner:
+
+1. Create a certificate for the backup on your own computer and keep the private
+   key offline:
+   `openssl req -x509 -newkey rsa:4096 -keyout backup-key.pem -out backup-cert.pem -days 3650 -subj /CN=Tracker-backup`
+2. In the `production` environment (see Database setup) add:
+   - secret `ADMIN_GH_TOKEN`: a fine-grained token for this repository with
+     *Environments*, *Secrets* and *Variables* read/write, used once to store the key;
+   - variable `KEYSTORE_BACKUP_CERT`: the contents of `backup-cert.pem`.
+3. Run **Actions → Set up Android release signing (run once)**. It creates the
+   key and the rotation proof (`tools/create-release-key.sh`), stores them as the
+   `production` secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+   `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` and `ANDROID_SIGNING_LINEAGE_BASE64`
+   and the repository variable `ANDROID_CERT_SHA256` (the public fingerprint), and
+   uploads a backup encrypted to your certificate as a 1-day artifact. It refuses
+   to run again unless *replace existing* is ticked.
+4. Download the backup, then delete the artifact and `ADMIN_GH_TOKEN`. Decrypt it
+   with `openssl cms -decrypt -binary -inform DER -in release-key-backup.p7m -inkey backup-key.pem -out backup.tgz`.
+   Without the key no future update can be installed over the app.
 
 Each release then runs in three jobs: an unprivileged job builds an unsigned APK
 (every Gradle dependency checked against `tools/android/verification-metadata.xml`,
 the Gradle download against its checksum); the signing job (`production`
 environment) signs it with `tools/sign-apk.sh`; the publish job re-checks the
-checksum and signer and uploads the `latest` release. Releases start only after
-the Tests workflow passed on `main`.
+signer and uploads the `latest` release. Releases start only after the Tests
+workflow passed on `main`.
 
 ## Credits
 
