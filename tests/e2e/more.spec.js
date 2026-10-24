@@ -998,3 +998,65 @@ test('a Crew retry reports only what it loaded, not another tab\'s old error', a
   errors[0].length = 0;
   expect(errors.flat()).toEqual([]);
 });
+
+test('a changed note on a known exercise is defused, and a backup cannot clear days', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('s10'));
+  const ex = { name: 'Bench', cat: 'chest', sets: 2, target: '8', rest: 60, note: '' };
+  await u.client.from('workout_plans').insert({ user_id: u.id, plan: { workouts: { Push: [ex] }, schedule: {} } });
+  await u.client.from('workout_data').insert({ user_id: u.id, logs: { '2026-10-01': [{ id: 'k1', day: 'Push', time: '2026-10-01T10:00:00.000Z', exercises: [{ name: 'Bench', target: '8', sets: [{ w: '60', r: '8', done: true }] }] }] }, progress: {} });
+  await open(page);
+  await signInAs(page, u);
+  const backup = await page.evaluate(async (e) => {
+    const { makeBackup } = await import('/js/domain/backup.js');
+    const data = {
+      gymLogs: JSON.stringify({}),
+      gymCustomWorkouts: JSON.stringify({ Push: [{ ...e, note: '<img src=x onerror=alert(1)>' }] }),
+      gymDeletedLogDates: JSON.stringify({ '2026-10-01': Date.parse('2099-01-01') }),
+    };
+    return makeBackup((k) => data[k] ?? null, 'test');
+  }, ex);
+  await page.locator('.page.active [data-open-settings]').first().click();
+  await page.locator('[data-restore]').click();
+  await page.locator('.sheet textarea[name=paste]').fill(backup);
+  await sheetAction(page, 'Restore pasted text');
+  await sheetAction(page, 'Restore');
+  await page.waitForEvent('load');
+  await page.locator('.page.active [data-open-settings]').first().click();
+  await expect(page.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 15000 });
+  const plan = (await u.client.from('workout_plans').select('plan').eq('user_id', u.id).single()).data.plan;
+  expect(plan.workouts.Push[0].note).toBe('‹img src=x onerror=alert(1)>');
+  const data = (await u.client.from('workout_data').select('logs,deleted_dates').eq('user_id', u.id).single()).data;
+  expect(data.logs['2026-10-01']).toHaveLength(1);
+});
+
+test('a routine with a long name keeps its finished workout after syncing and can be used for a gym date', async ({ browser }) => {
+  const { pa, errors } = await friendsPair(browser, 'lng');
+  const name = 'Upper body strength day with extra arm work 01';
+  await pa.evaluate((n) => {
+    const w = JSON.parse(localStorage.getItem('gymCustomWorkouts') || '{}');
+    w[n] = [{ name: 'Dips', cat: 'chest', sets: 1, target: '8', rest: 60, note: '' }];
+    localStorage.setItem('gymCustomWorkouts', JSON.stringify(w));
+    const dow = (new Date().getDay() + 6) % 7;
+    localStorage.setItem('gymPlanSchedule', JSON.stringify({ [dow]: n }));
+  }, name);
+  await pa.reload();
+  await expect(pa.locator('#page-today .hero-title')).toHaveText(name, { timeout: 15000 });
+  await pa.locator('#startToday').click();
+  await pa.locator('#sessionMain').click();
+  await pa.locator('#session .w').first().fill('10');
+  await pa.locator('#session .r').first().fill('8');
+  await pa.locator('#session .check').first().click();
+  await pa.locator('#session').getByRole('button', { name: 'Finish workout' }).click();
+  await sheetAction(pa, 'Save workout');
+  await expect(pa.locator('.hero-card.done')).toBeVisible();
+  // After a sync it is still done (the name was not cut).
+  await pa.evaluate(async () => (await import('/js/cloud/sync.js')).syncAll());
+  await expect(pa.locator('.hero-card.done')).toBeVisible();
+  await tab(pa, 'crew');
+  await pa.locator('[data-quick="60"]').click();
+  await pa.locator('.sheet-backdrop.open .date-sheet [name=gym]').fill('Long Gym');
+  await pa.locator('.sheet-backdrop.open .date-sheet [type=submit]').click();
+  await expect(pa.locator('.date-card', { hasText: 'Long Gym' })).toBeVisible({ timeout: 15000 });
+  expect(errors.flat()).toEqual([]);
+});
