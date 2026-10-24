@@ -24,6 +24,7 @@ export const KEYS = Object.freeze({
   formSignIn: 'gymFormSignInAt',
   usernameAsked: 'gymUsernameAsked',
   trustedSnapshot: 'gymTrustedSnapshot',
+  signingOut: 'gymSigningOut', // a sign-out still finishing (any tab)
   asking: 'trackerAccountQuestionAt', // not 'gym…': other tabs must not reload on its heartbeat
   gyms: 'gymFavoriteGyms',
   // Shared with the original app's sync format:

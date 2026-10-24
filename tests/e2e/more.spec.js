@@ -2109,3 +2109,23 @@ test('the next account\'s first sync does not wait for a sync left over from the
   await form.locator('[type=submit]').click();
   await expect(page.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 4000 });
 });
+
+test('weigh-ins and username changes name the account they are meant for', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('eu'));
+  const sent = [];
+  page.on('request', (r) => { if (/rpc\/(save_my_weights|change_username)/.test(r.url())) sent.push(JSON.parse(r.postData() || '{}').expected_user); });
+  await open(page); await signInAs(page, u);
+  await page.evaluate(async () => {
+    const { state, saveWeights } = await import('/js/state.js');
+    state.weights.push({ date: '2026-04-02', weight: 70 });
+    saveWeights();
+  });
+  await expect.poll(() => sent.length, { timeout: 15000 }).toBeGreaterThan(0);
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.locator('[data-change-username]').click();
+  await fillPrompt(page, uniqueName('ev').slice(0, 20));
+  await expect(page.locator('#toast')).toContainText('Username changed');
+  expect(sent.length).toBeGreaterThan(1);
+  expect(new Set(sent)).toEqual(new Set([u.id]));
+});

@@ -532,9 +532,10 @@ const SYNC = {
       const batch = changed.slice(i, i + WEIGHT_BATCH);
       if (rpc) {
         // Server time decides; only entries changed here may override a deletion made elsewhere.
-        const up = await supabase.rpc('save_my_weights', {
-          entries: batch.map((x) => ({ log_date: x.date, weight_kg: x.weight, fresh: fresh(x), ...(x.updatedAt ? { updated_at: new Date(x.updatedAt).toISOString() } : {}) })),
-        });
+        const entries = batch.map((x) => ({ log_date: x.date, weight_kg: x.weight, fresh: fresh(x), ...(x.updatedAt ? { updated_at: new Date(x.updatedAt).toISOString() } : {}) }));
+        // The server refuses it if another account signed in meanwhile (e.g. in another tab).
+        let up = await supabase.rpc('save_my_weights', { entries, expected_user: uid });
+        if (isMissingSchema(up.error)) up = await supabase.rpc('save_my_weights', { entries }); // database without that update
         if (stale()) return false;
         if (!isMissingSchema(up.error)) {
           if (up.error) throw up.error;
@@ -655,8 +656,18 @@ export async function signOut({ removeLocalData = false, force = false, everywhe
 
 // A sign-out the auth client is still finishing after endSession stopped waiting
 // for it. The next sign-in waits for it, so it can never end the new session.
+// Tabs share one stored login, so a sign-out still finishing in another tab
+// counts too: it is marked in storage while it runs.
 let ending = null;
-const afterEnding = () => ending || Promise.resolve();
+const SIGNING_OUT_MS = 60000;
+async function afterEnding() {
+  if (ending) await ending;
+  for (let t = Date.now(); Date.now() - t < SIGNING_OUT_MS; ) {
+    const since = Number(localStorage.getItem(KEYS.signingOut) || 0);
+    if (!since || Date.now() - since > SIGNING_OUT_MS) return;
+    await new Promise((r) => { setTimeout(r, 250); });
+  }
+}
 
 /**
  * Signs out for sure. supabase-js keeps the stored session when the sign-out
@@ -668,8 +679,13 @@ async function endSession(everywhere = false) {
   // This device only, unless the user asks to end every session (e.g. a lost phone).
   // Bounded: offline, the auth client may wait for a token refresh that keeps
   // retrying. Ending every session needs the server, so it gets longer.
+  const mark = String(Date.now());
+  localStorage.setItem(KEYS.signingOut, mark);
   const out = supabase.auth.signOut({ scope: everywhere ? 'global' : 'local' }).catch((error) => ({ error }));
-  const tracked = out.then(() => { if (ending === tracked) ending = null; });
+  const tracked = out.then(() => {
+    if (ending === tracked) ending = null;
+    if (localStorage.getItem(KEYS.signingOut) === mark) localStorage.removeItem(KEYS.signingOut);
+  });
   ending = tracked;
   const r = await Promise.race([
     out,
@@ -685,7 +701,8 @@ async function endSession(everywhere = false) {
 export async function changeUsername(name) {
   const username = String(name || '').trim().toLowerCase();
   if (!/^[a-z0-9_]{3,20}$/.test(username)) return 'Use 3–20 letters, numbers or _.';
-  let r = await supabase.rpc('change_username', { name: username });
+  let r = await supabase.rpc('change_username', { name: username, expected_user: account.user.id });
+  if (isMissingSchema(r.error)) r = await supabase.rpc('change_username', { name: username }); // database without that update
   if (isMissingSchema(r.error)) {
     // Older database: plain update.
     r = await supabase.from('profiles').update({ username }).eq('id', account.user.id).select('id').single();
