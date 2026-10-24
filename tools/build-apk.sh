@@ -19,7 +19,7 @@ RELEASE="${ANDROID_UNSIGNED_RELEASE:-0}"
 
 cd "$ROOT"
 rm -rf "$OUT" && mkdir -p "$OUT/www"
-cp index.html Version manifest.json cloud-config.js rest.png snake-loading.gif icon-192.png icon-512.png icon-192-maskable.png icon-512-maskable.png "$OUT/www/"
+cp index.html Version manifest.json cloud-config.js rest.png snake-loading.gif icon-192.png icon-512.png icon-192-maskable.png icon-512-maskable.png apple-touch-icon.png "$OUT/www/"
 cp -r css js vendor fonts "$OUT/www/"
 
 # Test builds can point the app at another Supabase project (e.g. the local one).

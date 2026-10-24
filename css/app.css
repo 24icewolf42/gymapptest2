@@ -38,6 +38,7 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+[hidden] { display: none !important; } /* also on elements whose class sets a display */
 html { background: var(--bg); color-scheme: dark; }
 /* Light base (Settings → Appearance). The primary color is set from js/ui/theme.js. */
 html[data-theme="light"] {
@@ -356,8 +357,8 @@ button.up-row:active { background: var(--surface); }
 .ex-edit-head { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
 .ex-edit-fields { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); gap: 8px 10px; align-items: end; margin-bottom: 10px; }
 .ex-edit-fields .toggle { grid-column: 1 / -1; }
-.ex-edit .input { min-height: 42px; padding: 8px 10px; font-size: 15px; }
-.input-note { font-size: 14px !important; }
+.ex-edit .input { min-height: 42px; padding: 8px 10px; font-size: 16px; } /* 16px: iPhone zooms into smaller fields */
+.input-note { font-size: 16px !important; }
 .stepper { display: flex; align-items: center; height: 42px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line-strong); }
 .stepper button { width: 38px; height: 100%; border: 0; background: none; color: var(--text); display: grid; place-items: center; }
 .stepper button .icon { width: 16px; height: 16px; }
@@ -576,3 +577,9 @@ body.session-open:has(#restBar:not([hidden])) .toast { bottom: calc(172px + var(
 .log-food li { display: flex; align-items: center; gap: 8px; }
 .log-food .food-side { flex: none; width: 52px; color: var(--muted); font-weight: 600; }
 .log-food .food-what { flex: 1; min-width: 0; }
+
+/* iPhone home-screen app: the status bar is drawn over the page with white
+   text (black-translucent). In the light theme a dark band keeps it readable. */
+html.ios-standalone[data-theme="light"] body::before { content: ""; position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top, 0px); background: #14171a; z-index: 200; pointer-events: none; }
+.steps li { margin: 0 0 10px; padding-left: 4px; }
+.steps { padding-left: 20px; list-style: decimal; }
