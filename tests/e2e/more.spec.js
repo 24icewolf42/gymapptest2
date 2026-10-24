@@ -2445,6 +2445,7 @@ test('theme: no dark flash for a light theme, and it follows the settings after 
   await page.route('**/js/main.js', async (r) => { await held; return r.continue(); });
   await page.goto('/', { waitUntil: 'commit' });
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light'); // before the app has loaded
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#f5f6f8');
   release();
   await expect(page.locator('#page-today h1')).toHaveText('Today');
   // The settings are gone (as after "Sign out and remove my data"): the default theme comes back.
@@ -2538,4 +2539,63 @@ test('light theme: small status texts reach AA contrast (running bar, calendar t
   expect(ratios.ok).toBeGreaterThanOrEqual(4.5);
   expect(tag).toBeGreaterThanOrEqual(4.5);
   expect(await page.evaluate(() => getComputedStyle(document.querySelector('.active-btn small')).opacity)).toBe('1');
+});
+
+test('food added from the calendar to an old workout without an id keeps one workout, and the sheet keeps working', async ({ page }) => {
+  await offline(page);
+  const future = new Date(Date.now() + 3600000).toISOString(); // saved on a phone whose clock runs ahead
+  await page.addInitScript((t) => {
+    if (localStorage.getItem('gymLogs')) return;
+    const d = new Date(), today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    localStorage.setItem('gymLogs', JSON.stringify({ [today]: [{ day: 'Push', time: t, exercises: [{ name: 'Dips', target: '8', sets: [{ w: '0', r: '8', done: true }] }] }] }));
+  }, future);
+  await open(page);
+  await tab(page, 'calendar');
+  const today = await page.evaluate(() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); });
+  await page.locator(`[data-day="${today}"]`).click();
+  const day = page.locator('.sheet-backdrop.open').first();
+  const food = page.locator('.sheet-backdrop.open .food-sheet');
+  await day.locator('[data-food-log][data-side="pre"]').click();
+  await food.locator('[data-item="snack"]').click();
+  await sheetAction(page, 'Save');
+  // A second save in the same sheet still finds the workout.
+  await day.locator('[data-food-log][data-side="post"]').click();
+  await food.locator('[data-item="shake"]').click();
+  await sheetAction(page, 'Save');
+  const state = await page.evaluate(() => ({ logs: Object.values(JSON.parse(localStorage.getItem('gymLogs'))).flat(), deleted: JSON.parse(localStorage.getItem('gymDeletedSessions') || '[]') }));
+  expect(state.logs).toHaveLength(1);
+  expect(state.logs[0].id).toBeTruthy();
+  expect(state.logs[0].nutrition).toEqual({ pre: { items: ['snack'], note: '', when: '' }, post: { items: ['shake'], note: '', when: '' } });
+  expect(Date.parse(state.logs[0].time)).toBeGreaterThan(Date.parse(future));
+  expect(state.deleted.some((k) => k.endsWith('|Push|' + future))).toBe(true);
+  // Delete in the same sheet removes the workout that is shown.
+  await day.locator('[data-del]').click();
+  await sheetAction(page, 'Delete');
+  await expect.poll(() => page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('gymLogs') || '{}')).flat().length)).toBe(0);
+});
+
+test('an abandoned edit does not hide food added later from the calendar', async ({ page }) => {
+  await offline(page);
+  await page.addInitScript(() => {
+    if (localStorage.getItem('gymLogs')) return;
+    const d = new Date(), today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    localStorage.setItem('gymLogs', JSON.stringify({ [today]: [{ id: 'ab1', day: 'Push', time: new Date(Date.now() - 3600000).toISOString(), exercises: [{ name: 'Dips', target: '8', sets: [{ w: '0', r: '8', done: true }] }] }] }));
+  });
+  await open(page);
+  await tab(page, 'calendar');
+  const today = await page.evaluate(() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); });
+  // Open the workout to edit, change a set, leave without saving.
+  await page.locator(`[data-day="${today}"]`).click();
+  await page.locator('.sheet-backdrop.open [data-edit]').click();
+  const session = page.locator('#session');
+  await session.locator('.ex-card').first().locator('.r').first().fill('9');
+  await page.locator('#sessionBack').click();
+  await expect(session).toBeHidden();
+  // Add food from the calendar, then open the edit again: the food is there.
+  await page.locator(`[data-day="${today}"]`).click();
+  await page.locator('.sheet-backdrop.open [data-food-log][data-side="post"]').click();
+  await page.locator('.sheet-backdrop.open .food-sheet [data-item="meal"]').click();
+  await sheetAction(page, 'Save');
+  await page.locator('.sheet-backdrop.open [data-edit]').first().click();
+  await expect(session.locator('[data-food-summary="post"]')).toHaveText('Meal');
 });
