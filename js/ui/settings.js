@@ -58,7 +58,7 @@ const PRIVACY = html`
   <h3>With an account</h3>
   <ul class="plain">
     <li>We store your email address (to sign in) and your username.</li>
-    <li>Your plan, workouts (with each set), last-used weights, bypass days and weigh-ins sync to your account so you can use several devices. Only you can read them.</li>
+    <li>Your plan, workouts (with each set, and food and drink you log before or after them), last-used weights, bypass days and weigh-ins sync to your account so you can use several devices. Only you can read them; friends never see your food and drink.</li>
   </ul>
   <h3>What friends see</h3>
   <ul class="plain">

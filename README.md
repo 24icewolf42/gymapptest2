@@ -28,7 +28,7 @@ The app has **no build step**. Edit a file, reload, done. npm is only needed for
 ## Data and privacy
 
 - **Without an account,** everything stays on the phone: workouts, plan, weigh-ins and settings.
-- **With an account,** your plan, workout history (with each set, date and duration), last-used weights, bypass days and weigh-ins sync to your account so you can use several devices. Only you can read them. Deletions sync too. The format is shared with the previous app version, so old and new versions can be used on the same account.
+- **With an account,** your plan, workout history (with each set, date and duration, and the food and drink logged before or after a workout), last-used weights, bypass days and weigh-ins sync to your account so you can use several devices. Only you can read them. Deletions sync too. The format is shared with the previous app version, so old and new versions can be used on the same account.
 - **Friends** are people whose request you accepted. You find someone by their exact username, so the list of users can't be browsed. Friends can see:
   - your username;
   - gym dates you post;
