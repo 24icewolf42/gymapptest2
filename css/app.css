@@ -259,6 +259,7 @@ button.up-row:active { background: var(--surface); }
 .up-name { flex: 1; min-width: 0; font-weight: 800; font-size: 16px; overflow-wrap: anywhere; }
 .up-name small { display: block; font-weight: 400; font-size: 13px; color: var(--muted); }
 .up-row.rest .up-name { color: var(--dim); font-weight: 600; }
+.up-thumb { flex: none; width: 44px; height: 44px; margin-left: auto; border-radius: 10px; object-fit: cover; }
 .up-row.done .up-name small { color: var(--accent); }
 
 /* ---------- calendar ---------- */

@@ -430,12 +430,16 @@ export function initSettings() {
   on(page, 'click', '[data-pick-image]', () => $('restFile').click());
   on(page, 'change', '#restFile', async (e, input) => {
     const file = input.files && input.files[0];
-    if (!file || !file.type.startsWith('image/')) return;
-    try {
-      if (!setRestImage(await resizeImage(file))) throw new Error('full');
-      toast('Rest-day picture updated.');
-      renderSettings();
-    } catch { toast('That picture could not be saved. Try a smaller one.', { tone: 'error' }); }
+    // Some phones give no type for a gallery picture: it is tried anyway.
+    if (!file || (file.type && !file.type.startsWith('image/'))) { if (file) toast('Choose a picture (JPEG, PNG or WebP).', { tone: 'error' }); input.value = ''; return; }
+    let picture;
+    try { picture = await resizeImage(file); } catch {
+      toast('This picture format can’t be used here (for example HEIC). Choose a JPEG or PNG.', { tone: 'error' });
+      input.value = '';
+      return;
+    }
+    if (setRestImage(picture)) { toast('Rest-day picture updated. It shows on rest days and in “Coming up”.'); renderSettings(); }
+    else toast('That picture could not be saved: the phone’s storage is full.', { tone: 'error' });
     input.value = '';
   });
   on(page, 'click', '[data-reset-image]', () => { setRestImage(null); renderSettings(); });

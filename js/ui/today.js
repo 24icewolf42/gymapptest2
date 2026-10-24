@@ -77,7 +77,7 @@ function upcoming() {
     // Rows are keyed by date; a rest day has nothing to open, so it is not a button.
     rows.push(w
       ? html`<li data-key="up-${ds}"><button type="button" class="up-row${done ? ' done' : ''}" data-preview="${ds}">${inner}<span class="chev">${icons.chevron}</span></button></li>`
-      : html`<li data-key="up-${ds}"><div class="up-row rest">${inner}</div></li>`);
+      : html`<li data-key="up-${ds}"><div class="up-row rest">${inner}<img class="up-thumb" src="${restImage()}" alt="" loading="lazy" decoding="async"></div></li>`);
   }
   return html`<ol class="up-list" data-key="up-list">${rows}</ol>
     ${upcomingDays < 56 ? html`<button type="button" class="btn btn-ghost btn-block" data-more data-key="more">Show more days</button>` : ''}`;
