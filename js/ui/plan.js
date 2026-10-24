@@ -186,18 +186,24 @@ function enableDragReorder(page) {
     if (!row || !listEl) return;
     e.preventDefault();
     handle.setPointerCapture(e.pointerId);
+    // Rows go by exercise name: a sync or another tab may change the list during the drag.
     const rows = [...listEl.children];
-    const from = rows.indexOf(row), startY = e.clientY, startScroll = window.scrollY;
-    let to = from, pointerY = e.clientY, raf = 0;
+    const from = rows.indexOf(row), name = row.dataset.ex, startY = e.clientY, startScroll = window.scrollY;
+    let to = from, before = null, pointerY = e.clientY, raf = 0;
     row.classList.add('dragging');
     const update = () => {
       // The row follows the finger, also while the page scrolls under it.
       row.style.transform = `translateY(${pointerY - startY + window.scrollY - startScroll}px)`;
       const mid = row.getBoundingClientRect().top + row.offsetHeight / 2;
-      to = rows.filter((r) => r !== row && r.getBoundingClientRect().top + r.offsetHeight / 2 < mid).length;
-      rows.forEach((r, i) => r.classList.toggle('drop-before', r !== row && i === (to >= from ? to + 1 : to)));
+      const others = rows.filter((r) => r !== row && r.isConnected);
+      const above = others.filter((r) => r.getBoundingClientRect().top + r.offsetHeight / 2 < mid).length;
+      before = others[above] || null; // dropped in front of this row (null: at the end)
+      to = rows.indexOf(before) - (before && rows.indexOf(before) > from ? 1 : 0);
+      if (!before) to = others.length;
+      rows.forEach((r) => r.classList.toggle('drop-before', r === before));
     };
     const autoScroll = () => {
+      if (!row.isConnected) { end({ type: 'pointercancel' }); return; } // the routine went away
       const top = 110, bottom = window.innerHeight - 130; // clear of the header and the bottom bar
       const speed = pointerY < top ? -(4 + 20 * Math.min(1, (top - pointerY) / top))
         : pointerY > bottom ? 4 + 20 * Math.min(1, (pointerY - bottom) / 110) : 0;
@@ -220,10 +226,14 @@ function enableDragReorder(page) {
       rows.forEach((r) => r.classList.remove('drop-before'));
       const l = list();
       if (ev.type === 'pointercancel' || !l || to === from) return;
-      const [item] = l.splice(from, 1);
-      l.splice(to, 0, item);
+      const at = l.findIndex((x) => x.name === name);
+      if (at < 0 || (before && !l.some((x) => x.name === before.dataset.ex))) return; // changed meanwhile: nothing moves
+      const [item] = l.splice(at, 1);
+      const place = before ? l.findIndex((x) => x.name === before.dataset.ex) : l.length;
+      if (place === at) { l.splice(at, 0, item); return; }
+      l.splice(place, 0, item);
       savePlan();
-      toast(`${item.name} moved to position ${to + 1}.`);
+      toast(`${item.name} moved to position ${place + 1}.`);
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', end);
