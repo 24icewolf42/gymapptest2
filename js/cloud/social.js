@@ -98,11 +98,16 @@ export async function unpublishStats() {
 }
 
 export async function loadSharedWorkouts() {
-  const r = await supabase.from('shared_workouts')
+  // The newest shares, plus all of the user's own (so they can always be removed).
+  const query = () => supabase.from('shared_workouts')
     .select('id,owner_id,title,workout,created_at,owner:profiles!shared_workouts_owner_id_fkey(username)')
-    .order('created_at', { ascending: false }).limit(50);
+    .order('created_at', { ascending: false });
+  const [r, own] = await Promise.all([query().limit(50), query().eq('owner_id', account.user.id).limit(50)]);
   if (r.error) return fail(r.error);
-  return ok((r.data || []).map((x) => ({ ...x, workout: sanitizeWorkout(x.workout), mine: x.owner_id === account.user.id })));
+  if (own.error) return fail(own.error);
+  const byId = new Map([...(r.data || []), ...(own.data || [])].map((x) => [x.id, x]));
+  const list = [...byId.values()].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  return ok(list.map((x) => ({ ...x, workout: sanitizeWorkout(x.workout), mine: x.owner_id === account.user.id })));
 }
 
 export async function shareWorkout(title, workout) {

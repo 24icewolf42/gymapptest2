@@ -2,7 +2,7 @@
 // `state` and call the save functions; cloud sync listens for the events.
 import { KEYS, read, write, readText, writeText, remove, emit } from './core/store.js';
 import { ymd } from './core/dates.js';
-import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule, planHashes, isSafeImage, sanitizeWorkoutName, deepDefang } from './domain/plan.js';
+import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule, planHashes, isSafeImage, sanitizeWorkoutName, deepDefang, defang } from './domain/plan.js';
 import { sanitizeLogs, upgradeLastUsed, sessionKey, newSessionId, mergeProgress, normalizeBypass, activeBypass, streak, bestStreak } from './domain/logs.js';
 import { sanitizeWeights, upsertWeight } from './domain/weights.js';
 
@@ -253,16 +253,27 @@ export function hasLocalData() {
 }
 
 /**
- * Defuses markup in data on this phone that may have been entered by someone
- * else (it joins an account it did not come from), as for backup files: the
- * original app shows names unescaped on the account's other devices.
+ * Data on this phone that joins an account it did not come from may have been
+ * entered by someone else; the original app shows names unescaped on the
+ * account's other devices. Routines the account does not have yet are defused
+ * (a name the account already has is the user's own and stays, so nothing is
+ * duplicated in the original app). Returns true if anything changed.
  */
-export function defangLocalData() {
-  [KEYS.workouts, KEYS.schedule, KEYS.logs, KEYS.lastUsed, KEYS.deletedWorkouts, KEYS.restoredWorkouts, KEYS.planTimes].forEach((k) => {
-    const v = read(k, null);
-    if (v != null) write(k, deepDefang(v));
+export function defangNewRoutines(remoteNames) {
+  const known = new Set(remoteNames);
+  let changed = false;
+  const next = {};
+  Object.entries(state.workouts).forEach(([name, list]) => {
+    if (known.has(name)) { next[name] = list; return; }
+    const clean = defang(name), cleanList = deepDefang(list);
+    if (clean !== name || JSON.stringify(cleanList) !== JSON.stringify(list)) changed = true;
+    next[Object.hasOwn(next, clean) ? name : clean] = cleanList;
   });
-  loadState();
+  if (!changed) return false;
+  Object.keys(state.schedule).forEach((d) => { if (state.schedule[d] && !known.has(state.schedule[d])) state.schedule[d] = defang(state.schedule[d]); });
+  state.workouts = next;
+  persistPlan();
+  return true;
 }
 
 /** Removes this phone's training data (used when another account signs in, or on request at sign-out). */

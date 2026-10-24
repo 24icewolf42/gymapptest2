@@ -26,10 +26,18 @@ export async function loadDates() {
     .sort((a, b) => Date.parse(a.starts_at) - Date.parse(b.starts_at));
   const ids = dates.map((d) => d.id);
   if (!ids.length) return { data: { dates: [], rsvps: [], counts: {}, invites: [] }, error: '' };
+  // Ids go into the request URL: ask in chunks, or a long list is refused (HTTP 414).
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += 60) chunks.push(ids.slice(i, i + 60));
+  const inChunks = async (make) => {
+    const parts = await Promise.all(chunks.map(make));
+    const bad = parts.find((p) => p.error);
+    return bad || { data: parts.flatMap((p) => p.data || []), error: null };
+  };
   const [rsvps, counts, invites] = await Promise.all([
-    supabase.from('gym_date_rsvps').select('date_id,user_id,status,checked_in_at,user:profiles!gym_date_rsvps_user_id_fkey(username)').in('date_id', ids),
+    inChunks((c) => supabase.from('gym_date_rsvps').select('date_id,user_id,status,checked_in_at,user:profiles!gym_date_rsvps_user_id_fkey(username)').in('date_id', c)),
     supabase.rpc('gym_date_counts', { ids }),
-    supabase.from('gym_date_invites').select('date_id,user_id').in('date_id', ids),
+    inChunks((c) => supabase.from('gym_date_invites').select('date_id,user_id').in('date_id', c)),
   ]);
   const err = rsvps.error || counts.error || invites.error;
   if (err) return fail(err);

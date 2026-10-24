@@ -99,8 +99,8 @@ export function sanitizeWorkout(list) {
 }
 
 export function sanitizeWorkoutName(name) {
-  // "|" separates parts of draft keys, so it is not allowed in names.
-  const n = text(typeof name === 'string' ? name.replace(/\|/g, '/') : name, 40);
+  // Kept as typed (the original app allows "|" too and identifies routines by name).
+  const n = text(name, 40);
   return n === '__proto__' ? '' : n;
 }
 

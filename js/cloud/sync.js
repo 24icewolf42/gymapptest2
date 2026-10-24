@@ -3,9 +3,9 @@
 import { supabase, SITE_URL, errorText, isMissingSchema } from './client.js';
 import {
   state, localPlan, applyPlan, planBase, setPlanBase, setPlanTombstones, saveLogs, saveLastUsed, saveWeights, saveSync, saveBypass, saveTombstones,
-  hasLocalData, clearLocalData, defangLocalData,
+  hasLocalData, clearLocalData, defangNewRoutines,
 } from '../state.js';
-import { mergePlans, planHashes, stableStringify, hashOf } from '../domain/plan.js';
+import { mergePlans, planHashes, stableStringify, hashOf, defang } from '../domain/plan.js';
 import { mergeLogs, mergeProgress, mergeBypass, dailySummaries, sessionKey } from '../domain/logs.js';
 import { mergeWeights } from '../domain/weights.js';
 import { emit, listen, writeText, readText, read, write, remove, KEYS } from '../core/store.js';
@@ -64,6 +64,16 @@ function retire() {
 }
 
 let starting = null;
+function beginSession(user) {
+  retire();
+  account.ready = false;
+  starting = startSession(user).finally(() => {
+    starting = null;
+    // Another account signed in while this one was starting (e.g. during its question): start that one now.
+    if (account.user && !account.ready && account.user.id !== user.id) beginSession(account.user);
+  });
+}
+
 async function handleAuth(event, session) {
   if (event === 'PASSWORD_RECOVERY') emit('gym:password-recovery');
   const user = session?.user || null;
@@ -79,13 +89,8 @@ async function handleAuth(event, session) {
   account.user = user;
   // Only a new sign-in (or app start with a saved session) triggers a full sync;
   // hourly token refreshes do not.
-  if (changed && !starting) {
-    retire();
-    account.ready = false;
-    starting = startSession(user).finally(() => { starting = null; });
-  } else {
-    emit('gym:account');
-  }
+  if (changed && !starting) beginSession(user);
+  else emit('gym:account');
 }
 
 /** Forgets bookkeeping that belonged to the previous account on this phone. */
@@ -131,7 +136,7 @@ async function startSession(user) {
     if (choice !== 'merge') { await endSession(); return; }
   }
   if (!owner && hasLocalData()) {
-    defangLocalData(); // data no account owned joins this one
+    state.sync.untrusted = { plan: true, data: true }; // data no account owned joins this one
   } else if (owner && owner !== user.id && hasLocalData()) {
     // Another tab of the app is signing in through its form: that tab asks;
     // this one waits for its answer instead of opening the question too.
@@ -157,7 +162,7 @@ async function startSession(user) {
       // The other account's deletions and edit times must not act on this account's plan.
       setPlanTombstones([], []);
       write(KEYS.planTimes, {});
-      defangLocalData(); // another account's data joins this one
+      state.sync.untrusted = { plan: true, data: true }; // another account's data joins this one
       // These weigh-ins are new to this account: a weigh-in it once deleted on
       // the same day must not drop them (a weigh-in it has there still counts).
       state.sync.mergedWeightDates = state.weights.map((x) => x.date);
@@ -263,6 +268,35 @@ function queue(area, delay = 800) {
   timers[area] = { due, id: setTimeout(() => { timers[area] = null; run(area); }, delay) };
 }
 
+/**
+ * Workouts and last-used values from another person's use of this phone that
+ * the account does not have yet: markup in their names is defused (the
+ * original app shows them unescaped). What the account already has stays.
+ */
+function defangNewSessions(remote) {
+  const known = new Set();
+  Object.entries(remote.logs || {}).forEach(([d, list]) => (Array.isArray(list) ? list : []).forEach((x) => known.add(sessionKey(d, x))));
+  let changed = false;
+  Object.keys(state.logs).forEach((d) => {
+    state.logs[d] = state.logs[d].map((x) => {
+      if (known.has(sessionKey(d, x))) return x;
+      const clean = { ...x, day: defang(x.day), exercises: x.exercises.map((e) => ({ ...e, name: defang(e.name) })) };
+      if (JSON.stringify(clean) !== JSON.stringify(x)) changed = true;
+      return clean;
+    });
+  });
+  if (changed) saveLogs({ silent: true });
+  const knownLifts = new Set(Object.keys(remote.progress || {}));
+  const lifts = {};
+  let liftsChanged = false;
+  Object.entries(state.lastUsed).forEach(([k, v]) => {
+    const key = knownLifts.has(k) ? k : defang(k);
+    if (key !== k) liftsChanged = true;
+    lifts[key] = v;
+  });
+  if (liftsChanged) { state.lastUsed = lifts; saveLastUsed({ silent: true }); }
+}
+
 // Postgres reorders JSON keys, so compare with sorted keys.
 const same = (a, b) => stableStringify(a) === stableStringify(b);
 const MAX_ATTEMPTS = 3;
@@ -308,6 +342,8 @@ const SYNC = {
       const r = await supabase.from('workout_plans').select('plan,updated_at').eq('user_id', uid).maybeSingle();
       if (stale()) return false;
       if (r.error) throw r.error;
+      // Routines from another person's use of this phone, new to this account: defuse markup.
+      if (state.sync.untrusted?.plan && defangNewRoutines(Object.keys(r.data?.plan?.workouts || {}))) emit('gym:plan-updated');
       // No cloud plan (first sync, or the row was removed): there is no common base.
       const merged = mergePlans(r.data?.plan, localPlan(), r.data ? planBase() : null);
       const local = localPlan();
@@ -317,6 +353,7 @@ const SYNC = {
       if (stale()) return false;
       if (wrote) {
         setPlanBase(planHashes(merged));
+        if (state.sync.untrusted?.plan) { state.sync.untrusted = { ...state.sync.untrusted, plan: false }; saveSync(); }
         return true;
       }
     }
@@ -336,6 +373,7 @@ const SYNC = {
       if (r.error) throw r.error;
       const remote = r.data || {};
       const has = (c) => columns.includes(c);
+      if (state.sync.untrusted?.data) defangNewSessions(remote);
       // Sessions brought back from a backup, or added from another account's
       // phone, must not be removed by this account's deletions: a deleted key
       // gets a new id (derived from the old one, so restoring twice gives one
@@ -384,6 +422,7 @@ const SYNC = {
       const changed = !r.data || Object.keys(row).some((k) => k !== 'updated_at' && k !== 'user_id' && !same(remote[k] ?? null, row[k]));
       if (!changed || await casWrite('workout_data', uid, r.data?.updated_at ?? null, row)) {
         if (restored.size && !stale()) { state.sync.restoredSessions = []; state.sync.mergedSessions = []; saveSync(); }
+        if (state.sync.untrusted?.data && !stale()) { state.sync.untrusted = { ...state.sync.untrusted, data: false }; saveSync(); }
         return true;
       }
     }
