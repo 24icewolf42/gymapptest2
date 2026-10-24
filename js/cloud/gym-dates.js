@@ -10,12 +10,20 @@ const fail = (error) => ({ data: null, error: errorText(error), missing: isMissi
  */
 export async function loadDates() {
   const since = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
-  const r = await supabase.from('gym_dates')
+  // Open dates only (cancelled ones are never shown), soonest first; the
+  // user's own are fetched separately so they are always there to manage.
+  const query = () => supabase.from('gym_dates')
     .select('id,host_id,starts_at,duration_min,gym,workout,note,invite_only,cancelled_at,created_at,host:profiles!gym_dates_host_id_fkey(username)')
+    .is('cancelled_at', null)
     .gte('starts_at', new Date(Date.now() - 6 * 3600 * 1000 - 360 * 60000).toISOString())
-    .order('starts_at', { ascending: true }).limit(100);
+    .order('starts_at', { ascending: true });
+  const [r, own] = await Promise.all([query().limit(200), query().eq('host_id', account.user.id).limit(50)]);
   if (r.error) return fail(r.error);
-  const dates = (r.data || []).filter((d) => new Date(new Date(d.starts_at).getTime() + d.duration_min * 60000).toISOString() >= since);
+  if (own.error) return fail(own.error);
+  const byId = new Map([...(r.data || []), ...(own.data || [])].map((d) => [d.id, d]));
+  const dates = [...byId.values()]
+    .filter((d) => new Date(new Date(d.starts_at).getTime() + d.duration_min * 60000).toISOString() >= since)
+    .sort((a, b) => Date.parse(a.starts_at) - Date.parse(b.starts_at));
   const ids = dates.map((d) => d.id);
   if (!ids.length) return { data: { dates: [], rsvps: [], counts: {}, invites: [] }, error: '' };
   const [rsvps, counts, invites] = await Promise.all([
