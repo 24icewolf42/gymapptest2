@@ -13,7 +13,8 @@ test('resets a forgotten password with the code from the email', async ({ page }
   await page.locator('[data-forgot]').click();
   await page.locator('.sheet-backdrop.open input[name=value]').fill(u.email);
   await sheetAction(page, 'Send email');
-  // Read the code the email would contain.
+  // Once the email is sent (a code made earlier would be replaced by it), read the code it would contain.
+  await expect(page.locator('.sheet-backdrop.open h2')).toHaveText('Check your email');
   const link = await adminClient().auth.admin.generateLink({ type: 'recovery', email: u.email });
   const code = link.data.properties.email_otp;
   await page.locator('.sheet-backdrop.open input[name=value]').fill(code);
@@ -683,6 +684,7 @@ test('closing the sheet while a gym date is being posted takes it back', async (
   await pa.locator('[data-quick="60"]').click();
   await pa.locator('.sheet-backdrop.open .date-sheet [name=gym]').fill('Taken Back Gym');
   await pa.locator('.sheet-backdrop.open .date-sheet [type=submit]').click();
+  await expect(pa.locator('.sheet-backdrop.open .form-status')).toHaveText('Posting…');
   await pa.keyboard.press('Escape');
   await expect(pa.locator('#toast')).toContainText('taken back', { timeout: 15000 });
   const rows = (await a.client.from('gym_dates').select('cancelled_at').eq('gym', 'Taken Back Gym')).data;
@@ -1511,11 +1513,13 @@ test('an APK that needs a reinstall shows the steps in Settings, not over the pa
   await page.locator('[data-new]').click();
   const field = page.locator('.sheet-backdrop.open input[name=value]');
   await field.pressSequentially('Push day A', { delay: 250 });
-  await expect(page.locator('#toast')).toContainText('one-time reinstall', { timeout: 10000 });
+  await page.waitForTimeout(1500); // the install has failed by now
   await expect(page.locator('.sheet-backdrop.open')).toHaveCount(1);
   await expect(field).toHaveValue('Push day A');
   await expect(field).toBeFocused();
   await sheetAction(page, 'Cancel');
+  // The message waited behind the dialog.
+  await expect(page.locator('#toast')).toContainText('one-time reinstall', { timeout: 5000 });
   await page.locator('.page.active [data-open-settings]').click();
   await expect(page.locator('.update-notice')).toContainText('One-time reinstall needed');
   await expect(page.locator('.update-notice ol li')).toHaveCount(3);
@@ -1572,12 +1576,33 @@ test('an Undo toast is hidden under a dialog and comes back after it, and a tap 
   await expect(del).toBeVisible();
   await expect(page.locator('#toast')).toBeHidden();
   await page.waitForTimeout(11000);
+  // Messages that arrive meanwhile wait (none overwrites another).
+  const seen = [];
+  await page.exposeFunction('seenToast', (t) => seen.push(t));
+  await page.evaluate(() => { const t = document.getElementById('toast'); new MutationObserver(() => window.seenToast(t.textContent)).observe(t, { childList: true, subtree: true }); });
+  await page.evaluate(async () => { const { toast } = await import('/js/core/dom.js'); toast('Request sent to @b.'); toast('Request sent to @c.'); });
   await sheetAction(page, 'Cancel');
   await expect(page.locator('#toast .toast-action')).toBeVisible();
+  expect(seen).toContain('Plank removed. Undo'); // read again when it came back
   await page.locator('#toast .toast-action').click();
   await expect(page.locator('[data-ex="Plank"]')).toHaveCount(1);
-  // The dialog's own button takes a tap at its centre.
+  await expect.poll(() => seen.includes('Request sent to @b.') && seen.includes('Request sent to @c.'), { timeout: 15000 }).toBe(true);
+  // After the dialog, an Undo has its time again: it goes by itself.
+  await expect(page.locator('#toast.show')).toHaveCount(0, { timeout: 10000 });
   await page.locator('[data-ex="Plank"] [data-remove]').click();
+  await page.locator('[data-delete]').click();
+  await sheetAction(page, 'Cancel');
+  await expect(page.locator('#toast .toast-action')).toBeVisible();
+  await expect(page.locator('#toast.show')).toHaveCount(0, { timeout: 9000 });
+  // A plain message from before the dialog does not come back after it.
+  await page.evaluate(async () => (await import('/js/core/dom.js')).toast('Dips added.'));
+  await expect(page.locator('#toast.show')).toContainText('Dips added.');
+  await page.locator('[data-delete]').click();
+  await sheetAction(page, 'Cancel');
+  await page.waitForTimeout(400);
+  expect(await page.locator('#toast').evaluate((t) => t.classList.contains('show'))).toBe(false);
+  // The dialog's own button takes a tap at its centre.
+  await page.locator('[data-ex="Pull-up"] [data-remove]').click();
   await page.locator('[data-delete]').click();
   await page.waitForTimeout(300);
   const b = await del.boundingBox();
@@ -1851,7 +1876,7 @@ const fakeUndo = (page) => page.evaluate(async () => {
   document.querySelector('#toast .toast-action').focus();
 });
 
-test('late answers to sign-in, a manual update check and an APK install wait behind an Undo', async ({ browser }) => {
+test('late answers to sign-in and a manual update check wait behind an Undo', async ({ browser }) => {
   const { makeUser, uniqueName } = await import('../integration/helpers.js');
   // Sign-in.
   const u = await makeUser(uniqueName('lsi'));
@@ -1984,4 +2009,103 @@ test('signing out on a hanging connection does not hold the user for long', asyn
   await sheetAction(page, 'Sign out, keep data here');
   await expect(page.locator('#authForm')).toBeVisible({ timeout: 15000 });
   expect(Date.now() - t0).toBeLessThan(12000);
+  await expect(page.locator('#toast')).toContainText('had not reached your account');
+});
+
+// ---- round 14 ----
+
+test('a sign-out still finishing never ends the next session, and the next account syncs', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const a = await makeUser(uniqueName('sfa')), b = await makeUser(uniqueName('sfb'));
+  const page = await (await newPhone(browser)).newPage();
+  await open(page); await signInAs(page, a);
+  await createWorkout(page, 'Upper', ['Plank']);
+  // A's last sync and sign-out hang; B's requests go through.
+  let hold = true;
+  await page.route('**/rest/v1/**', (r) => (hold ? new Promise(() => {}) : r.continue()));
+  await page.route('**/auth/v1/logout*', async (r) => { await new Promise((res) => setTimeout(res, 7000)); return r.continue(); });
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.locator('[data-signout]').click();
+  await sheetAction(page, 'Sign out, keep data here');
+  await expect(page.locator('#authForm')).toBeVisible({ timeout: 20000 });
+  hold = false;
+  const form = page.locator('#authForm');
+  await form.locator('[name=email]').fill(b.email);
+  await form.locator('[name=password]').fill(b.password);
+  await form.locator('[type=submit]').click();
+  // A's workouts are on the phone, so B is asked first.
+  await sheetAction(page, 'Replace with my account’s data').catch(async () => {
+    await page.locator('.sheet-backdrop.open').getByRole('button', { name: 'Replace with my account’s data' }).click({ timeout: 15000 });
+  });
+  await expect(page.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 20000 });
+  await page.waitForTimeout(4000); // past the moment A's sign-out finishes
+  expect(await page.evaluate(async () => (await import('/js/cloud/sync.js')).account.user?.email)).toBe(b.email);
+});
+
+test('a slow but successful "Sign out on all devices" is reported as done', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('sgs'));
+  await open(page); await signInAs(page, u);
+  await page.route('**/auth/v1/logout*', async (r) => { await new Promise((res) => setTimeout(res, 5000)); return r.continue(); });
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.locator('[data-signout]').click();
+  await sheetAction(page, 'Sign out on all devices');
+  await expect(page.locator('#toast')).toContainText('Signed out.', { timeout: 20000 });
+  await expect(page.locator('#toast')).not.toContainText('could not');
+});
+
+test('an open workout follows a sync that defuses its exercise names', async ({ page }) => {
+  await offline(page);
+  await open(page);
+  await page.evaluate(async () => {
+    const { state, savePlan } = await import('/js/state.js');
+    state.workouts.Legs = [{ name: 'Press <b>', cat: 'legs', sets: 2, target: '8', rest: 60, note: '' }];
+    savePlan();
+  });
+  await scheduleToday(page, 'Legs');
+  await tab(page, 'today');
+  await page.locator('#startToday').click();
+  const session = page.locator('#session');
+  await session.getByRole('button', { name: 'Start workout' }).click();
+  const card = session.locator('.ex-card').first();
+  await card.locator('.w').first().fill('100');
+  await card.locator('.r').first().fill('5');
+  await page.evaluate(async () => {
+    const { state, savePlan } = await import('/js/state.js');
+    state.workouts.Legs = state.workouts.Legs.map((e) => ({ ...e, name: 'Press ‹b>' }));
+    savePlan();
+    (await import('/js/core/store.js')).emit('gym:plan-updated');
+  });
+  await expect(page.locator('#ex-title-0')).toHaveText('Press ‹b>');
+  // Stored at once (the phone may close before Finish).
+  const stored = await page.evaluate(() => ({ drafts: Object.values(JSON.parse(localStorage.getItem('gymDrafts') || '{}')).flatMap((d) => Object.keys(d.ex || {})), lastUsed: Object.keys(JSON.parse(localStorage.getItem('gymLastUsed') || '{}')) }));
+  expect(stored.drafts).toEqual(['Press ‹b>']);
+  expect(stored.lastUsed).toContain('Press ‹b>');
+  await session.getByRole('button', { name: 'Finish workout' }).click();
+  await sheetAction(page, 'Save workout');
+  await expect(session).toBeHidden();
+  const { logs, lastUsed } = await page.evaluate(() => ({ logs: JSON.parse(localStorage.getItem('gymLogs')), lastUsed: JSON.parse(localStorage.getItem('gymLastUsed') || '{}') }));
+  expect(Object.values(logs).flat()[0].exercises.map((e) => e.name)).toEqual(['Press ‹b>']);
+  expect(Object.keys(lastUsed)).not.toContain('Press <b>');
+});
+
+test('the next account\'s first sync does not wait for a sync left over from the last one', async ({ browser }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const a = await makeUser(uniqueName('lsa')), b = await makeUser(uniqueName('lsb'));
+  const page = await (await newPhone(browser)).newPage();
+  await open(page); await signInAs(page, a);
+  await createWorkout(page, 'Upper', ['Plank']);
+  let hold = true;
+  await page.route('**/rest/v1/**', (r) => (hold ? new Promise(() => {}) : r.continue()));
+  await page.locator('.page.active [data-open-settings]').click();
+  await page.locator('[data-signout]').click();
+  await sheetAction(page, 'Sign out and remove my data');
+  await sheetAction(page, 'Remove anyway');
+  await expect(page.locator('#authForm')).toBeVisible({ timeout: 10000 });
+  hold = false; // A's sync is still hanging; B's requests go through
+  const form = page.locator('#authForm');
+  await form.locator('[name=email]').fill(b.email);
+  await form.locator('[name=password]').fill(b.password);
+  await form.locator('[type=submit]').click();
+  await expect(page.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 4000 });
 });
