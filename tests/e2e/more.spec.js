@@ -2302,6 +2302,9 @@ test('appearance: light or dark, a preset or own color, kept readable and rememb
   // Own color.
   await page.locator('[data-custom-color]').evaluate((el) => { el.value = '#ffe066'; el.dispatchEvent(new Event('change', { bubbles: true })); });
   await expect(page.locator('.color-pick')).toContainText('(chosen)');
+  // Text in the primary color uses the text variant (links, tiles), not the fill.
+  const linkColor = await page.locator('#page-settings [data-privacy]').first().evaluate((el) => [getComputedStyle(el).color, getComputedStyle(document.documentElement).getPropertyValue('--accent-text').trim()]);
+  expect(linkColor[0]).toBe('rgb(' + [1, 3, 5].map((i) => parseInt(linkColor[1].slice(i, i + 2), 16)).join(', ') + ')');
   // With an own color the presets stay reachable with Tab.
   await expect(page.locator('[data-preset="lime"]')).toHaveAttribute('tabindex', '0');
   await page.locator('[data-base="dark"]').click();
@@ -2439,7 +2442,7 @@ test('food: a removed entry stays removed, usual amounts are accepted, typos are
   await expect(sheet.locator('[data-when="lt30"]')).toHaveAttribute('tabindex', '0');
   await sheetAction(page, 'Save');
   await expect(session.locator('[data-food-summary="post"]')).toHaveText('300 ml water');
-  await expect(session.locator('[data-food="post"]')).toHaveAttribute('aria-label', 'Food and drink after: 300 ml water. Edit');
+  await expect(session.locator('[data-food="post"]')).toHaveAttribute('aria-label', 'Edit food after: 300 ml water');
   // Kept with the draft: closing and reopening without saving keeps it.
   await page.locator('#sessionBack').click();
   await page.locator('[data-start="Push"]').click();
@@ -2488,7 +2491,7 @@ test('food after a workout can be added later from the calendar, straight to the
   await expect(day.locator('[data-food-text="post"]')).toHaveText('Meal');
   await expect(add).toBeFocused();
   await expect(add).toHaveText('Change food');
-  await expect(add).toHaveAttribute('aria-label', 'Food and drink after: Meal. Edit');
+  await expect(add).toHaveAttribute('aria-label', 'Change food after: Meal');
   const saved = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('gymLogs'))).flat()[0]);
   expect(saved.nutrition).toEqual({ post: { items: ['meal'], note: '', when: '' } });
   expect(Date.now() - Date.parse(saved.time)).toBeLessThan(60000); // saved now, so this copy wins the sync
@@ -2572,6 +2575,11 @@ test('food added from the calendar to an old workout without an id keeps one wor
   await page.locator(`[data-day="${today}"]`).click();
   const day = page.locator('.sheet-backdrop.open').first();
   const food = page.locator('.sheet-backdrop.open .food-sheet');
+  // An edit of the workout, left unsaved.
+  await day.locator('[data-edit]').click();
+  await page.locator('#session .ex-card').first().locator('.r').first().fill('11');
+  await page.locator('#sessionBack').click();
+  await page.locator(`[data-day="${today}"]`).click();
   await day.locator('[data-food-log][data-side="pre"]').click();
   await food.locator('[data-item="snack"]').click();
   await sheetAction(page, 'Save');
@@ -2585,6 +2593,12 @@ test('food added from the calendar to an old workout without an id keeps one wor
   expect(state.logs[0].nutrition).toEqual({ pre: { items: ['snack'], note: '', when: '' }, post: { items: ['shake'], note: '', when: '' } });
   expect(Date.parse(state.logs[0].time)).toBeGreaterThan(Date.parse(future));
   expect(state.deleted.some((k) => k.endsWith('|Push|' + future))).toBe(true);
+  // The unsaved edit made before followed the workout's new id and can still be resumed.
+  await expect.poll(() => page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('gymDrafts') || '{}')).length)).toBe(1);
+  await day.locator('[data-edit]').click();
+  await expect(page.locator('#session .ex-card').first().locator('.r').first()).toHaveValue('11');
+  await page.locator('#sessionBack').click();
+  await page.locator(`[data-day="${today}"]`).click();
   // Delete in the same sheet removes the workout that is shown.
   await day.locator('[data-del]').click();
   await sheetAction(page, 'Delete');
@@ -2615,4 +2629,16 @@ test('an abandoned edit does not hide food added later from the calendar', async
   await sheetAction(page, 'Save');
   await page.locator('.sheet-backdrop.open [data-edit]').first().click();
   await expect(session.locator('[data-food-summary="post"]')).toHaveText('Meal');
+  // A draft that changed one side keeps the other side added later.
+  await session.locator('[data-food="pre"]').click();
+  await page.locator('.sheet-backdrop.open .food-sheet [data-item="snack"]').click();
+  await sheetAction(page, 'Save');
+  await page.locator('#sessionBack').click();
+  await page.locator(`[data-day="${today}"]`).click();
+  await page.locator('.sheet-backdrop.open [data-food-log][data-side="post"]').click();
+  await page.locator('.sheet-backdrop.open .food-sheet [data-item="fruit"]').click();
+  await sheetAction(page, 'Save');
+  await page.locator('.sheet-backdrop.open [data-edit]').first().click();
+  await expect(session.locator('[data-food-summary="pre"]')).toHaveText('Snack');
+  await expect(session.locator('[data-food-summary="post"]')).toHaveText('Meal, Fruit');
 });
