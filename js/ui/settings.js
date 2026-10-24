@@ -138,7 +138,7 @@ function appearanceCard() {
     <div class="field"><span id="colorLabel">Color</span>
       <div class="chips wrap" role="radiogroup" aria-labelledby="colorLabel">${PRESETS.map((p, i) => radio(t.preset === p.id, raw(` data-preset="${p.id}"`), p.name, html`<span class="swatch" data-swatch="${p.id}" aria-hidden="true"></span>`, t.preset === p.id || (t.preset === 'custom' && i === 0)))}</div>
       <label class="color-pick"><input type="color" data-custom-color value="${t.preset === 'custom' ? t.color : t.accent}"> <span>Your own color${t.preset === 'custom' ? ' (chosen)' : ''}</span></label>
-      ${t.adjusted ? html`<p class="hint" data-key="color-adjusted">Shown ${t.shown === 'light' ? 'darker' : 'lighter'} than chosen in this theme, so text in it stays readable.${t.preset === 'custom' ? '' : ' The color dots show it as used.'}</p>` : ''}</div>
+      ${t.adjusted ? html`<p class="hint" data-key="color-adjusted">Shown ${t.shown === 'light' ? 'darker' : 'lighter'} than chosen in this theme, so text in it stays readable.${t.preset !== 'custom' && t.accent !== t.color ? ' The color dots show it as used.' : ''}</p>` : ''}</div>
   </section>`;
 }
 

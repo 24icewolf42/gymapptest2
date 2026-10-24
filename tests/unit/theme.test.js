@@ -60,6 +60,26 @@ describe('theme', () => {
     }
   });
 
+  it('a sweep of custom colors: fill 3:1, text 4.5:1 also on tints, and text on the fill 4.5:1', () => {
+    const steps = [0, 34, 68, 102, 136, 170, 204, 238, 255];
+    for (const r of steps) for (const g of steps) for (const b of steps) {
+      const color = '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+      for (const base of ['dark', 'light']) {
+        const c = themeColors({ preset: 'custom', color }, base);
+        surfaces[base].forEach((s) => {
+          expect(contrast(c.accent, s)).toBeGreaterThanOrEqual(3);
+          expect(contrast(c.text, s)).toBeGreaterThanOrEqual(4.5);
+          expect(contrast(c.text, tinted(s, c.accent))).toBeGreaterThanOrEqual(4.5);
+        });
+        expect(contrast(c.ink, c.accent)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    for (const color of ['#e91e63', '#777777', '#e13728']) for (const base of ['dark', 'light']) {
+      const c = themeColors({ preset: 'custom', color }, base);
+      expect(contrast(c.ink, c.accent)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it('follows the phone for "system"', () => {
     expect(resolveBase('system', true)).toBe('light');
     expect(resolveBase('system', false)).toBe('dark');

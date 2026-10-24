@@ -17,7 +17,7 @@ const SURFACES = {
   dark: ['#0d0e10', '#16181b', '#1d2024', '#262a2f'],
   light: ['#f5f6f8', '#ffffff', '#eef0f3', '#e3e6ea'],
 };
-const INKS = ['#0d0e10', '#ffffff'];
+const INKS = ['#000000', '#ffffff']; // black, not near-black: then one of them always reaches 4.5:1
 const TEXT_CONTRAST = 4.5; // WCAG AA for normal text
 const UI_CONTRAST = 3; // WCAG AA for buttons, borders and graph lines
 const TINT = 0.25; // the strongest tint (stacked tints, e.g. a soft chip on a tinted card) of the color used behind text in it (css/app.css)
