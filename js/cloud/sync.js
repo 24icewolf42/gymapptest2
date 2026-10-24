@@ -118,13 +118,15 @@ async function startSession(user) {
   } else if (owner && owner !== user.id && hasLocalData()) {
     // Another tab of the app is signing in through its form: that tab asks;
     // this one waits for its answer instead of opening the question too.
-    if (Date.now() - formAt < FORM_SIGN_IN_MS && Date.now() - signedInHere > FORM_SIGN_IN_MS) {
+    if (Date.now() - formAt < FORM_SIGN_IN_MS && Date.now() - signedInHere > FORM_SIGN_IN_MS && otherTabAsking()) {
       setStatus('Finish signing in in the other window.');
       const answered = await waitForOtherTab(user);
       if (account.user?.id !== user.id) return;
       if (answered) return finishStart(user);
     }
-    const choice = await accountSwitchHandler({ email: user.email || '', first: false, deleted: String(owner).startsWith('deleted:') });
+    const beat = setInterval(() => writeText(KEYS.asking, String(Date.now())), ASK_BEAT_MS);
+    writeText(KEYS.asking, String(Date.now()));
+    const choice = await accountSwitchHandler({ email: user.email || '', first: false, deleted: String(owner).startsWith('deleted:') }).finally(() => { clearInterval(beat); remove(KEYS.asking); });
     if (account.user?.id !== user.id) return;
     // Another tab answered the same question meanwhile: its answer stands.
     if (answeredElsewhere(user)) return finishStart(user);
@@ -151,16 +153,21 @@ async function startSession(user) {
   return finishStart(user);
 }
 
-/** Resolves true once another tab answered for this account, false if it signed out or gave up. */
+// The tab showing the account question says so every few seconds, so other
+// tabs wait only while it really is asking (not after it was reloaded or closed).
+const ASK_BEAT_MS = 3000;
+const otherTabAsking = () => Date.now() - (Number(readText(KEYS.asking)) || 0) < ASK_BEAT_MS * 3;
+
+/** Resolves true once another tab answered for this account, false if it signed out or stopped asking. */
 function waitForOtherTab(user) {
   return new Promise((resolve) => {
-    const done = (v) => { window.removeEventListener('storage', check); clearTimeout(timer); resolve(v); };
+    const done = (v) => { window.removeEventListener('storage', check); clearInterval(timer); resolve(v); };
     const check = () => {
       if (answeredElsewhere(user)) done(true);
-      else if (account.user?.id !== user.id) done(false);
+      else if (account.user?.id !== user.id || !otherTabAsking()) done(false);
     };
     window.addEventListener('storage', check);
-    const timer = setTimeout(() => done(answeredElsewhere(user)), FORM_SIGN_IN_MS);
+    const timer = setInterval(check, ASK_BEAT_MS);
     check();
   });
 }
