@@ -1,9 +1,9 @@
 // Offline support for the web version: the app shell is cached per version.
 // A new version installs in the background and takes over when the user taps
 // "Reload now" in Settings (the page sends 'skip-waiting').
-const VERSION = '3.0.0';
+const VERSION = '3.1.0';
 // Hash of the cached files (tools/sw-hash.mjs), so every change re-caches.
-const BUILD = '02b0da12838e';
+const BUILD = '1b333eeeed69';
 const CACHE = 'tracker-' + VERSION + '-' + BUILD;
 
 const FILES = [
