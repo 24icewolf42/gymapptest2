@@ -61,6 +61,10 @@ let generation = 0;
 function retire() {
   generation++;
   Object.keys(timers).forEach((k) => { clearTimeout(timers[k]?.id); timers[k] = null; });
+  // A sync still on its way no longer counts as running (the next account's
+  // first sync must not join it), and nothing it learned carries over.
+  Object.keys(running).forEach((k) => { running[k] = null; });
+  lastRemoteWorkouts = null;
 }
 
 /** Stops the syncs on their way (e.g. before a restore), so none marks the new data as checked. */
@@ -254,7 +258,7 @@ function run(area) {
   if (running[area]) { again[area] = true; return running[area]; }
   const started = generation;
   const stale = () => started !== generation;
-  running[area] = (async () => {
+  const job = (async () => {
     let ok;
     try {
       do {
@@ -265,11 +269,12 @@ function run(area) {
       ok = false;
       if (!stale()) setStatus('Saved on this phone. Cloud sync failed: ' + errorText(error), 'error');
     } finally {
-      running[area] = null;
+      if (running[area] === job) running[area] = null;
     }
     return ok;
   })();
-  return running[area];
+  running[area] = job;
+  return job;
 }
 
 function queue(area, delay = 800) {
@@ -583,6 +588,7 @@ export async function syncAll() {
 
 // ---------- account actions (return an error message, or '' on success) ----------
 export async function signIn(email, password) {
+  await afterEnding();
   markFormSignIn();
   const r = await supabase.auth.signInWithPassword({ email, password });
   if (r.error) signInFailed();
@@ -592,6 +598,7 @@ export async function signIn(email, password) {
 export async function signUp(email, password, username) {
   // The age/permission confirmation is recorded with the account.
   const data = { username, age_confirmed: 'true' };
+  await afterEnding();
   markFormSignIn();
   const r = await supabase.auth.signUp({ email, password, options: { data, emailRedirectTo: SITE_URL } });
   if (r.error || !r.data.session) signInFailed(); // not signed in (yet)
@@ -606,6 +613,7 @@ export async function resetPassword(email) {
 
 /** Signs in with the code from a password-reset email; PASSWORD_RECOVERY then asks for a new password. */
 export async function verifyRecoveryCode(email, token) {
+  await afterEnding();
   markFormSignIn();
   const r = await supabase.auth.verifyOtp({ email, token, type: 'recovery' });
   if (r.error) signInFailed();
@@ -642,8 +650,13 @@ export async function signOut({ removeLocalData = false, force = false, everywhe
     // at the next sign-in, what changed since now and is new to the account gets defused.
     markUntrusted({ snapshot: true });
   }
-  return '';
+  return synced ? '' : 'unsynced'; // signed out; the latest changes stayed on this phone only
 }
+
+// A sign-out the auth client is still finishing after endSession stopped waiting
+// for it. The next sign-in waits for it, so it can never end the new session.
+let ending = null;
+const afterEnding = () => ending || Promise.resolve();
 
 /**
  * Signs out for sure. supabase-js keeps the stored session when the sign-out
@@ -653,10 +666,14 @@ export async function signOut({ removeLocalData = false, force = false, everywhe
 async function endSession(everywhere = false) {
   stopBeat();
   // This device only, unless the user asks to end every session (e.g. a lost phone).
-  // Bounded: offline, the auth client may wait for a token refresh that keeps retrying.
+  // Bounded: offline, the auth client may wait for a token refresh that keeps
+  // retrying. Ending every session needs the server, so it gets longer.
+  const out = supabase.auth.signOut({ scope: everywhere ? 'global' : 'local' }).catch((error) => ({ error }));
+  const tracked = out.then(() => { if (ending === tracked) ending = null; });
+  ending = tracked;
   const r = await Promise.race([
-    supabase.auth.signOut({ scope: everywhere ? 'global' : 'local' }).catch((error) => ({ error })),
-    new Promise((res) => { setTimeout(() => res({ error: new Error('timeout') }), 4000); }),
+    out,
+    new Promise((res) => { setTimeout(() => res({ error: new Error('timeout') }), everywhere ? 20000 : 4000); }),
   ]);
   if (!r?.error) return true;
   const key = supabase.auth.storageKey;

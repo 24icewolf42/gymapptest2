@@ -351,7 +351,7 @@ export function initSettings() {
     let done = markBusy(sheet, button, 'Syncing…');
     try {
       const r = await signOut({ removeLocalData: choice === 'remove', everywhere: choice === 'everywhere' });
-      if (r !== 'not-synced') { finish(r === 'everywhere-failed' ? r : 'out'); return; }
+      if (r !== 'not-synced') { finish(r === 'everywhere-failed' ? r : r === 'unsynced' ? 'out-unsynced' : 'out'); return; }
       done(); done = null;
       const next = await openSheet({
         title: 'Not synced yet',
@@ -385,6 +385,7 @@ export function initSettings() {
     });
     const messages = {
       out: 'Signed out.',
+      'out-unsynced': 'Signed out. Your latest changes had not reached your account yet (no connection?); they stay on this phone.',
       removed: 'Signed out and removed from this phone.',
       kept: 'Signed out. Your data stays on this phone.',
       stayed: 'You are still signed in. Nothing was removed.',

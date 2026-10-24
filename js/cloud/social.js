@@ -52,9 +52,11 @@ export async function sendFriendRequest(rawName) {
   const r = await supabase.from('friend_requests').insert({ requester_id: me, target_id: target.id, status: 'pending' });
   if (!r.error) return ok(`Request sent to @${name}.`);
   if (r.error.code === '23505') {
-    // They already asked us (or we asked them): accept theirs if it is pending.
+    // They already asked us (or we asked them): accept theirs if it is pending,
+    // only for the account that asked and only if it is still signed in.
+    if (account.user?.id !== me) return { error: 'You signed out, so the friend request was not sent.' };
     const theirs = await supabase.from('friend_requests').update({ status: 'accepted' })
-      .eq('requester_id', target.id).eq('target_id', account.user.id).eq('status', 'pending').select('id');
+      .eq('requester_id', target.id).eq('target_id', me).eq('status', 'pending').select('id');
     if (!theirs.error && theirs.data && theirs.data.length) return ok(`You and @${name} are now friends.`);
     return { error: `You already have a request or friendship with @${name}.` };
   }
