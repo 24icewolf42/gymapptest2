@@ -244,7 +244,9 @@ async function restoreFrom(text) {
   BACKUP_KEYS.forEach((k) => { if (!(k in data)) localStorage.removeItem(k); });
   Object.entries(data).forEach(([k, v]) => localStorage.setItem(k, v));
   // This phone's copy changed wholesale: forget what it last saw in the cloud.
-  [KEYS.planBase, KEYS.drafts, KEYS.draft, KEYS.active].forEach((k) => localStorage.removeItem(k));
+  // Deletion records are not taken from a backup file (anyone could have
+  // written it, and the account keeps its own).
+  [KEYS.planBase, KEYS.drafts, KEYS.draft, KEYS.active, KEYS.deletedSessions, KEYS.deletedDates].forEach((k) => localStorage.removeItem(k));
   state.sync.syncedWeightDates = [];
   state.sync.pendingWeightDeletes = {};
   localStorage.setItem(KEYS.sync, JSON.stringify(state.sync));

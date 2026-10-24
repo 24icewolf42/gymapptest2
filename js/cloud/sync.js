@@ -5,8 +5,8 @@ import {
   state, localPlan, applyPlan, planBase, setPlanBase, setPlanTombstones, saveLogs, saveLastUsed, saveWeights, saveSync, saveBypass, saveTombstones,
   hasLocalData, clearLocalData, defangNewRoutines,
 } from '../state.js';
-import { mergePlans, planHashes, stableStringify, hashOf, defang } from '../domain/plan.js';
-import { mergeLogs, mergeProgress, mergeBypass, dailySummaries, sessionKey } from '../domain/logs.js';
+import { mergePlans, planHashes, stableStringify, hashOf, defang, deepDefang as deepDefangValue } from '../domain/plan.js';
+import { mergeLogs, mergeProgress, mergeBypass, dailySummaries, sessionKey, sanitizeLogs } from '../domain/logs.js';
 import { mergeWeights } from '../domain/weights.js';
 import { emit, listen, writeText, readText, read, write, remove, KEYS } from '../core/store.js';
 import { makeBackup } from '../domain/backup.js';
@@ -78,7 +78,13 @@ async function handleAuth(event, session) {
   if (event === 'PASSWORD_RECOVERY') emit('gym:password-recovery');
   const user = session?.user || null;
   if (!user) {
-    if (account.user) retire();
+    if (account.user) {
+      retire();
+      // However the session ended (here, elsewhere, expired): what is added to
+      // this phone from now on may be someone else's.
+      state.sync.untrusted = { plan: true, data: true };
+      saveSync();
+    }
     account.user = null;
     account.profile = null;
     account.ready = false;
@@ -278,25 +284,29 @@ function queue(area, delay = 800) {
  * original app shows them unescaped). What the account already has stays.
  */
 function defangNewSessions(remote) {
-  const known = new Set();
-  Object.entries(remote.logs || {}).forEach(([d, list]) => (Array.isArray(list) ? list : []).forEach((x) => known.add(sessionKey(d, x))));
+  // Only workouts exactly as the account has them are trusted; a changed copy is defused.
+  const theirs = new Map();
+  const remoteLogs = sanitizeLogs(remote.logs || {});
+  Object.entries(remoteLogs).forEach(([d, list]) => list.forEach((x) => theirs.set(sessionKey(d, x), stableStringify(x))));
   let changed = false;
   Object.keys(state.logs).forEach((d) => {
     state.logs[d] = state.logs[d].map((x) => {
-      if (known.has(sessionKey(d, x))) return x;
+      if (theirs.get(sessionKey(d, x)) === stableStringify(x)) return x;
       const clean = { ...x, day: defang(x.day), exercises: x.exercises.map((e) => ({ ...e, name: defang(e.name), target: defang(e.target || ''), sets: e.sets.map((s) => ({ ...s, w: defang(s.w), r: defang(s.r) })) })) };
       if (JSON.stringify(clean) !== JSON.stringify(x)) changed = true;
       return clean;
     });
   });
   if (changed) saveLogs({ silent: true });
-  const knownLifts = new Set(Object.keys(remote.progress || {}));
+  const theirLifts = remote.progress || {};
   const lifts = {};
   let liftsChanged = false;
   Object.entries(state.lastUsed).forEach(([k, v]) => {
-    const key = knownLifts.has(k) ? k : defang(k);
-    if (key !== k) liftsChanged = true;
-    lifts[key] = v;
+    const same = Object.hasOwn(theirLifts, k) && stableStringify(theirLifts[k]) === stableStringify(v);
+    const key = same || Object.hasOwn(theirLifts, k) ? k : defang(k);
+    const value = same ? v : deepDefangValue(v);
+    if (key !== k || stableStringify(value) !== stableStringify(v)) liftsChanged = true;
+    lifts[key] = value;
   });
   if (liftsChanged) { state.lastUsed = lifts; saveLastUsed({ silent: true }); }
 }
@@ -411,8 +421,15 @@ const SYNC = {
       if (state.sync.untrusted?.data) defangNewSessions(remote);
 
       const deleted = [...new Set([...state.deletedSessions, ...(Array.isArray(remote.deleted_sessions) ? remote.deleted_sessions : [])])];
-      const deletedDates = { ...(remote.deleted_dates || {}) };
-      Object.keys(state.deletedDates).forEach((d) => { deletedDates[d] = Math.max(Number(deletedDates[d]) || Date.parse(deletedDates[d]) || 0, Number(state.deletedDates[d]) || 0); });
+      // A day can only have been cleared in the past: a time in the future
+      // (a bad clock or a crafted file) would delete everything logged there.
+      const latest = Date.now() + 24 * 3600 * 1000;
+      const when = (v) => Number(v) || Date.parse(v) || 0;
+      const deletedDates = {};
+      [remote.deleted_dates || {}, state.deletedDates].forEach((src) => Object.keys(src).forEach((d) => {
+        const t = when(src[d]);
+        if (t && t <= latest) deletedDates[d] = Math.max(deletedDates[d] || 0, t);
+      }));
       const logs = mergeLogs(remote.logs || {}, state.logs, { deleted, deletedDates });
       const progress = mergeProgress(remote.progress, state.lastUsed);
       const bypass = mergeBypass(remote.bypass_days, state.bypassState);
@@ -601,7 +618,8 @@ export async function signOut({ removeLocalData = false, force = false } = {}) {
  */
 async function endSession() {
   stopBeat();
-  const r = await supabase.auth.signOut().catch((error) => ({ error }));
+  // This device only: signing out here must not sign out the user's other devices.
+  const r = await supabase.auth.signOut({ scope: 'local' }).catch((error) => ({ error }));
   if (!r?.error) return;
   const key = supabase.auth.storageKey;
   [key, key + '-code-verifier', key + '-user'].forEach((k) => localStorage.removeItem(k));

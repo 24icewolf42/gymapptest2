@@ -2,7 +2,7 @@
 // `state` and call the save functions; cloud sync listens for the events.
 import { KEYS, read, write, readText, writeText, remove, emit } from './core/store.js';
 import { ymd } from './core/dates.js';
-import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule, planHashes, isSafeImage, sanitizeWorkoutName, deepDefang, defang } from './domain/plan.js';
+import { sanitizeWorkouts, sanitizeSchedule, upgradeExercises, removeStockPresets, emptySchedule, planHashes, isSafeImage, sanitizeWorkoutName, deepDefang, defang, sanitizeWorkout, stableStringify } from './domain/plan.js';
 import { sanitizeLogs, upgradeLastUsed, sessionKey, newSessionId, mergeProgress, normalizeBypass, activeBypass, streak, bestStreak } from './domain/logs.js';
 import { sanitizeWeights, upsertWeight } from './domain/weights.js';
 
@@ -269,9 +269,10 @@ export function defangNewRoutines(remotePlan) {
   const next = {};
   Object.entries(state.workouts).forEach(([name, list]) => {
     if (known.has(name)) {
-      // A routine the account has: exercises it does not have there are new, and defused.
-      const had = new Set((Array.isArray(remote[name]) ? remote[name] : []).map((e) => e && e.name));
-      const cleanList = list.map((e) => (had.has(e.name) ? e : deepDefang(e)));
+      // A routine the account has: only exercises exactly as the account has
+      // them are trusted; anything changed (name, note, target...) is defused.
+      const theirs = new Map(sanitizeWorkout(Array.isArray(remote[name]) ? remote[name] : []).map((e) => [e.name, stableStringify(e)]));
+      const cleanList = list.map((e) => (theirs.get(e.name) === stableStringify(e) ? e : deepDefang(e)));
       if (JSON.stringify(cleanList) !== JSON.stringify(list)) changed = true;
       next[name] = cleanList;
       return;
