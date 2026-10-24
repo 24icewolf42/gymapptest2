@@ -27,6 +27,7 @@ let signingOut = false;
 let authError = ''; // kept in state so a background re-render does not wipe it
 let deleting = false;
 let savingWeight = false;
+let retryingBlocks = false;
 const unblocking = new Set(); // blocked ids with a request in flight
 
 export function openSettings() {
@@ -114,7 +115,7 @@ function accountCard() {
       <span><b>Show my weight to friends</b><small>Friends see only your latest weigh-in, never the full history.</small></span></label>
     <p class="muted small">Friends see your username, gym dates you share with them, your replies and check-ins at gym dates they can see, and stats or routines you choose to share. Your workout history syncs only to your own account. <button type="button" class="link-btn inline" data-privacy>Read the privacy notice</button></p>
     <h3 class="sub">Blocked people</h3>
-    ${blocks == null ? html`<p class="muted small">Loading…</p>` : blocks.error ? html`<p class="notice error">${blocks.error} <button type="button" class="link-btn inline" data-retry-blocks>Try again</button></p>` : blocks.length ? html`<div class="list">${blocks.map((b) => html`
+    ${blocks == null ? html`<p class="muted small">Loading…</p>` : blocks.error ? html`<p class="notice error" data-key="blocks-error">${blocks.error} <button type="button" class="link-btn inline" data-retry-blocks${busyAttr(retryingBlocks)}>${retryingBlocks ? 'Trying…' : 'Try again'}</button></p>` : blocks.length ? html`<div class="list">${blocks.map((b) => html`
       <div class="row" data-key="block-${b.blocked_id}"><div class="row-main"><b>@${b.username}</b></div>
         <button type="button" class="btn btn-ghost btn-sm" data-unblock="${b.blocked_id}"${busyAttr(unblocking.has(b.blocked_id))} aria-label="Unblock ${b.username}">Unblock</button></div>`)}</div>`
       : html`<p class="muted small">Nobody. You can block someone from the Crew tab.</p>`}
@@ -284,7 +285,14 @@ export function initSettings() {
   on(page, 'click', '[data-close-settings]', closeSettings);
   on(page, 'click', '[data-privacy]', (e) => { e.preventDefault(); showPrivacy(); });
   on(page, 'click', '[data-auth-mode]', (e, b) => { authMode = b.dataset.authMode; authError = ''; renderSettings(); $('auth-tab-' + authMode)?.focus({ preventScroll: true }); });
-  on(page, 'click', '[data-retry-blocks]', () => { blocks = null; renderSettings(); refreshBlocks(); });
+  on(page, 'click', '[data-retry-blocks]', async () => {
+    retryingBlocks = true;
+    renderSettings();
+    await refreshBlocks();
+    retryingBlocks = false;
+    renderSettings();
+    toast(blocks?.error || 'Loaded.', { tone: blocks?.error ? 'error' : 'default' });
+  });
   on(page, 'submit', '#authForm', async (e) => {
     e.preventDefault();
     const f = e.target;

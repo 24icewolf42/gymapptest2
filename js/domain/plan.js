@@ -41,13 +41,20 @@ function clampInt(value, min, max, fallback) {
 const LOOKALIKE = { '<': '‹', '>': '›', '"': '”', '`': '’' };
 export const plain = (s) => s.replace(/[<>"`]/g, (c) => LOOKALIKE[c]);
 
-/** plain() applied to every string and key of a JSON value. */
-export function deepPlain(value) {
-  if (typeof value === 'string') return plain(value);
-  if (Array.isArray(value)) return value.map(deepPlain);
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [plain(k), deepPlain(v)]));
+// Only what could start markup: "<" before a letter or "/" (a tag), and
+// quotes. "Arms <3" stays as it is, so a user's own backup keeps its names.
+export const defang = (s) => s.replace(/<(?=[A-Za-z/!?])/g, '‹').replace(/["`]/g, (c) => LOOKALIKE[c]);
+
+const deep = (fn) => function walk(value) {
+  if (typeof value === 'string') return fn(value);
+  if (Array.isArray(value)) return value.map(walk);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [fn(k), walk(v)]));
   return value;
-}
+};
+/** plain() applied to every string and key of a JSON value (for shared routines). */
+export const deepPlain = deep(plain);
+/** defang() applied to every string and key (for backup files). */
+export const deepDefang = deep(defang);
 
 function text(value, max) {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';

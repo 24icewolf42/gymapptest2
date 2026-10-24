@@ -103,7 +103,19 @@ function resetAccountBookkeeping() {
 // other open tabs (which hear about the sign-in too) don't ask again.
 const FORM_SIGN_IN_MS = 2 * 60 * 1000;
 let signedInHere = 0; // this tab's own form sign-in
-const markFormSignIn = () => { signedInHere = Date.now(); writeText(KEYS.formSignIn, String(signedInHere)); };
+let beat = null;
+// From the form sign-in until its session has started (or the question it
+// asks is answered), this tab says every few seconds that it is handling the
+// sign-in, so the other tabs wait for it instead of asking too.
+const markFormSignIn = () => {
+  signedInHere = Date.now();
+  writeText(KEYS.formSignIn, String(signedInHere));
+  clearInterval(beat);
+  const pulse = () => { if (Date.now() - signedInHere > FORM_SIGN_IN_MS) stopBeat(); else writeText(KEYS.asking, String(Date.now())); };
+  pulse();
+  beat = setInterval(pulse, ASK_BEAT_MS);
+};
+const stopBeat = () => { clearInterval(beat); beat = null; remove(KEYS.asking); };
 
 async function startSession(user) {
   // Re-read: another tab may already have answered for this account.
@@ -124,9 +136,7 @@ async function startSession(user) {
       if (account.user?.id !== user.id) return;
       if (answered) return finishStart(user);
     }
-    const beat = setInterval(() => writeText(KEYS.asking, String(Date.now())), ASK_BEAT_MS);
-    writeText(KEYS.asking, String(Date.now()));
-    const choice = await accountSwitchHandler({ email: user.email || '', first: false, deleted: String(owner).startsWith('deleted:') }).finally(() => { clearInterval(beat); remove(KEYS.asking); });
+    const choice = await accountSwitchHandler({ email: user.email || '', first: false, deleted: String(owner).startsWith('deleted:') });
     if (account.user?.id !== user.id) return;
     // Another tab answered the same question meanwhile: its answer stands.
     if (answeredElsewhere(user)) return finishStart(user);
@@ -178,6 +188,7 @@ export function answeredElsewhere(user) {
 }
 
 async function finishStart(user) {
+  stopBeat();
   state.sync.accountId = user.id;
   saveSync();
   account.ready = true;
@@ -473,6 +484,7 @@ export async function syncAll() {
 export async function signIn(email, password) {
   markFormSignIn();
   const r = await supabase.auth.signInWithPassword({ email, password });
+  if (r.error) stopBeat();
   return r.error ? errorText(r.error) : '';
 }
 
@@ -525,6 +537,7 @@ export async function signOut({ removeLocalData = false, force = false } = {}) {
  * again at the next start; then the session is removed here instead.
  */
 async function endSession() {
+  stopBeat();
   const r = await supabase.auth.signOut().catch((error) => ({ error }));
   if (!r?.error) return;
   const key = supabase.auth.storageKey;

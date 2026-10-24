@@ -1,5 +1,5 @@
 // Bottom sheets and dialogs, replacing window.prompt/confirm.
-import { html, replaceContent } from '../core/dom.js';
+import { html, replaceContent, updateToastReach } from '../core/dom.js';
 import { pushLayer } from '../core/router.js';
 import { icons } from './icons.js';
 
@@ -23,7 +23,7 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
     const backdrop = document.createElement('div');
     backdrop.className = 'sheet-backdrop';
     replaceContent(backdrop, html`
-      <form class="sheet ${className}" role="${dismissible ? 'dialog' : 'alertdialog'}" aria-modal="true" aria-labelledby="${id}"${body ? html` aria-describedby="${id}-body"` : ''} tabindex="-1" novalidate>
+      <form class="sheet ${className}" role="${dismissible ? 'dialog' : 'alertdialog'}" aria-modal="true" aria-labelledby="${id}" tabindex="-1" novalidate>
         <div class="sheet-handle" aria-hidden="true"></div>
         <header class="sheet-head">
           <div>
@@ -36,6 +36,10 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
         ${actions.length ? html`<div class="sheet-actions">${actions.map((a, i) => html`<button type="${a.submit ? 'submit' : 'button'}" class="btn btn-${a.tone || 'secondary'}" data-sheet-action="${i}">${a.label}</button>`)}</div>` : ''}
       </form>`);
     root.appendChild(backdrop);
+    updateToastReach();
+    // Described by its first sentence of text, not the whole body.
+    const lead = backdrop.querySelector('.sheet-body .sheet-text');
+    if (lead) { lead.id = id + '-desc'; backdrop.querySelector('.sheet').setAttribute('aria-describedby', lead.id); }
     const sheet = backdrop.querySelector('.sheet');
     // Everything behind the sheet (the page, the workout screen, older sheets) is inert.
     const behind = [...document.querySelectorAll('#app, #bottomNav, #activeBar, #session, #sheetRoot > .sheet-backdrop')].filter((el) => el !== backdrop && !el.inert);
@@ -52,6 +56,7 @@ export function openSheet({ title, subtitle = '', body = '', actions = [], onMou
       if (!fromBack) closeLayer();
       backdrop.classList.remove('open');
       backdrop.classList.add('closing');
+      updateToastReach();
       setTimeout(() => backdrop.remove(), 180);
       const above = open[at];
       if (above) {

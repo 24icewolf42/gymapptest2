@@ -13,7 +13,7 @@ import { icons } from './icons.js';
 
 const MONTHS_AHEAD = 6;
 
-function monthGrid(y, m, today, dates) {
+function monthGrid(y, m, today, dates, chosen) {
   const days = new Date(y, m + 1, 0).getDate(), first = mondayIndex(new Date(y, m, 1).getDay());
   let count = 0, seconds = 0;
   const cells = [];
@@ -28,7 +28,9 @@ function monthGrid(y, m, today, dates) {
     const cls = ['cal-cell', planned ? 'planned' : 'rest', logged ? 'logged' : '', bypass ? 'bypass' : '', ds === today ? 'today' : '', ds > today ? 'future' : '', dates.has(ds) ? 'has-date' : ''].filter(Boolean).join(' ');
     const label = fmtLong(ds) + ': ' + (logged ? 'trained ' + logs.map((s) => s.day).join(', ') : bypass ? 'bypass day' : planned || 'rest day') + (dates.has(ds) ? ', gym date' : '');
     // One tab stop per month (today, else the 1st); arrow keys move between days.
-    const stop = ds === today || (d === 1 && !(today.startsWith(ds.slice(0, 7))));
+    // A day the user moved to keeps the month's tab stop across re-renders.
+    const month = ds.slice(0, 7);
+    const stop = chosen && chosen.startsWith(month) ? ds === chosen : ds === today || (d === 1 && !today.startsWith(month));
     cells.push(html`<button type="button" class="${cls}" data-day="${ds}" data-key="day-${ds}" tabindex="${stop ? '0' : '-1'}"><span class="sr-only">${label}</span><span class="cal-num" aria-hidden="true">${d}</span><span class="cal-tag" aria-hidden="true">${tag}</span></button>`);
   }
   return html`<section class="cal-month" data-month="${y}-${m}" data-key="month-${y}-${m}">
@@ -48,13 +50,14 @@ function short(name) {
 
 export function renderCalendar() {
   const now = new Date(), today = ymd(now), dates = gymDateDays();
+  const chosen = document.activeElement?.closest?.('#page-calendar [data-day]')?.dataset.day || null;
   const firstLog = Object.keys(state.logs).sort()[0];
   let y = firstLog ? +firstLog.slice(0, 4) : now.getFullYear();
   let m = firstLog ? +firstLog.slice(5, 7) - 1 : now.getMonth();
   if (y * 12 + m > now.getFullYear() * 12 + now.getMonth()) { y = now.getFullYear(); m = now.getMonth(); }
   const end = now.getFullYear() * 12 + now.getMonth() + MONTHS_AHEAD;
   const months = [];
-  while (y * 12 + m <= end) { months.push(monthGrid(y, m, today, dates)); m++; if (m > 11) { m = 0; y++; } }
+  while (y * 12 + m <= end) { months.push(monthGrid(y, m, today, dates, chosen)); m++; if (m > 11) { m = 0; y++; } }
   const st = streak(state.logs, state.bypass, state.schedule);
   render($('page-calendar'), html`
     <header class="top"><div><p class="eyebrow">${st ? st + (st === 1 ? ' training day in a row' : ' training days in a row') : 'Your training history'}</p><h1>Calendar</h1></div>

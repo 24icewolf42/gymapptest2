@@ -106,7 +106,8 @@ export function render(el, content) {
     if (!target) continue;
     if (/^H[1-6]$/.test(target.tagName)) { focusHeading(target.parentElement, `[data-key="${CSS.escape(k)}"]`); return; }
     const control = target.matches(focusable) || target.getAttribute('tabindex') === '-1' ? target : target.querySelector(focusable);
-    if (control) { control.focus({ preventScroll: true }); return; }
+    // Never hand focus to a destructive control the user did not choose.
+    if (control && !control.matches('.danger')) { control.focus({ preventScroll: true }); return; }
   }
   // Then the heading of the closest section that is still there, then the page heading.
   const scope = ancestors.find((n) => n.isConnected && el.contains(n) && n.querySelector('h2, h3'));
@@ -260,9 +261,9 @@ const TOAST_RESUME_MS = 3000;
 /**
  * Short message. `action: { label, onClick }` adds a button (e.g. Undo).
  * Errors stay longer and are announced assertively (through a separate alert
- * region). A message never replaces an Undo on screen (it waits until the
- * Undo is gone), and a background message right after an error does not
- * replace it. The toast stays while it has focus or the pointer.
+ * region). A background message waits while an Undo is on screen and does not
+ * push aside a recent error; the user's own next result replaces either. The
+ * toast stays while it has focus or the pointer.
  */
 export function toast(message, options = {}) {
   // background: not caused by the user (e.g. a friend's gym date); such a
@@ -290,6 +291,7 @@ export function toast(message, options = {}) {
     b.className = 'toast-action';
     b.textContent = action.label;
     b.setAttribute('aria-keyshortcuts', 'Control+Z Meta+Z');
+    b.inert = sheetOpen(); // a dialog is modal: its Undo waits until it is closed
     b.onclick = () => { hideToast(el); action.onClick(); };
     el.append(' ', b);
   }
@@ -306,6 +308,14 @@ export function toast(message, options = {}) {
   scheduleHide(el, duration);
 }
 
+const sheetOpen = () => !!document.querySelector('#sheetRoot .sheet-backdrop:not(.closing)');
+
+/** Keeps the toast's Undo out of reach while a dialog is open (called by the sheets). */
+export function updateToastReach() {
+  const b = document.querySelector('#toast .toast-action');
+  if (b) b.inert = sheetOpen();
+}
+
 /** Removes an Undo whose screen has gone (page change, workout closed): it could no longer act. */
 export function dismissUndo() {
   const el = $('toast');
@@ -318,11 +328,12 @@ if (typeof document !== 'undefined') {
   document.addEventListener('keydown', (e) => {
     const el = $('toast');
     const undo = el && el.classList.contains('show') ? el.querySelector('.toast-action') : null;
-    if (!undo || document.querySelector('#sheetRoot .sheet-backdrop:not(.closing)')) return;
+    if (!undo || sheetOpen()) return;
     const typing = e.target.closest?.('input:not([type=checkbox]):not([type=radio]), textarea, select, [contenteditable]');
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !typing) { e.preventDefault(); undo.click(); }
-    else if (e.key === 'Escape' && !e.defaultPrevented) hideToast(el);
-  });
+    // Escape dismisses the Undo first (before e.g. closing the workout screen).
+    else if (e.key === 'Escape' && !e.defaultPrevented) { e.stopPropagation(); hideToast(el); }
+  }, true);
 }
 
 function scheduleHide(el, ms) {

@@ -22,6 +22,7 @@ export function isNativeApp() {
 function showBanner(title, sub, onTap) {
   const el = $('updateBanner');
   render(el, html`<button type="button" class="update-btn"><b>${title}</b><small>${sub}</small></button>`);
+  if (el.hidden) toast(`${title}. ${sub}.`, { background: true }); // said once, without moving focus
   el.hidden = false;
   el.querySelector('button').onclick = onTap;
 }

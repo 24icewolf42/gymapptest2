@@ -35,6 +35,7 @@ const pending = new Set(); // keys of actions in flight, to block double taps
 
 // ---------- data ----------
 let loading = null, reloadAfter = false;
+let retrying = false; // a "Try again" the user pressed is running
 /** Reloads friends and dates. A call while a load runs queues one more, so writes are never shown stale. */
 function refreshCrew() {
   if (!account.user || !account.ready) return Promise.resolve();
@@ -160,7 +161,7 @@ export function renderCrew() {
     <div class="segmented" role="tablist" aria-label="Crew sections">
       ${SECTIONS.map(([id, label]) => html`<button type="button" role="tab" id="crew-tab-${id}" aria-controls="crew-panel" aria-selected="${crew.tab === id ? 'true' : 'false'}" tabindex="${crew.tab === id ? '0' : '-1'}" data-crew-tab="${id}">${label}${id === 'friends' && incoming ? html`<span class="dot-badge" aria-hidden="true">${incoming}</span><span class="sr-only">, ${incoming} new</span>` : ''}</button>`)}
     </div>
-    ${crew.error ? html`<div class="notice error" data-key="crew-error"><span>${crew.error}</span> <button type="button" class="link-btn inline" data-retry>Try again</button></div>` : ''}
+    ${crew.error ? html`<div class="notice error" data-key="crew-error"><span>${crew.error}</span> <button type="button" class="link-btn inline" data-retry${busyAttr(retrying)}>${retrying ? 'Trying…' : 'Try again'}</button></div>` : ''}
     <div id="crew-panel" role="tabpanel" aria-labelledby="crew-tab-${crew.tab}">
       <div data-key="panel-${crew.tab}">${crew.tab === 'dates' ? datesPanel() : crew.tab === 'friends' ? friendsPanel() : rankingPanel()}</div>
     </div>`);
@@ -263,7 +264,7 @@ function friendsPanel() {
       <div class="row" data-key="out-${x.id}">${avatar(x.username)}<div class="row-main"><b>@${x.username}</b><small>waiting for an answer</small></div>
         <button type="button" class="btn btn-ghost btn-sm" data-cancel-request="${x.id}"${busyAttr(pending.has(x.id))} aria-label="Cancel request to ${x.username}">Cancel</button></div>`)}</div>` : ''}
     <h2 class="section-title" data-key="shared-title">Shared routines</h2>
-    ${!shared ? html`<p class="muted" data-key="shared-loading">Loading…</p>` : shared.error ? html`<p class="notice error" data-key="shared-error">${shared.error} <button type="button" class="link-btn inline" data-retry>Try again</button></p>` : shared.length ? html`<div class="card list" data-key="shared-list">${shared.map((x) => html`
+    ${!shared ? html`<p class="muted" data-key="shared-loading">Loading…</p>` : shared.error ? html`<p class="notice error" data-key="shared-error">${shared.error} <button type="button" class="link-btn inline" data-retry${busyAttr(retrying)}>${retrying ? 'Trying…' : 'Try again'}</button></p>` : shared.length ? html`<div class="card list" data-key="shared-list">${shared.map((x) => html`
       <div class="row" data-key="shared-${x.id}"><div class="row-main"><b>${x.title}</b><small>${x.mine ? 'Shared by you' : '@' + (x.owner?.username || 'friend')} · ${workoutSummary(x.workout)}</small></div>
         ${x.mine ? html`<button type="button" class="btn btn-ghost btn-sm" data-unshare="${x.id}" aria-label="Stop sharing ${x.title}">Remove</button>` : html`<button type="button" class="btn btn-soft btn-sm" data-copy-shared="${x.id}" aria-label="Copy ${x.title} to my plan">${icons.copy} Copy</button>`}</div>`)}</div>`
       : html`<p class="muted small" data-key="shared-none">Routines you or your friends share from the Plan tab show up here.</p>`}`;
@@ -276,7 +277,7 @@ function timeText(seconds) {
 function rankingPanel() {
   const lb = crew.leaderboard;
   if (!lb) return loadingCard('Loading ranking…');
-  if (lb.error) return html`<p class="notice error">${lb.error} <button type="button" class="link-btn inline" data-retry>Try again</button></p>`;
+  if (lb.error) return html`<p class="notice error">${lb.error} <button type="button" class="link-btn inline" data-retry${busyAttr(retrying)}>${retrying ? 'Trying…' : 'Try again'}</button></p>`;
   const shared = lb.filter((r) => r.workouts_count != null).sort((a, b) => (b.workouts_count || 0) - (a.workouts_count || 0));
   const notShared = lb.filter((r) => r.workouts_count == null);
   const mine = lb.find((r) => r.user_id === me());
@@ -455,7 +456,17 @@ export function initCrew() {
     loadTabData();
     if (crew.tab !== 'ranking') refreshCrew(); // pick up requests and dates sent since the last poll
   });
-  on(page, 'click', '[data-retry]', () => { crew.error = ''; renderCrew(); refreshCrew().then(loadTabData); });
+  // A retry the user asked for keeps its button (busy) and says how it went.
+  on(page, 'click', '[data-retry]', async () => {
+    retrying = true;
+    renderCrew();
+    await refreshCrew();
+    await loadTabData();
+    retrying = false;
+    renderCrew();
+    const err = crew.error || crew.shared?.error || crew.leaderboard?.error;
+    toast(err || 'Loaded.', { tone: err ? 'error' : 'default' });
+  });
   on(page, 'click', '[data-quick]', (e, b) => openDateSheet(b.dataset.quick === 'later' ? 'later' : +b.dataset.quick));
   on(page, 'click', '[data-reply]', async (e, b) => {
     const id = b.closest('[data-date-id]').dataset.dateId, status = b.dataset.reply;
