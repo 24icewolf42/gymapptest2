@@ -8,7 +8,7 @@ import { sessionKey } from '../domain/logs.js';
 import { cloudConfigured } from '../cloud/client.js';
 import {
   account, signIn, signUp, resetPassword, verifyRecoveryCode, updatePassword, signOut, changeUsername, setShareWeight,
-  deleteAccount, syncAll,
+  deleteAccount, syncAll, stopSyncs,
 } from '../cloud/sync.js';
 import { loadBlocks, unblock } from '../cloud/social.js';
 import { openSheet, confirmDialog, promptDialog, markBusy } from './sheet.js';
@@ -181,7 +181,7 @@ export function renderSettings() {
     ${dangerCard()}
     ${updateOffer() ? html`<div class="notice update-notice" data-key="update"><b>${updateOffer().title}</b> <button type="button" class="btn btn-primary btn-sm" data-apply-update${busyAttr(applyingUpdate)}>${applyingUpdate ? 'Working…' : updateOffer().action}</button>
       ${updateOffer().reinstall ? html`<p class="small">This update is signed with a different key than the app on this phone (for example a test build), so Android can't install it over it.</p>
-        <ol class="plain small"><li>Settings → Backup → Save file (or sign in, so your data is in your account).</li><li>Uninstall Tracker.</li><li>Install the new version from the download page, then restore or sign in.</li></ol>` : ''}</div>` : ''}
+        <ol class="plain small"><li>Settings → Backup → Save file (or, if you are signed in, check that your account says “Synced”).</li><li>Uninstall Tracker.</li><li>Install the new version from the download page, then restore or sign in.</li></ol>` : ''}</div>` : ''}
     <p class="about muted small" data-key="about"><button type="button" class="link-btn inline" data-privacy>Privacy</button> · <button type="button" class="link-btn inline" data-check-update>Check for updates</button></p>`);
   // Signed in or out from within the account card: focus its new heading.
   const card = $('page-settings').querySelector('[data-key^="account-"]');
@@ -243,6 +243,8 @@ async function restoreFrom(text) {
     ? 'Everything on this phone is replaced by the backup. At the next sync, your routines and week return to how they are in the backup (also if they were changed or deleted since), and workouts already in your account are merged back in.'
     : 'Everything on this phone is replaced by the backup.', { title: 'Restore this backup?', ok: 'Restore', danger: true });
   if (!ok) return;
+  // A sync on its way would mark the restored data as checked when it lands.
+  stopSyncs();
   // Replace everything: keys the backup does not have are removed, not kept.
   BACKUP_KEYS.forEach((k) => { if (!(k in data)) localStorage.removeItem(k); });
   Object.entries(data).forEach(([k, v]) => localStorage.setItem(k, v));

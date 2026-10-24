@@ -283,9 +283,10 @@ export function defangNewRoutines(remotePlan) {
       next[name] = cleanList;
       return;
     }
-    // A routine the account deleted stays deleted: if its name would need
-    // defusing, it is dropped here (renaming would bring it back as a new one).
-    if (deletedThere.has(name) && defang(name) !== name) { changed = true; return; }
+    // A routine the account deleted stays deleted: if this phone's copy is
+    // still the one the account had (renaming would bring it back as a new one).
+    // One restored, re-created or edited here since is the user's work and stays, defused.
+    if (deletedThere.has(name) && defang(name) !== name && planBase()?.workouts?.[name] === planHashes({ workouts: { [name]: list } }).workouts[name]) { changed = true; return; }
     const cleanList = defangUnknown(list, knownText);
     // Never fall back to the raw name: a taken cleaned name gets a number.
     let clean = defang(name);

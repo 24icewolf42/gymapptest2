@@ -63,6 +63,11 @@ function retire() {
   Object.keys(timers).forEach((k) => { clearTimeout(timers[k]?.id); timers[k] = null; });
 }
 
+/** Stops the syncs on their way (e.g. before a restore), so none marks the new data as checked. */
+export function stopSyncs() {
+  retire();
+}
+
 let starting = null;
 function beginSession(user) {
   retire();

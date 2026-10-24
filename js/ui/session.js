@@ -66,6 +66,12 @@ export function isOpen() { return !!s; }
 
 /** A routine was renamed: the running workout and its drafts follow the new name. */
 export function renameRunningWorkout(from, to) {
+  // The open workout follows too, so it is saved under the new name and its draft.
+  if (s && s.day === from) {
+    s.day = to;
+    s.draftId = draftId(to, s.date, s.key);
+    $('sessionTitle').textContent = to;
+  }
   const active = getActive();
   if (active && active.day === from) setActive({ ...active, day: to });
   const drafts = readDrafts();
