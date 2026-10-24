@@ -396,6 +396,8 @@ create table if not exists private.friend_request_log (
 create index if not exists friend_request_log_idx on private.friend_request_log (requester_id, sent_at);
 
 -- New requests: server time, at most 20 a day, never to or from someone blocked.
+-- A request to someone who blocked the sender is dropped without an error
+-- (and still counts), so the sender can't tell that they were blocked.
 create or replace function private.friend_requests_guard()
 returns trigger
 language plpgsql
@@ -410,8 +412,8 @@ begin
     return new;
   end if;
   new.created_at := now();
-  if private.blocked_between(new.requester_id, new.target_id) then
-    raise exception 'This person cannot be added' using errcode = '42501';
+  if exists (select 1 from public.friend_blocks k where k.blocker_id = new.requester_id and k.blocked_id = new.target_id) then
+    raise exception 'Unblock this person first' using errcode = '42501';
   end if;
   -- One sender at a time, so parallel requests cannot all pass the count.
   perform pg_advisory_xact_lock(hashtextextended('friend_request:' || new.requester_id::text, 0));
@@ -423,6 +425,9 @@ begin
     raise exception 'Too many friend requests today. Try again tomorrow.' using errcode = '54000';
   end if;
   insert into private.friend_request_log (requester_id) values (new.requester_id);
+  if exists (select 1 from public.friend_blocks k where k.blocker_id = new.target_id and k.blocked_id = new.requester_id) then
+    return null;
+  end if;
   return new;
 end;
 $$;
@@ -664,6 +669,10 @@ begin
   end if;
   for e in select value from jsonb_array_elements(entries) loop
     d := (e ->> 'log_date')::date;
+    -- Implausible dates (a phone with a wrong clock) are skipped, not fatal.
+    if d < date '1900-01-01' or d > current_date + 2 then
+      continue;
+    end if;
     if coalesce((e ->> 'fresh')::boolean, false) then
       delete from private.body_weight_tombstones t where t.user_id = auth.uid() and t.log_date = d;
     elsif exists (
@@ -792,6 +801,9 @@ begin
   where a.payload ->> 'actor_id' = auth.uid()::text
      or a.payload -> 'traits' ->> 'user_id' = auth.uid()::text
      or a.payload ->> 'actor_username' = (select email from auth.users where id = auth.uid());
+  -- Rate-limit records are keyed by the user id; they go too.
+  delete from private.friend_request_log where requester_id = auth.uid();
+  delete from private.profile_lookups where user_id = auth.uid();
   delete from auth.users where id = auth.uid();
 end;
 $$;
@@ -1277,3 +1289,42 @@ begin
   end if;
 end;
 $$;
+
+-- ===== 20261024000004_storage_limits.sql =====
+-- Per-account size limits, so a single account can't fill the database or make
+-- its friends' leaderboard slow. They are far above real use (years of daily
+-- workouts take a few MB). NOT VALID: only new writes are checked, so rows that
+-- already exist never block this migration.
+
+alter table public.workout_plans drop constraint if exists workout_plans_size;
+alter table public.workout_plans add constraint workout_plans_size
+  check (octet_length(plan::text) <= 1048576) not valid;
+
+alter table public.workout_data drop constraint if exists workout_data_size;
+alter table public.workout_data add constraint workout_data_size check (
+  octet_length(logs::text) + octet_length(coalesce(progress::text, ''))
+  + octet_length(deleted_sessions::text) + octet_length(daily_summaries::text) + octet_length(deleted_dates::text)
+  + octet_length(bypass_days::text) + octet_length(legacy_stats::text) + octet_length(stats_snapshot::text) <= 8388608
+) not valid;
+
+-- Weigh-ins: a plausible date, and at most 20,000 per account (55 years of daily entries).
+create or replace function private.body_weight_limits()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.log_date < date '1900-01-01' or new.log_date > current_date + 2 then
+    raise exception 'A weigh-in needs a date between 1900 and today' using errcode = '22023';
+  end if;
+  if tg_op = 'INSERT' and (select count(*) from public.body_weight_logs b where b.user_id = new.user_id) >= 20000 then
+    raise exception 'Too many weigh-ins on this account' using errcode = '54000';
+  end if;
+  return new;
+end;
+$$;
+revoke all on function private.body_weight_limits() from public, anon, authenticated;
+drop trigger if exists body_weight_limits on public.body_weight_logs;
+create trigger body_weight_limits before insert or update on public.body_weight_logs
+  for each row execute function private.body_weight_limits();

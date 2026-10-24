@@ -205,6 +205,10 @@ begin
   end if;
   for e in select value from jsonb_array_elements(entries) loop
     d := (e ->> 'log_date')::date;
+    -- Implausible dates (a phone with a wrong clock) are skipped, not fatal.
+    if d < date '1900-01-01' or d > current_date + 2 then
+      continue;
+    end if;
     if coalesce((e ->> 'fresh')::boolean, false) then
       delete from private.body_weight_tombstones t where t.user_id = auth.uid() and t.log_date = d;
     elsif exists (
@@ -333,6 +337,9 @@ begin
   where a.payload ->> 'actor_id' = auth.uid()::text
      or a.payload -> 'traits' ->> 'user_id' = auth.uid()::text
      or a.payload ->> 'actor_username' = (select email from auth.users where id = auth.uid());
+  -- Rate-limit records are keyed by the user id; they go too.
+  delete from private.friend_request_log where requester_id = auth.uid();
+  delete from private.profile_lookups where user_id = auth.uid();
   delete from auth.users where id = auth.uid();
 end;
 $$;

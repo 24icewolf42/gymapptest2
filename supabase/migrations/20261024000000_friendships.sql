@@ -94,6 +94,8 @@ create table if not exists private.friend_request_log (
 create index if not exists friend_request_log_idx on private.friend_request_log (requester_id, sent_at);
 
 -- New requests: server time, at most 20 a day, never to or from someone blocked.
+-- A request to someone who blocked the sender is dropped without an error
+-- (and still counts), so the sender can't tell that they were blocked.
 create or replace function private.friend_requests_guard()
 returns trigger
 language plpgsql
@@ -108,8 +110,8 @@ begin
     return new;
   end if;
   new.created_at := now();
-  if private.blocked_between(new.requester_id, new.target_id) then
-    raise exception 'This person cannot be added' using errcode = '42501';
+  if exists (select 1 from public.friend_blocks k where k.blocker_id = new.requester_id and k.blocked_id = new.target_id) then
+    raise exception 'Unblock this person first' using errcode = '42501';
   end if;
   -- One sender at a time, so parallel requests cannot all pass the count.
   perform pg_advisory_xact_lock(hashtextextended('friend_request:' || new.requester_id::text, 0));
@@ -121,6 +123,9 @@ begin
     raise exception 'Too many friend requests today. Try again tomorrow.' using errcode = '54000';
   end if;
   insert into private.friend_request_log (requester_id) values (new.requester_id);
+  if exists (select 1 from public.friend_blocks k where k.blocker_id = new.target_id and k.blocked_id = new.requester_id) then
+    return null;
+  end if;
   return new;
 end;
 $$;

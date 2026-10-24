@@ -244,8 +244,10 @@ describe('hardening', () => {
     const blk = await a.client.from('friend_blocks').insert({ blocker_id: a.id, blocked_id: b.id });
     expect(blk.error).toBeNull();
     expect((await adminClient().from('friend_requests').select('id').or(`requester_id.eq.${a.id},target_id.eq.${a.id}`)).data).toEqual([]);
+    // B's request is dropped without telling B about the block.
     const again = await b.client.from('friend_requests').insert({ requester_id: b.id, target_id: a.id, status: 'pending' });
-    expect(again.error).not.toBeNull();
+    expect(again.error).toBeNull();
+    expect((await adminClient().from('friend_requests').select('id').eq('requester_id', b.id).eq('target_id', a.id)).data).toEqual([]);
     const back = await a.client.from('friend_requests').insert({ requester_id: a.id, target_id: b.id, status: 'pending' });
     expect(back.error).not.toBeNull();
     expect((await b.client.rpc('find_profile', { name: a.username })).data).toEqual([]);
@@ -349,6 +351,26 @@ describe('hardening', () => {
     }
     expect((await host.client.from('gym_dates').update({ cancelled_at: new Date().toISOString() }).eq('id', d.id)).error).toBeNull();
     expect((await host.client.from('gym_dates').update({ cancelled_at: null }).eq('id', d.id)).error).not.toBeNull();
+  });
+
+  it('limits how much one account can store', async () => {
+    const u = await makeUser(uniqueName('big'));
+    const huge = { workouts: { Big: [{ name: 'x'.repeat(1100000) }] } };
+    expect((await u.client.from('workout_plans').insert({ user_id: u.id, plan: huge })).error).not.toBeNull();
+    expect((await u.client.from('workout_plans').insert({ user_id: u.id, plan: { workouts: {} } })).error).toBeNull();
+    expect((await u.client.rpc('save_my_weights', { entries: [{ log_date: '1000-01-01', weight_kg: 70, fresh: true }, { log_date: '8980-01-01', weight_kg: 70, fresh: true }] })).data).toEqual([]);
+    expect((await u.client.from('body_weight_logs').insert({ user_id: u.id, log_date: '8980-01-01', weight_kg: 70 })).error).not.toBeNull();
+  });
+
+  it('removes the rate-limit records with the account', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const q = (sql) => execFileSync('docker', ['exec', '-i', 'supabase_db_gymapptest2', 'psql', '-U', 'postgres', '-d', 'postgres', '-At', '-c', sql], { encoding: 'utf8' }).trim();
+    const u = await makeUser(uniqueName('gone'));
+    const t = await makeUser(uniqueName('tgt'));
+    await u.client.rpc('find_profile', { name: t.username });
+    await u.client.from('friend_requests').insert({ requester_id: u.id, target_id: t.id, status: 'pending' });
+    expect((await u.client.rpc('delete_my_account')).error).toBeNull();
+    expect(q(`select (select count(*) from private.friend_request_log where requester_id = '${u.id}') + (select count(*) from private.profile_lookups where user_id = '${u.id}')`)).toBe('0');
   });
 
   it('gives signed-in users no TRUNCATE or other table-level extras on the original tables', async () => {
