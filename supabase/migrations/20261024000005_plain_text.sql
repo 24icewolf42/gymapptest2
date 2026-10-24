@@ -37,6 +37,18 @@ alter table public.shared_workouts add constraint shared_workouts_plain_text
 delete from public.shared_workouts where title ~ '[<>"`]' or workout::text ~ '[<>`]|(^|[^\\])(\\\\)*\\"';
 alter table public.shared_workouts validate constraint shared_workouts_plain_text;
 
+-- ...and must look like a routine: the original app crashes or freezes on a
+-- copied entry that is not an exercise, or on an absurd number of sets.
+alter table public.shared_workouts drop constraint if exists shared_workouts_shape;
+alter table public.shared_workouts add constraint shared_workouts_shape check (
+  not jsonb_path_exists(workout, '$[*] ? (@.type() != "object" || !exists(@.name) || @.name.type() != "string")')
+  and not jsonb_path_exists(workout, '$[*].sets ? (@.type() != "number" || @ < 1 || @ > 40)')
+) not valid;
+delete from public.shared_workouts where
+  jsonb_path_exists(workout, '$[*] ? (@.type() != "object" || !exists(@.name) || @.name.type() != "string")')
+  or jsonb_path_exists(workout, '$[*].sets ? (@.type() != "number" || @ < 1 || @ > 40)');
+alter table public.shared_workouts validate constraint shared_workouts_shape;
+
 -- Earlier drafts of this migration cleaned or refused whole plans and histories.
 alter table public.workout_plans drop constraint if exists workout_plans_plain_text;
 alter table public.workout_data drop constraint if exists workout_data_plain_text;

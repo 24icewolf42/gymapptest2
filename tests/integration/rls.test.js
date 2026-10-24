@@ -375,6 +375,27 @@ describe('hardening', () => {
     expect(plan.restImage).toBeUndefined();
   });
 
+  it('changes usernames only through the rate-limited function, without revealing taken names otherwise', async () => {
+    const a = await makeUser(uniqueName('un_a'));
+    const b = await makeUser(uniqueName('un_b'));
+    // A direct update keeps the old name and gives no error, even for a taken one.
+    expect((await a.client.from('profiles').update({ username: b.username }).eq('id', a.id)).error).toBeNull();
+    expect((await a.client.from('profiles').select('username').eq('id', a.id).single()).data.username).toBe(a.username);
+    expect((await a.client.rpc('change_username', { name: b.username })).data).toBe('taken');
+    const fresh = uniqueName('un_c');
+    expect((await a.client.rpc('change_username', { name: fresh })).data).toBe('ok');
+    expect((await a.client.from('profiles').select('username').eq('id', a.id).single()).data.username).toBe(fresh);
+  });
+
+  it('refuses shared routines that are not shaped like routines, and dates them by the server', async () => {
+    const a = await makeUser(uniqueName('shp'));
+    expect((await a.client.from('shared_workouts').insert({ owner_id: a.id, title: 'X', workout: [null] })).error).not.toBeNull();
+    expect((await a.client.from('shared_workouts').insert({ owner_id: a.id, title: 'X', workout: [{ name: 'Dips', sets: 100000000 }] })).error).not.toBeNull();
+    const r = await a.client.from('shared_workouts').insert({ owner_id: a.id, title: 'X', workout: [{ name: 'Dips', sets: 3 }], created_at: '2099-01-01T00:00:00Z' }).select('created_at').single();
+    expect(r.error).toBeNull();
+    expect(Date.parse(r.data.created_at)).toBeLessThan(Date.now() + 60000);
+  });
+
   it('refuses a null plan or history quickly instead of hanging', async () => {
     const a = await makeUser(uniqueName('nul'));
     const t0 = Date.now();

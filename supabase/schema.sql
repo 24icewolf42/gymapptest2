@@ -818,6 +818,61 @@ $$;
 revoke all on function public.delete_my_account() from public, anon;
 grant execute on function public.delete_my_account() to authenticated;
 
+-- Changing the username goes through this function: a taken name would
+-- otherwise confirm that an account exists, so each attempt counts toward the
+-- same 30-an-hour budget as username lookups.
+create or replace function public.change_username(name text)
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  me uuid := auth.uid();
+  wanted text := lower(btrim(coalesce(name, '')));
+begin
+  if me is null then
+    raise exception 'Not signed in' using errcode = '42501';
+  end if;
+  if wanted !~ '^[a-z0-9_]{3,20}$' then
+    return 'invalid';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended('profile_lookup:' || me::text, 0));
+  if (select count(*) from private.profile_lookups l where l.user_id = me and l.looked_up_at > now() - interval '1 hour') >= 30 then
+    raise exception 'Too many username checks. Try again in an hour.' using errcode = '54000';
+  end if;
+  insert into private.profile_lookups (user_id) values (me);
+  perform set_config('app.username_change', 'on', true);
+  begin
+    update public.profiles set username = wanted where id = me;
+  exception when unique_violation then
+    return 'taken';
+  end;
+  return 'ok';
+end;
+$$;
+revoke all on function public.change_username(text) from public, anon;
+grant execute on function public.change_username(text) to authenticated;
+
+-- Any other update keeps the username as it is (no error, so nothing is
+-- revealed, and the original app's profile upsert keeps working).
+create or replace function private.profiles_keep_username()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.username is distinct from old.username and current_setting('app.username_change', true) is distinct from 'on' then
+    new.username := old.username;
+  end if;
+  return new;
+end;
+$$;
+revoke all on function private.profiles_keep_username() from public, anon, authenticated;
+drop trigger if exists profiles_keep_username on public.profiles;
+create trigger profiles_keep_username before update on public.profiles
+  for each row execute function private.profiles_keep_username();
+
 -- ===== 20261024000002_gym_dates.sql =====
 -- Gym dates: plan a gym visit (now or later) and let friends join.
 -- Visible only to the host's accepted friends, or to the invited subset of them.
@@ -1353,6 +1408,7 @@ begin
   -- One writer per account and table at a time, so parallel requests can't all pass the count.
   if tg_table_name = 'shared_workouts' then
     perform pg_advisory_xact_lock(hashtextextended('shared:' || new.owner_id::text, 0));
+    new.created_at := now(); -- server time, so nobody can pin their shares to the top of the list
     if (select count(*) from public.shared_workouts s where s.owner_id = new.owner_id) >= 50 then
       raise exception 'You can share up to 50 routines' using errcode = '54000';
     end if;
@@ -1415,6 +1471,18 @@ alter table public.shared_workouts add constraint shared_workouts_plain_text
   check (title !~ '[<>"`]' and workout::text !~ '[<>`]|(^|[^\\])(\\\\)*\\"') not valid;
 delete from public.shared_workouts where title ~ '[<>"`]' or workout::text ~ '[<>`]|(^|[^\\])(\\\\)*\\"';
 alter table public.shared_workouts validate constraint shared_workouts_plain_text;
+
+-- ...and must look like a routine: the original app crashes or freezes on a
+-- copied entry that is not an exercise, or on an absurd number of sets.
+alter table public.shared_workouts drop constraint if exists shared_workouts_shape;
+alter table public.shared_workouts add constraint shared_workouts_shape check (
+  not jsonb_path_exists(workout, '$[*] ? (@.type() != "object" || !exists(@.name) || @.name.type() != "string")')
+  and not jsonb_path_exists(workout, '$[*].sets ? (@.type() != "number" || @ < 1 || @ > 40)')
+) not valid;
+delete from public.shared_workouts where
+  jsonb_path_exists(workout, '$[*] ? (@.type() != "object" || !exists(@.name) || @.name.type() != "string")')
+  or jsonb_path_exists(workout, '$[*].sets ? (@.type() != "number" || @ < 1 || @ > 40)');
+alter table public.shared_workouts validate constraint shared_workouts_shape;
 
 -- Earlier drafts of this migration cleaned or refused whole plans and histories.
 alter table public.workout_plans drop constraint if exists workout_plans_plain_text;
@@ -1488,7 +1556,7 @@ begin
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public'
     and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute'))
-    and p.oid::regprocedure::text not in ('delete_my_account()', 'find_profile(text)', 'friend_summaries()', 'gym_date_counts(uuid[])', 'my_blocks()', 'save_my_weights(jsonb)');
+    and p.oid::regprocedure::text not in ('change_username(text)', 'delete_my_account()', 'find_profile(text)', 'friend_summaries()', 'gym_date_counts(uuid[])', 'my_blocks()', 'save_my_weights(jsonb)');
   if extra is not null then
     raise exception 'Unexpected functions callable through the API: %', extra;
   end if;

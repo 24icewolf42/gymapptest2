@@ -52,6 +52,7 @@ begin
   -- One writer per account and table at a time, so parallel requests can't all pass the count.
   if tg_table_name = 'shared_workouts' then
     perform pg_advisory_xact_lock(hashtextextended('shared:' || new.owner_id::text, 0));
+    new.created_at := now(); -- server time, so nobody can pin their shares to the top of the list
     if (select count(*) from public.shared_workouts s where s.owner_id = new.owner_id) >= 50 then
       raise exception 'You can share up to 50 routines' using errcode = '54000';
     end if;

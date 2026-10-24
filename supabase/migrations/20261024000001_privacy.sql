@@ -352,3 +352,58 @@ end;
 $$;
 revoke all on function public.delete_my_account() from public, anon;
 grant execute on function public.delete_my_account() to authenticated;
+
+-- Changing the username goes through this function: a taken name would
+-- otherwise confirm that an account exists, so each attempt counts toward the
+-- same 30-an-hour budget as username lookups.
+create or replace function public.change_username(name text)
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  me uuid := auth.uid();
+  wanted text := lower(btrim(coalesce(name, '')));
+begin
+  if me is null then
+    raise exception 'Not signed in' using errcode = '42501';
+  end if;
+  if wanted !~ '^[a-z0-9_]{3,20}$' then
+    return 'invalid';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended('profile_lookup:' || me::text, 0));
+  if (select count(*) from private.profile_lookups l where l.user_id = me and l.looked_up_at > now() - interval '1 hour') >= 30 then
+    raise exception 'Too many username checks. Try again in an hour.' using errcode = '54000';
+  end if;
+  insert into private.profile_lookups (user_id) values (me);
+  perform set_config('app.username_change', 'on', true);
+  begin
+    update public.profiles set username = wanted where id = me;
+  exception when unique_violation then
+    return 'taken';
+  end;
+  return 'ok';
+end;
+$$;
+revoke all on function public.change_username(text) from public, anon;
+grant execute on function public.change_username(text) to authenticated;
+
+-- Any other update keeps the username as it is (no error, so nothing is
+-- revealed, and the original app's profile upsert keeps working).
+create or replace function private.profiles_keep_username()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.username is distinct from old.username and current_setting('app.username_change', true) is distinct from 'on' then
+    new.username := old.username;
+  end if;
+  return new;
+end;
+$$;
+revoke all on function private.profiles_keep_username() from public, anon, authenticated;
+drop trigger if exists profiles_keep_username on public.profiles;
+create trigger profiles_keep_username before update on public.profiles
+  for each row execute function private.profiles_keep_username();
