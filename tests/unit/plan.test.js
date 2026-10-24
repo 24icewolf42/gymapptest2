@@ -154,3 +154,11 @@ describe('summaries', () => {
     expect(workoutSummary([])).toBe('0 exercises · 0 sets');
   });
 });
+
+describe('routine names', () => {
+  it('are kept exactly as stored (the original app does not trim or shorten them)', () => {
+    const long = 'A very long routine name that goes past forty characters';
+    expect(Object.keys(sanitizeWorkouts({ 'Legs ': [{ name: 'Squat' }], [long]: [{ name: 'Dips' }], 'A|B': [{ name: 'Row' }] }))).toEqual(['Legs ', long, 'A|B']);
+    expect(Object.keys(sanitizeWorkouts({ '   ': [{ name: 'x' }], __proto__: [] }))).toEqual([]);
+  });
+});

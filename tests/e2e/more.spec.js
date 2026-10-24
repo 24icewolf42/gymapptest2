@@ -856,3 +856,27 @@ test('what is added after a sign-out that kept the data is defused at the next s
   const plan = (await u.client.from('workout_plans').select('plan').eq('user_id', u.id).single()).data.plan;
   expect(Object.keys(plan.workouts)).toEqual(['‹i>Evil‹/i>']);
 });
+
+test('restoring your own backup keeps names the account has and defuses only what is new', async ({ page }) => {
+  const { makeUser, uniqueName } = await import('../integration/helpers.js');
+  const u = await makeUser(uniqueName('rsn'));
+  const ex = [{ name: 'Dips', cat: 'chest', sets: 2, target: '8', rest: 60, note: '' }];
+  await u.client.from('workout_plans').insert({ user_id: u.id, plan: { workouts: { 'Push <A>': ex }, schedule: {} } });
+  await open(page);
+  await signInAs(page, u);
+  const backup = await page.evaluate(async (e) => {
+    const { makeBackup } = await import('/js/domain/backup.js');
+    const data = { gymLogs: '{}', gymCustomWorkouts: JSON.stringify({ 'Push <A>': e, '<i>New</i>': e }) };
+    return makeBackup((k) => data[k] ?? null, 'test');
+  }, ex);
+  await page.locator('.page.active [data-open-settings]').first().click();
+  await page.locator('[data-restore]').click();
+  await page.locator('.sheet textarea[name=paste]').fill(backup);
+  await sheetAction(page, 'Restore pasted text');
+  await sheetAction(page, 'Restore');
+  await page.waitForEvent('load');
+  await page.locator('.page.active [data-open-settings]').first().click();
+  await expect(page.locator('#page-settings .status')).toHaveText(/Synced/, { timeout: 15000 });
+  const plan = (await u.client.from('workout_plans').select('plan').eq('user_id', u.id).single()).data.plan;
+  expect(Object.keys(plan.workouts).sort()).toEqual(['Push <A>', '‹i>New‹/i>']);
+});
