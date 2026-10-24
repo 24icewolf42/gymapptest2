@@ -86,8 +86,8 @@ Supabase **SQL Editor**, then run it again. For example, for a policy called
 and for a function `my_fn(text)`: `drop function public.my_fn(text);`. If you
 want to keep one, ask before dropping it.
 
-**If only "Update the password reset email" fails (HTTP 400),** the database
-part is done. Supabase's built-in email service sends only a few emails an
+**If the run shows a warning "Password reset email not updated",** the
+database part is done (the run stays green). Supabase's built-in email service sends only a few emails an
 hour, only to members of your Supabase team, and does not allow changing the
 templates. To send reset emails to everyone (and to include the code the
 Android app asks for), connect your own email provider:

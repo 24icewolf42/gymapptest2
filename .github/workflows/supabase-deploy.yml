@@ -98,7 +98,13 @@ jobs:
           if [ "$status" != 200 ]; then
             # Only the error message is shown (a successful answer would contain the auth settings).
             reason="$(jq -r '.message // .msg // .error // empty' "$RUNNER_TEMP/auth.json" 2>/dev/null | head -c 300)"
-            echo "::error::Updating the email template failed (HTTP $status): ${reason:-no reason given}. If it is about SMTP, set up your own SMTP server first (see docs/HANDOVER.md, step 4)."
+            # Without its own email provider (SMTP), a free project may not change
+            # templates: a warning, so the database deploy still ends green.
+            if printf '%s' "$reason" | grep -qi 'smtp'; then
+              echo "::warning::Password reset email not updated: ${reason}. Set up your own email provider (SMTP) to enable it; see docs/HANDOVER.md, step 4."
+              exit 0
+            fi
+            echo "::error::Updating the email template failed (HTTP $status): ${reason:-no reason given}."
             exit 1
           fi
           echo "Password reset email updated"
