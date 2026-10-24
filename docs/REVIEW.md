@@ -50,6 +50,27 @@ All findings are fixed in code. What remains for the app's owner is configuratio
 
 After the rework, three independent Opus reviews (security/privacy, data correctness, UX/accessibility/tests) rated the branch and listed findings. Every critical, major and minor finding and every nit was fixed and re-reviewed.
 
+### Round 14 (security 8/10, correctness 8.5/10, UX/tests 7.5/10)
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| S14-01, mi-3 (correctness) | Minor | A sign-out cut short by its time limit kept running and could end the next account's session or send the old account's data with the new login | The next sign-in (or code check) waits until that sign-out has finished; test |
+| mi-2 (correctness) | Minor | A sync left over from a sign-out stayed registered, so the next account's first sync joined it and did nothing | Retiring a session clears the running syncs, and an old sync never clears a newer one's slot; test |
+| mi-1 (correctness) | Minor | The account's known routine names carried over to the next account | They are forgotten with the session |
+| S14-02, mi-5 (correctness) | Minor | The "already exists" fallback accepted a friend request for whoever was signed in by then | It acts only for the account that asked, if still signed in |
+| mi-4 (correctness) | Minor | An open workout kept raw exercise names after a sync defused them | It follows, stores its draft and moves its last-used values at once; test |
+| S14-03 | Minor | The README unpacked the key backup to disk; backup files were not ignored by git | It checks the backup through a pipe without writing the key; backup and key file names are ignored |
+| UX-M1 | Major | Three parts of the toast-under-dialog fix were untested | The test checks the pause, the time after the dialog, the re-read, and that messages wait; each checked against its removal |
+| UX-m1, n1 | Minor/Nit | Messages under a dialog overwrote each other; an old message came back after it | Messages wait until the dialog closes and follow in order; a plain message goes when a dialog opens; test |
+| UX-m2 | Minor | A slow but successful "Sign out on all devices" was reported as failed | Ending every session gets 20 s; test |
+| UX-m3 | Minor | After the 8 s limit, "keep data here" said only "Signed out." | It says the latest changes stayed on this phone; test |
+| UX-m4 | Minor | "Post gym date" gave no feedback while posting | "Posting…" in the button and the status line; test |
+| UX-m5, n2, n3, S14-N2 | Minor/Nit | Handover: the one-day backup deadline, token revocation, `npm run schema`, when tests and releases run, and the signing step order | `docs/HANDOVER.md` covers each |
+| S14-N1 | Nit | The EC check matched anywhere in the certificate text | It checks the public key algorithm line |
+| UX-n4 | Nit | A test title named a case it did not cover | Renamed |
+
+Also: a password-reset test read the code before the email step had finished; it now waits for it.
+
 ### Round 13 (security 8.5/10, correctness 8.5/10, UX/tests 6.5/10)
 
 | ID | Severity | Finding | Fix |
