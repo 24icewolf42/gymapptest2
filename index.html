@@ -576,7 +576,7 @@
     
     <script>
     // ---------- APP VERSION / AUTO UPDATE ----------
-    const APP_VERSION = "2.12.0";
+    const APP_VERSION = "2.12.1";
     document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
     
     function checkForUpdate() {
@@ -2190,6 +2190,24 @@
   };
 
   renderToday();
+})();
+</script>
+        <script>
+// Fix: scrolling the muscle-group chips sideways no longer swipes the whole page to another tab.
+(function () {
+  function inHScroll(el) {
+    for (; el && el !== document.body; el = el.parentElement) {
+      if (el.scrollWidth > el.clientWidth + 2) {
+        var ox = getComputedStyle(el).overflowX;
+        if (ox === 'auto' || ox === 'scroll') return true;
+      }
+    }
+    return false;
+  }
+  // capture phase: runs before the page-swipe code, so that code never starts for these touches
+  document.addEventListener('touchstart', function (e) {
+    if (inHScroll(e.target)) e.stopPropagation();
+  }, true);
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
